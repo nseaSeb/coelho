@@ -19,6 +19,19 @@ if Code.ensure_loaded?(Phoenix.Component) do
     its ProseMirror schema from the same declaration that validates the
     document server side.
 
+    ## Links
+
+    When the toolbar carries `link`, the component renders a field beside it
+    rather than reaching for `window.prompt`, which blocks the page and
+    ignores the application's design. The field opens on the selection, or on
+    the whole link under the cursor when there is no selection; `Enter`
+    confirms, `Escape` closes, and emptying it removes the link without
+    touching the text.
+
+    An application with its own link interface listens for the cancelable
+    `coelho:link` event on the editor element and calls
+    `event.detail.apply(href)` when it has an answer.
+
     ## Styling
 
     The toolbar carries `phx-update="ignore"` for the same reason the editor
@@ -200,6 +213,16 @@ if Code.ensure_loaded?(Phoenix.Component) do
           >
             {command}
           </button>
+
+          <span :if={"link" in @toolbar} class="coelho-link" data-coelho-link-zone hidden>
+            <input
+              type="url"
+              class="coelho-link-input"
+              data-coelho-link-input
+              placeholder="https://…"
+              aria-label="Link address"
+            />
+          </span>
         </div>
         <div
           id={@id <> "-content"}

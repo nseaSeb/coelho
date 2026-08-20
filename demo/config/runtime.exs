@@ -20,7 +20,10 @@ if System.get_env("PHX_SERVER") do
   config :demo, DemoWeb.Endpoint, server: true
 end
 
-config :demo, DemoWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+# 4321 rather than the generator's 4000, which tends to be taken by whatever
+# else is being worked on. This runs after config/dev.exs and wins, so it is
+# the one place the port is decided.
+config :demo, DemoWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4321"))]
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.

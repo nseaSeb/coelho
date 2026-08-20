@@ -180,7 +180,7 @@ jobs:
       - name: Drive the editor in a real browser
         working-directory: demo
         run: |
-          PORT=4321 mix phx.server &
+          mix phx.server &
           for _ in $(seq 1 60); do
             curl -sf -o /dev/null http://localhost:4321/ && break
             sleep 1

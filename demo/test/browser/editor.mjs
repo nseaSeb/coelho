@@ -48,6 +48,29 @@ const paneEventually = async (page, name, contains) => {
 
 const spaces = (text) => text.replaceAll("\u00a0", " ");
 
+const LINK_INPUT = "[data-coelho-link-input]";
+const HAS_LINK =
+  "return doc.content.flatMap((b) => b.content ?? []).some((n) => n.marks?.some((m) => m.type === 'link'))";
+
+const pressed = (page, command) =>
+  page.getAttribute(`[data-coelho-command="${command}"]`, "aria-pressed");
+
+const linkedFragments = async (page) =>
+  (await stored(page)).content
+    .flatMap((block) => block.content ?? [])
+    .filter((node) => node.marks?.some((mark) => mark.type === "link"));
+
+const hrefsIn = async (page) => {
+  const hrefs = (await linkedFragments(page)).map(
+    (node) => node.marks.find((mark) => mark.type === "link").attrs.href
+  );
+
+  return [...new Set(hrefs)].join(", ");
+};
+
+// The toolbar follows the selection, which the browser reports a tick later.
+const settle = (page) => page.waitForTimeout(300);
+
 const selectAll = (page) => page.keyboard.press("ControlOrMeta+a");
 
 // A timeout that only says "timeout" costs an hour; one that shows the
@@ -74,6 +97,13 @@ const run = async () => {
   const browser = await playwright[BROWSER].launch();
   const page = await browser.newPage();
   const errors = watched;
+
+  // `window.prompt` blocks the page and ignores the application's design; if
+  // one ever comes back, the run says so instead of hanging.
+  page.on("dialog", async (dialog) => {
+    errors.push(`a ${dialog.type()} dialog opened: ${dialog.message()}`);
+    await dialog.dismiss();
+  });
 
   page.on("pageerror", (error) => errors.push(process.env.STACKS ? error.stack : String(error)));
   page.on("console", (message) => {
@@ -146,6 +176,118 @@ const run = async () => {
       const [text] = document.content[0].content;
       assert.deepEqual(text.marks, [{ type: "bold" }]);
       assert.match(await paneEventually(page, "html", "<strong>"), /<strong>bold me<\/strong>/);
+    });
+
+    await test("a mark is pressed only when it covers the whole selection", async () => {
+      // `toggleMark` on a half-bold selection *adds* bold everywhere, so a
+      // button pressed on "present somewhere" announces the opposite of what
+      // clicking it does.
+      await typeInEditor(page, "half bold");
+      await page.keyboard.press("Home");
+      for (let i = 0; i < 4; i += 1) await page.keyboard.press("Shift+ArrowRight");
+      await page.click('[data-coelho-command="bold"]');
+
+      assert.equal(await pressed(page, "bold"), "true", "on the bolded half");
+
+      await page.click(EDITOR);
+      await selectAll(page);
+      await settle(page);
+
+      assert.equal(await pressed(page, "bold"), "false", "on a half-bold selection");
+    });
+
+    await test("a link is made from the toolbar, not from a dialog", async () => {
+      await typeInEditor(page, "see our terms");
+      await page.click(EDITOR);
+      await selectAll(page);
+      await page.click('[data-coelho-command="link"]');
+
+      assert.ok(await page.isVisible(LINK_INPUT), "the field opens");
+
+      await page.fill(LINK_INPUT, "https://example.com/a");
+      await page.keyboard.press("Enter");
+      await documentEventually(page, "the link was not applied", HAS_LINK);
+
+      assert.equal(await hrefsIn(page), "https://example.com/a");
+      assert.ok(!(await page.isVisible(LINK_INPUT)), "and closes again");
+    });
+
+    await test("editing a link from the cursor rewrites all of it", async () => {
+      // Two adjacent text nodes are only merged when their marks match, so a
+      // link with a bold word inside is three fragments. Rewriting only the
+      // one under the cursor would leave the rest on the old address — one
+      // link on screen becoming two.
+      // Built by typing rather than by arrow keys: where a caret lands after
+      // Home and four rights is not the same in every engine.
+      await typeInEditor(page, "see ");
+      await page.keyboard.press("ControlOrMeta+b");
+      await page.keyboard.type("our");
+      await page.keyboard.press("ControlOrMeta+b");
+      await page.keyboard.type(" terms");
+
+      await page.click(EDITOR);
+      await selectAll(page);
+      await page.click('[data-coelho-command="link"]');
+      await page.fill(LINK_INPUT, "https://old.example/x");
+      await page.keyboard.press("Enter");
+      await documentEventually(page, "the link was not applied", HAS_LINK);
+
+      const fragments = await linkedFragments(page);
+      assert.ok(fragments.length >= 3, `expected several fragments, got ${fragments.length}`);
+
+      // Caret inside the first fragment. Collapsing a selection leftwards is
+      // the one way to reach the start that every engine agrees on: `Home`
+      // leaves the caret at the end of the line in Firefox.
+      await page.click(EDITOR);
+      await selectAll(page);
+      await page.keyboard.press("ArrowLeft");
+      await page.keyboard.press("ArrowRight");
+      await settle(page);
+      await page.click('[data-coelho-command="link"]');
+
+      assert.equal(await page.inputValue(LINK_INPUT), "https://old.example/x", "prefilled");
+
+      await page.fill(LINK_INPUT, "https://new.example/y");
+      await page.keyboard.press("Enter");
+      await documentEventually(
+        page,
+        "the whole link was not rewritten",
+        "return doc.content.flatMap((b) => b.content ?? []).every((n) => !n.marks?.some((m) => m.type === 'link') || n.marks.find((m) => m.type === 'link').attrs.href === 'https://new.example/y')"
+      );
+
+      assert.equal(await hrefsIn(page), "https://new.example/y");
+    });
+
+    await test("emptying the field removes the link and leaves the text", async () => {
+      await typeInEditor(page, "linked text");
+      await page.click(EDITOR);
+      await selectAll(page);
+      await page.click('[data-coelho-command="link"]');
+      await page.fill(LINK_INPUT, "https://example.com/a");
+      await page.keyboard.press("Enter");
+      await documentEventually(page, "the link was not applied", HAS_LINK);
+
+      await page.click(EDITOR);
+      await selectAll(page);
+      await page.click('[data-coelho-command="link"]');
+      await page.fill(LINK_INPUT, "");
+      await page.keyboard.press("Enter");
+      await documentEventually(page, "the link was not removed", `return !(${HAS_LINK.slice(7)})`);
+
+      assert.equal(spaces(await page.textContent(EDITOR)), "linked text");
+    });
+
+    await test("an address the browser would execute is refused", async () => {
+      await typeInEditor(page, "tempting");
+      await page.click(EDITOR);
+      await selectAll(page);
+      await page.click('[data-coelho-command="link"]');
+      await page.fill(LINK_INPUT, "javascript:alert(1)");
+      await page.keyboard.press("Enter");
+      await settle(page);
+
+      assert.ok(await page.isVisible(LINK_INPUT), "the field stays open");
+      assert.equal(await linkedFragments(page).then((f) => f.length), 0, "nothing was linked");
     });
 
     await test("the keyboard applies one too", async () => {

@@ -65,3 +65,6 @@
 .pane button.link { background: none; border: 0; padding: 0; margin: 0; color: #2563eb; text-decoration: underline; cursor: pointer; font-size: inherit; }
 .coelho-command[aria-pressed="true"] { background: #1f2937; border-color: #1f2937; color: #fff; }
 .coelho-command:disabled { opacity: .4; cursor: default; }
+.coelho-link { display: inline-flex; align-items: center; margin-left: .25rem; }
+.coelho-link-input { font-size: .75rem; padding: .2rem .4rem; border: 1px solid #ccc; border-radius: .25rem; min-width: 16rem; }
+.coelho-link-input:invalid { border-color: #b91c1c; }

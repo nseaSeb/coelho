@@ -162,33 +162,10 @@ export const buildSchema = (exported, { nodes = {}, marks = {} } = {}) =>
 
 // -- Commands ---------------------------------------------------------------
 
-const askForHref = (view) => {
-  // An application that wants its own link UI listens for this and calls
-  // `event.detail.apply(href)`; nothing listening falls back to a prompt.
-  let handled = false;
-  const event = new CustomEvent("coelho:link", {
-    bubbles: true,
-    cancelable: true,
-    detail: {
-      apply: (href) => {
-        handled = true;
-        if (href) applyLink(view, href);
-      }
-    }
-  });
-
-  view.dom.dispatchEvent(event);
-  if (!handled && !event.defaultPrevented) {
-    const href = window.prompt("Link URL");
-    if (href) applyLink(view, href);
-  }
-};
-
-const applyLink = (view, href) => {
-  const mark = view.state.schema.marks.link;
-  if (mark) toggleMark(mark, { href })(view.state, view.dispatch);
-  view.focus();
-};
+// A URL the browser would execute rather than fetch. The schema refuses
+// these on the way in, but a document that is only rejected once the writer
+// has moved on is a dead end; this says no while the field is still open.
+const EXECUTABLE = /^\s*(javascript|data|vbscript):/i;
 
 const commandFor = (name, schema, options) => {
   const { nodes, marks } = schema;
@@ -201,11 +178,11 @@ const commandFor = (name, schema, options) => {
       return marks[name] && toggleMark(marks[name]);
     case "link":
       // Asked whether it *could* run — which is what the toolbar does on
-      // every selection change — it must not go and ask for a URL.
+      // every selection change — it must not go and open anything.
       return (
         marks.link &&
         ((state, dispatch, view) => {
-          if (dispatch) askForHref(view);
+          if (dispatch) view.coelhoEditLink();
           return true;
         })
       );
@@ -245,12 +222,29 @@ const commandFor = (name, schema, options) => {
 
 // A toolbar that never says what is in force leaves the writer guessing
 // whether the last click did anything.
+// A mark is active when it covers the *whole* selection — or, with no
+// selection, when it would apply to the next keystroke (`storedMarks`, which
+// ProseMirror sets after toggling with an empty selection).
+//
+// Not `rangeHasMark`, which answers "present somewhere": on a half-bold
+// selection the button *adds* bold everywhere, so showing it pressed
+// announces the opposite of what clicking it does.
 const markActive = (state, type) => {
   const { from, $from, to, empty } = state.selection;
 
-  return empty
-    ? Boolean(type.isInSet(state.storedMarks || $from.marks()))
-    : state.doc.rangeHasMark(from, to, type);
+  if (empty) return Boolean(type.isInSet(state.storedMarks || $from.marks()));
+
+  let sawText = false;
+  let throughout = true;
+
+  state.doc.nodesBetween(from, to, (node) => {
+    if (!node.isText) return;
+
+    sawText = true;
+    if (!type.isInSet(node.marks)) throughout = false;
+  });
+
+  return sawText && throughout;
 };
 
 // `attrs` stays undefined when the caller has none to match: `hasMarkup`
@@ -270,6 +264,44 @@ const blockActive = (state, type, attrs) => {
   }
 
   return false;
+};
+
+// The extent of the link under the cursor. ProseMirror gives the mark, not
+// the range it covers, and a link is rarely one text node: two adjacent text
+// nodes are only merged when their marks are *identical*, so "see our terms"
+// with one bold word inside is three fragments. Rewriting only the fragment
+// under the cursor would leave the other two pointing at the old URL — one
+// link on screen becoming two different links.
+const linkAround = (state, type) => {
+  const { $from } = state.selection;
+  const mark = type.isInSet($from.marks()) || type.isInSet($from.nodeAfter?.marks ?? []);
+
+  if (!mark) return null;
+
+  const pieces = [];
+  let pos = $from.start();
+
+  $from.parent.forEach((child) => {
+    const start = pos;
+    pos += child.nodeSize;
+    pieces.push({ start, end: pos, linked: child.isText && mark.isInSet(child.marks) });
+  });
+
+  const index = pieces.findIndex(
+    (piece) => piece.linked && piece.start <= $from.pos && $from.pos <= piece.end
+  );
+
+  if (index === -1) return null;
+
+  // `mark.isInSet` compares attributes too, so two neighbouring links with
+  // different addresses stay two links.
+  let first = index;
+  let last = index;
+
+  while (first > 0 && pieces[first - 1].linked) first -= 1;
+  while (last < pieces.length - 1 && pieces[last + 1].linked) last += 1;
+
+  return { from: pieces[first].start, to: pieces[last].end, href: mark.attrs.href };
 };
 
 const commandActive = (state, name, options) => {
@@ -443,6 +475,11 @@ export const createCoelhoHook = (dom = {}) =>
           this._view.updateState(this._view.state.apply(transaction));
           this.refreshToolbar();
 
+          // `_pendingLink` is a pair of positions, and any edit shifts them.
+          // With the field still open, confirming afterwards would have put
+          // the link on a stretch of text that is no longer the one aimed at.
+          if (transaction.docChanged && this._pendingLink) this.closeLink({ focus: false });
+
           // Writing the input back when the change *came from* the server
           // would post it straight back: the server normalises, so its copy
           // never quite equals what the editor wrote, and the two would
@@ -507,6 +544,100 @@ export const createCoelhoHook = (dom = {}) =>
       };
 
       el.addEventListener("mousedown", this._onToolbar);
+
+      this._linkZone = el.querySelector("[data-coelho-link-zone]");
+      this._linkInput = el.querySelector("[data-coelho-link-input]");
+
+      // The selection is what says *what* to link, so a field that took the
+      // focus would lose the answer: the range is remembered before opening.
+      this.openLink = ({ from, to }, href) => {
+        if (!this._linkInput) return;
+
+        this._pendingLink = { from, to };
+        this._linkZone.hidden = false;
+        this._linkInput.value = href ?? "";
+        this._linkInput.focus();
+        this._linkInput.select();
+      };
+
+      this.closeLink = ({ focus = true } = {}) => {
+        this._pendingLink = null;
+
+        if (this._linkZone) this._linkZone.hidden = true;
+        if (this._linkInput) this._linkInput.value = "";
+        if (focus) this._view.focus();
+      };
+
+      this.confirmLink = (href) => {
+        const link = this._schema.marks.link;
+        if (!link || !this._pendingLink) return this.closeLink();
+
+        if (href && EXECUTABLE.test(href)) {
+          this._linkInput.setCustomValidity("This kind of address cannot be linked.");
+          this._linkInput.reportValidity();
+          return undefined;
+        }
+
+        const { from, to } = this._pendingLink;
+        const { state } = this._view;
+
+        // An emptied field removes the link and leaves the text alone, which
+        // is the gesture people reach for; the button then only ever opens
+        // the field.
+        const transaction = href
+          ? state.tr.removeMark(from, to, link).addMark(from, to, link.create({ href }))
+          : state.tr.removeMark(from, to, link);
+
+        this._view.dispatch(transaction);
+        return this.closeLink();
+      };
+
+      this.editLink = () => {
+        const link = this._schema.marks.link;
+        if (!link) return;
+
+        // An application with its own link UI takes over from here.
+        const event = new CustomEvent("coelho:link", {
+          bubbles: true,
+          cancelable: true,
+          detail: {
+            selection: this._view.state.selection,
+            apply: (href) => this.confirmLink(href)
+          }
+        });
+
+        el.dispatchEvent(event);
+        if (event.defaultPrevented) return;
+
+        const { state } = this._view;
+        const existing = linkAround(state, link);
+
+        // The selection wins: it says what the writer is aiming at. Serving
+        // the link under the cursor first would quietly ignore a selection
+        // reaching past it, and "extend this link" would extend nothing.
+        if (!state.selection.empty) {
+          const { from, to } = state.selection;
+          this.openLink({ from, to }, existing?.href ?? "");
+        } else if (existing) {
+          this.openLink(existing, existing.href);
+        }
+      };
+
+      if (this._linkInput) {
+        this._onLinkKey = (event) => {
+          this._linkInput.setCustomValidity("");
+
+          if (event.key === "Enter") {
+            event.preventDefault();
+            this.confirmLink(this._linkInput.value.trim());
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            this.closeLink();
+          }
+        };
+
+        this._linkInput.addEventListener("keydown", this._onLinkKey);
+      }
 
       this.refreshToolbar = () => {
         const { state } = this._view;
@@ -609,6 +740,10 @@ export const createCoelhoHook = (dom = {}) =>
         content.addEventListener("paste", this._onFiles);
       }
 
+      // The link command only gets `(state, dispatch, view)`, so the view is
+      // where it can find its way back to the editor's own machinery.
+      this._view.coelhoEditLink = () => this.editLink();
+
       this._content = content;
 
       // Same reason: the server renders the placeholder onto the container,
@@ -676,6 +811,7 @@ export const createCoelhoHook = (dom = {}) =>
 
     destroyed() {
       this.el.removeEventListener("mousedown", this._onToolbar);
+      if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
       document.removeEventListener("selectionchange", this._onSelection);
 
       if (this._onFiles) {

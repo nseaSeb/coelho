@@ -27,7 +27,7 @@ mix setup
 mix phx.server
 ```
 
-Then open http://localhost:4000.
+Then open http://localhost:4321. Set `PORT` to use another.
 
 There is **no database**. Coelho stores the document in the row that owns it,
 so the demo gets away with an `embedded_schema` and a changeset — that is the
@@ -50,7 +50,7 @@ hiding.
 
 ```
 npx playwright install chromium firefox webkit
-PORT=4321 mix phx.server &
+mix phx.server &
 npm run test:browsers            # or BROWSER=webkit npm run test:browser
 ```
 
