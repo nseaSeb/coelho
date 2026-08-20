@@ -424,7 +424,7 @@ validated — all recomputed on the server on every keystroke. See
 
 ## Name
 
-For Paulo Coelho. In Portuguese, a rabbit.
+A nod to Paulo Coelho.
 
 ## License
 
