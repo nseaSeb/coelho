@@ -1,0 +1,15 @@
+{
+  "name": "coelho-demo",
+  "private": true,
+  "dependencies": {
+    "@nseaprotector/acme-script": "^0.4.0",
+    "orderedmap": "^2.1.1",
+    "prosemirror-commands": "^1.6.0",
+    "prosemirror-history": "^1.4.0",
+    "prosemirror-keymap": "^1.2.2",
+    "prosemirror-model": "^1.23.0",
+    "prosemirror-schema-list": "^1.4.0",
+    "prosemirror-state": "^1.4.3",
+    "prosemirror-view": "^1.34.3"
+  }
+}

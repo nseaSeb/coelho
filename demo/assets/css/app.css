@@ -1,0 +1,60 @@
+/* See the Tailwind configuration guide for advanced usage
+   https://tailwindcss.com/docs/configuration */
+
+@import "tailwindcss" source(none);
+@source "../css";
+@source "../js";
+@source "../../lib/demo_web";
+
+/* A Tailwind plugin that makes "hero-#{ICON}" classes available.
+   The heroicons installation itself is managed by your mix.exs */
+@plugin "../vendor/heroicons";
+
+
+
+
+/* Add variants based on LiveView classes */
+@custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
+@custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
+@custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
+
+/* Make LiveView wrapper divs transparent for layout */
+[data-phx-session], [data-phx-teleported-src] { display: contents }
+
+/* This file is for your main application CSS */
+
+/* The demo's own styles. Deliberately plain CSS: the point is the document
+   pipeline, not the design. */
+.demo { max-width: 1400px; margin: 0 auto; padding: 2rem 1.5rem; font-family: system-ui, sans-serif; }
+.demo header h1 { font-size: 1.75rem; font-weight: 700; }
+.demo header p { color: #555; margin-bottom: 1.5rem; }
+.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
+@media (max-width: 900px) { .panes { grid-template-columns: 1fr; } }
+.pane > label { display: block; margin-bottom: 1rem; font-size: .8rem; color: #555; }
+.pane input[type=text] { display: block; width: 100%; padding: .5rem; border: 1px solid #ccc; border-radius: .375rem; font-size: 1rem; }
+.pane section { margin-bottom: 1.25rem; }
+.pane h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: #666; margin-bottom: .375rem; }
+.pane pre { background: #f6f6f6; border: 1px solid #e5e5e5; border-radius: .375rem; padding: .625rem; font-size: .75rem; white-space: pre-wrap; word-break: break-all; max-height: 14rem; overflow: auto; }
+.pane .rendered { border: 1px solid #e5e5e5; border-radius: .375rem; padding: .75rem; }
+.pane .errors { border: 1px solid #e11d48; border-radius: .375rem; padding: .75rem; background: #fff1f2; }
+.pane .errors li { font-size: .8rem; font-family: ui-monospace, monospace; }
+
+.coelho { border: 1px solid #ccc; border-radius: .375rem; overflow: hidden; }
+.coelho-toolbar { display: flex; flex-wrap: wrap; gap: .25rem; padding: .375rem; border-bottom: 1px solid #eee; background: #fafafa; }
+.coelho-command { font-size: .75rem; padding: .2rem .45rem; border: 1px solid #ddd; border-radius: .25rem; background: #fff; cursor: pointer; }
+.coelho-command:hover { background: #f0f0f0; }
+.coelho-content { padding: .75rem; min-height: 18rem; }
+.coelho-content .ProseMirror:focus { outline: none; }
+.coelho-content blockquote { border-left: 3px solid #ddd; padding-left: .75rem; color: #555; }
+.coelho-content pre { background: #f6f6f6; padding: .5rem; border-radius: .25rem; }
+.coelho-content ul { list-style: disc; padding-left: 1.5rem; }
+.coelho-content ol { list-style: decimal; padding-left: 1.5rem; }
+.coelho-content h1, .coelho-content h2, .coelho-content h3 { font-weight: 700; }
+.coelho-content h1 { font-size: 1.5rem; }
+.coelho-content h2 { font-size: 1.25rem; }
+.coelho-content h3 { font-size: 1.1rem; }
+.coelho-attachment { border: 1px dashed #bbb; border-radius: .375rem; padding: .5rem; margin: .5rem 0; }
+.coelho-attachment figcaption { font-size: .75rem; color: #666; }
+.coelho-attachment-missing { color: #b45309; font-family: ui-monospace, monospace; font-size: .8rem; }
+.pane .field-error { color: #b91c1c; font-size: .8rem; margin: .25rem 0 0; }
+.pane button[type=submit] { margin-top: .75rem; padding: .4rem .9rem; border: 1px solid #ccc; border-radius: .375rem; background: #fff; cursor: pointer; }
