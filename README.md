@@ -227,13 +227,17 @@ The URL is produced at render time, from the context:
 Coelho.to_html(document, schema, context: %{resolve: &MyApp.Uploads.url/1})
 ```
 
-That indirection is the point. Storing rendered HTML bakes the URL into it,
-so signed and expiring URLs cannot work — the link is as old as the document.
-Here every render asks again: a five minute signed URL is fine,
-moving a bucket is a resolver change instead of a data migration, and a key
-that no longer resolves degrades to its filename rather than to a broken
-image. `Coelho.Attachments.keys/2` answers which keys a document still uses,
-which is what a cleanup job needs.
+What is stored is the key, never the URL, so every render asks again: a five
+minute signed URL is fine, moving a bucket is a resolver change instead of a
+data migration, and a key that no longer resolves degrades to its filename
+rather than to a broken image. `Coelho.Attachments.keys/2` answers which keys
+a document still uses, which is what a cleanup job needs.
+
+Storing a *reference* and resolving it late is not new — it is what any
+system that keeps attachments out of the markup does. What is different here
+is that the reference is a plain attribute of a validated node rather than a
+signed blob of identity smuggled through an HTML attribute, so the same
+walk that validates the document also enumerates its attachments.
 
 `Coelho.Attachment` records the metadata; `mix coelho.gen.migration`
 creates its table.

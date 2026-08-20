@@ -15,12 +15,14 @@ defmodule Coelho.Attachments do
 
       Coelho.to_html(document, schema, context: %{resolve: &MyApp.Uploads.url/1})
 
-  That indirection is the whole point. Storing rendered HTML bakes the URL
-  into it, so signed and expiring URLs cannot work — the link is as old as the
-  document. Here every render asks again, so a five minute signed URL is fine,
-  moving a bucket is a resolver change rather than a data migration, and an
-  attachment whose key no longer resolves degrades to its filename instead of
-  a broken image.
+  What is stored is the key, never the URL, so every render asks again: a five
+  minute signed URL is fine, moving a bucket is a resolver change rather than
+  a data migration, and an attachment whose key no longer resolves degrades to
+  its filename instead of a broken image.
+
+  Resolving a stored reference late is not itself novel. What differs here is
+  that the reference is an ordinary attribute of a validated node, so the walk
+  that validates a document also enumerates what it points at — see `keys/2`.
 
   ## What Coelho does not do
 
