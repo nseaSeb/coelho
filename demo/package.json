@@ -11,5 +11,11 @@
     "prosemirror-schema-list": "^1.4.0",
     "prosemirror-state": "^1.4.3",
     "prosemirror-view": "^1.34.3"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  },
+  "scripts": {
+    "test:browser": "node test/browser/editor.mjs"
   }
 }

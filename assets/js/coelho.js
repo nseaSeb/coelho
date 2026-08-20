@@ -266,6 +266,14 @@ const buildKeymap = (schema) => {
   return bindings;
 };
 
+const parseDoc = (schema, value) => {
+  try {
+    return PMNode.fromJSON(schema, JSON.parse(value));
+  } catch {
+    return null;
+  }
+};
+
 // -- Hook -------------------------------------------------------------------
 
 export const createCoelhoHook = (dom = {}) =>
@@ -281,7 +289,7 @@ export const createCoelhoHook = (dom = {}) =>
       this._input = input;
 
       const state = EditorState.create({
-        doc: PMNode.fromJSON(schema, JSON.parse(input.value)),
+        doc: parseDoc(schema, input.value) ?? schema.topNodeType.createAndFill(),
         plugins: [history(), keymap(buildKeymap(schema)), keymap(baseKeymap)]
       });
 
@@ -318,13 +326,6 @@ export const createCoelhoHook = (dom = {}) =>
       };
 
       el.addEventListener("mousedown", this._onToolbar);
-
-      // Placeholder text is exposed for CSS rather than inserted into the
-      // document: a placeholder node would be a node, and would end up
-      // validated, stored and rendered.
-      if (el.dataset.coelhoPlaceholder) {
-        content.dataset.placeholder = el.dataset.coelhoPlaceholder;
-      }
 
       this.insertAttachment = (nodeJSON, url) => {
         setPreviewUrl(nodeJSON.attrs?.key, url);
@@ -363,9 +364,18 @@ export const createCoelhoHook = (dom = {}) =>
       const value = this._input?.value;
       if (!this._view || value === undefined || value === this._lastWritten) return;
 
-      const doc = PMNode.fromJSON(this._schema, JSON.parse(value));
-      const state = EditorState.create({ doc, plugins: this._view.state.plugins });
-      this._view.updateState(state);
+      const doc = parseDoc(this._schema, value);
+
+      // The input does not always hold a document: a rejected one comes back
+      // as the raw text that was posted, so the writer can fix it. Rebuilding
+      // the editor from that is not possible, and losing their work over it
+      // would be worse than ignoring the round trip.
+      if (!doc) {
+        this._lastWritten = value;
+        return;
+      }
+
+      this._view.updateState(EditorState.create({ doc, plugins: this._view.state.plugins }));
       this._lastWritten = value;
     },
 

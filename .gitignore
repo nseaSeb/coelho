@@ -31,3 +31,6 @@ coelho-*.tar
 /demo/deps/
 /demo/node_modules/
 /demo/priv/static/assets/
+
+# Playwright browsers are installed per machine, not per checkout.
+/demo/test-results/

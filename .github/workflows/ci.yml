@@ -107,6 +107,49 @@ jobs:
           mix assets.setup
           mix assets.build
 
+  browser:
+    name: Browser
+    runs-on: ubuntu-latest
+    # The demo has to actually run, which it does in dev.
+    env:
+      MIX_ENV: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.1"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install dependencies
+        working-directory: demo
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          mix deps.get
+          mix assets.setup
+          mix assets.build
+
+      # Everything else proves the halves fit. This proves the thing runs:
+      # typing, the round trip to the server, marks, undo, and an upload
+      # stored and served back through a signed URL.
+      - name: Drive the editor in a real browser
+        working-directory: demo
+        run: |
+          PORT=4321 mix phx.server &
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:4321/ && break
+            sleep 1
+          done
+          BASE_URL=http://localhost:4321 npm run test:browser
+
   bridge:
     name: Schema bridge
     runs-on: ubuntu-latest

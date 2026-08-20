@@ -34,6 +34,21 @@ There is **no database**. Coelho stores the document in the row that owns it,
 so the demo gets away with an `embedded_schema` and a changeset — that is the
 whole persistence story.
 
+## Checking that a person can actually type in it
+
+No Elixir test can establish that. `test/browser/editor.mjs` drives a real
+Chromium against a running instance and checks the things only a browser
+knows: that the editor mounts, that typing reaches the document *and* the
+server, that the toolbar and the keyboard apply marks, that undo works, and
+that dropping a file in stores it and serves the bytes back through a signed
+URL.
+
+```
+npx playwright install chromium
+PORT=4321 mix phx.server &
+BASE_URL=http://localhost:4321 npm run test:browser
+```
+
 ## Checking that both halves agree
 
 The schema is declared in Elixir and exported to the browser, but `toDOM` and

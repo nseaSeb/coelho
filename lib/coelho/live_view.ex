@@ -23,7 +23,10 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     The component ships no styles. It gives CSS two things to work with: the
     root carries `coelho-empty` while the document has no text, and the
-    content element carries `data-placeholder`, so an empty editor shows its
+    content element carries `data-placeholder` — rendered by the server, not
+    set by the hook, because `phx-update="ignore"` stops LiveView patching an
+    element's children but not its own attributes, so anything JavaScript
+    writes there is undone on the next patch. An empty editor shows its
     placeholder with
 
         .coelho-empty .coelho-content::before { content: attr(data-placeholder); }
@@ -117,7 +120,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
         assigns
         |> assign(:id, id)
         |> assign(:schema_json, JSON.encode!(Schema.to_json(schema)))
-        |> assign(:value_json, JSON.encode!(assigns.field.value || Coelho.empty(schema)))
+        |> assign(:value_json, value_json(assigns.field.value, schema))
         |> assign(:toolbar, Enum.filter(assigns.toolbar, &supported?(schema, &1)))
 
       ~H"""
@@ -127,7 +130,6 @@ if Code.ensure_loaded?(Phoenix.Component) do
         phx-hook="Coelho"
         data-coelho-schema={@schema_json}
         data-coelho-input={@field.id}
-        data-coelho-placeholder={@placeholder}
         data-coelho-upload={@upload && @upload.name}
         {@rest}
       >
@@ -142,12 +144,25 @@ if Code.ensure_loaded?(Phoenix.Component) do
             {command}
           </button>
         </div>
-        <div id={@id <> "-content"} class="coelho-content" phx-update="ignore"></div>
+        <div
+          id={@id <> "-content"}
+          class="coelho-content"
+          data-placeholder={@placeholder}
+          phx-update="ignore"
+        ></div>
         <.live_file_input :if={@upload} upload={@upload} class="coelho-file-input" />
         <input type="hidden" name={@field.name} id={@field.id} value={@value_json} />
       </div>
       """
     end
+
+    # When a document fails to cast, the form hands back the raw parameter —
+    # the JSON the editor posted — so the writer does not lose what they were
+    # working on. Encoding that again would put a JSON *string* in the input,
+    # and the hook would be handed a string where a document belongs.
+    defp value_json(nil, schema), do: JSON.encode!(Coelho.empty(schema))
+    defp value_json(value, _schema) when is_binary(value), do: value
+    defp value_json(value, _schema), do: JSON.encode!(value)
 
     # A button for a node the schema does not declare would do nothing when
     # clicked, so the toolbar is filtered against the schema rather than

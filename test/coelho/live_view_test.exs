@@ -28,6 +28,18 @@ defmodule Coelho.LiveViewTest do
       assert html =~ "hello"
     end
 
+    test "a rejected document comes back as the text that was posted" do
+      # phoenix_ecto hands back the raw parameter when a cast fails, so the
+      # writer does not lose their work. Encoding that again would put a JSON
+      # string where the hook expects a document.
+      posted = ~s({"type":"doc","content":[{"type":"script"}]})
+
+      html = render(%{field: form(posted)[:body]})
+
+      assert html =~ "&quot;script&quot;"
+      refute html =~ ~s(value="&quot;{)
+    end
+
     test "seeds an empty document when the field has no value" do
       html = render(%{field: form(nil)[:body]})
 
@@ -67,10 +79,12 @@ defmodule Coelho.LiveViewTest do
       refute html =~ ~s(data-coelho-command="italic")
     end
 
-    test "the placeholder is exposed to CSS rather than put in the document" do
+    test "the placeholder is rendered by the server, for CSS to pick up" do
       html = render(%{field: form(nil)[:body], placeholder: "Write something"})
 
-      assert html =~ ~s(data-coelho-placeholder="Write something")
+      # Not set by the hook: phx-update="ignore" spares an element's children,
+      # not its own attributes, so LiveView would undo that on the next patch.
+      assert html =~ ~s(data-placeholder="Write something")
     end
 
     test "an empty toolbar list hides the toolbar entirely" do

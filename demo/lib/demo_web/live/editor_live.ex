@@ -219,22 +219,22 @@ defmodule DemoWeb.EditorLive do
 
           <section>
             <h2>Server rendered HTML</h2>
-            <div class="rendered">{Phoenix.HTML.raw(@html)}</div>
+            <div class="rendered" data-pane="rendered">{Phoenix.HTML.raw(@html)}</div>
           </section>
 
           <section>
             <h2>What that HTML is</h2>
-            <pre>{@html}</pre>
+            <pre data-pane="html">{@html}</pre>
           </section>
 
           <section>
             <h2>What is stored</h2>
-            <pre>{@json}</pre>
+            <pre data-pane="stored">{@json}</pre>
           </section>
 
           <section>
             <h2>What full text search would index</h2>
-            <pre>{@text}</pre>
+            <pre data-pane="text">{@text}</pre>
           </section>
         </div>
       </div>
