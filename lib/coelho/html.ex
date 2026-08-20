@@ -79,6 +79,12 @@ defmodule Coelho.HTML do
   # opinion about, and turned back into a space on the way out.
   @separator "\u{E000}"
 
+  # And inside `<pre>`, where whitespace is content and replacing a run with
+  # one character would flatten indentation, the run is *fenced* instead:
+  # the parser keeps the node because it is no longer whitespace-only, and the
+  # fence comes off with nothing lost.
+  @fence "\u{E001}"
+
   @doc """
   Converts HTML into a validated document.
   """
@@ -99,15 +105,16 @@ defmodule Coelho.HTML do
   @spec take(%{optional(String.t()) => String.t()}, [String.t()]) :: map()
   def take(attrs, names), do: Map.take(attrs, names)
 
-  # `<pre>` is left alone: its whitespace is content, and it survives the
-  # parser anyway by not being whitespace-only.
   defp mark_separators(html) do
     html
-    |> String.replace(@separator, "")
+    |> String.replace([@separator, @fence], "")
     |> then(&Regex.split(~r{(<pre\b.*?</pre>)}is, &1, include_captures: true))
     |> Enum.map_join(fn part ->
       if String.starts_with?(String.downcase(part), "<pre") do
-        part
+        # A code block that is only whitespace is a code block: the parser
+        # would drop the node and it would come back empty, so the run is
+        # fenced rather than replaced, keeping it to the character.
+        Regex.replace(~r{>(\s+)<}u, part, ">" <> @fence <> "\\1" <> @fence <> "<")
       else
         # The `<` has to open a tag: a `>` and a `<` either side of whitespace
         # inside an attribute value are just characters.
@@ -305,7 +312,10 @@ defmodule Coelho.HTML do
   # Nothing carrying the separator may reach the document, attribute values
   # included: the regex that plants it works on raw HTML, and raw HTML is not
   # only made of tags.
-  defp scrub(value) when is_binary(value), do: String.replace(value, @separator, " ")
+  defp scrub(value) when is_binary(value) do
+    value |> String.replace(@separator, " ") |> String.replace(@fence, "")
+  end
+
   defp scrub(value), do: value
 
   # -- Fitting --------------------------------------------------------------
@@ -437,6 +447,7 @@ defmodule Coelho.HTML do
   defp collapse(text) do
     text
     |> String.replace(@separator, " ")
+    |> String.replace(@fence, "")
     |> String.replace(~r/\s+/u, " ")
   end
 

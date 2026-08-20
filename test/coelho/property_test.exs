@@ -8,11 +8,17 @@ defmodule Coelho.PropertyTest do
 
   # -- Generators -----------------------------------------------------------
 
+  # Not `uniq_list_of`: it gives up after ten consecutive duplicates, and
+  # there are only five marks to draw from, so the run failed on the seeds
+  # that happened to repeat — intermittently, and never where it was looked
+  # for. Drawing a list and taking it apart cannot run out of tries.
   defp text_node do
     gen all(
           text <- string(:printable, min_length: 1),
-          marks <- uniq_list_of(mark(), max_length: 3)
+          drawn <- list_of(mark(), max_length: 3)
         ) do
+      marks = Enum.uniq_by(drawn, & &1["type"])
+
       case marks do
         [] -> %{"type" => "text", "text" => text}
         marks -> %{"type" => "text", "text" => text, "marks" => marks}

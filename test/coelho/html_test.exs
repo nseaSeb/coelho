@@ -324,6 +324,22 @@ defmodule Coelho.HTMLTest do
                "<pre><code>keep</code></pre>"
     end
 
+    test "keeps whitespace that is the whole of it" do
+      # A code block that is only whitespace is still a code block. The parser
+      # drops a whitespace-only node, and a closed `<pre>` is skipped by the
+      # pass that protects those, so it came back empty — and a document
+      # imported, rendered and imported again was not the same document.
+      assert round_trip("<pre><code>   </code></pre>") == "<pre><code>   </code></pre>"
+    end
+
+    test "keeps indentation to the character" do
+      # Fencing the run rather than replacing it: replacing would flatten
+      # every indent to one space.
+      source = "<pre><code>def a do\n    :ok\nend</code></pre>"
+
+      assert round_trip(source) == source
+    end
+
     test "never contains the character used to carry whitespace" do
       # An unclosed `<pre>` escapes the region the separator skips, and it
       # would otherwise be stored — invisible on the page and a real
@@ -331,6 +347,7 @@ defmodule Coelho.HTMLTest do
       document = import_html!("<p><p><pre>   </p></p>")
 
       refute inspect(document, binaries: :as_binaries) =~ "238, 128, 128"
+      refute inspect(document, binaries: :as_binaries) =~ "238, 128, 129"
       refute document |> Coelho.to_text() |> String.contains?("\u{E000}")
     end
   end
