@@ -144,4 +144,76 @@ defmodule Coelho.AttachmentsTest do
       assert Document.to_text(document, schema()) == "plan.pdf"
     end
   end
+
+  describe "orphans/3" do
+    test "answers what is stored and no longer referred to" do
+      documents = [validated([attachment(%{"key" => "kept", "filename" => "a.pdf"})])]
+
+      assert Attachments.orphans(["kept", "gone", "never used"], documents) ==
+               ["gone", "never used"]
+    end
+
+    test "a key referred to by any document survives" do
+      documents = [
+        validated([%{"type" => "paragraph", "content" => []}]),
+        validated([attachment(%{"key" => "kept", "filename" => "a.pdf"})])
+      ]
+
+      assert Attachments.orphans(["kept"], documents) == []
+    end
+
+    test "an empty column is not a document with no attachments" do
+      # A nil body means "no rich text here", and treating it as an empty
+      # document would be the same answer for the wrong reason. Either way it
+      # must not make something look unused.
+      documents = [nil, validated([attachment(%{"key" => "kept", "filename" => "a.pdf"})])]
+
+      assert Attachments.orphans(["kept"], documents) == []
+    end
+
+    test "nothing stored means nothing to remove" do
+      assert Attachments.orphans([], [Coelho.empty()]) == []
+    end
+  end
+
+  describe "sweep/4" do
+    @moduletag :tmp_dir
+
+    setup %{tmp_dir: tmp_dir} do
+      storage = Coelho.Storage.Disk.new(tmp_dir)
+
+      for key <- ~w(kept gone) do
+        :ok = Coelho.Storage.put(storage, key, {:binary, key})
+      end
+
+      %{storage: storage}
+    end
+
+    test "removes what no document refers to, and says what went", %{storage: storage} do
+      documents = [validated([attachment(%{"key" => "kept", "filename" => "a.pdf"})])]
+
+      assert {:ok, ["gone"]} = Attachments.sweep(storage, ~w(kept gone), documents)
+      assert Coelho.Storage.exists?(storage, "kept")
+      refute Coelho.Storage.exists?(storage, "gone")
+    end
+
+    test "a dry run touches nothing", %{storage: storage} do
+      documents = [validated([attachment(%{"key" => "kept", "filename" => "a.pdf"})])]
+
+      assert {:ok, ["gone"]} =
+               Attachments.sweep(storage, ~w(kept gone), documents, dry_run: true)
+
+      assert Coelho.Storage.exists?(storage, "gone")
+    end
+
+    test "stops at the first refusal rather than carrying on", %{storage: storage} do
+      # A key the storage will not touch means something is wrong with the
+      # list it was given; deleting the rest of it on that footing is how a
+      # cleanup job becomes an incident.
+      assert {:error, {"../escaped", :invalid_key}} =
+               Attachments.sweep(storage, ["../escaped", "gone"], [])
+
+      assert Coelho.Storage.exists?(storage, "gone")
+    end
+  end
 end

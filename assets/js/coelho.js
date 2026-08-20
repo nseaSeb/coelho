@@ -186,6 +186,12 @@ const commandFor = (name, schema, options) => {
           return true;
         })
       );
+    case "caption":
+      return (state, dispatch, view) => {
+        if (!captionable(state)) return false;
+        if (dispatch) view.coelhoEditCaption();
+        return true;
+      };
     case "heading":
       return (
         nodes.heading &&
@@ -302,6 +308,15 @@ const linkAround = (state, type) => {
   while (last < pieces.length - 1 && pieces[last + 1].linked) last += 1;
 
   return { from: pieces[first].start, to: pieces[last].end, href: mark.attrs.href };
+};
+
+// The node a caption can be put on: one that is selected and that declares
+// the attribute. Nothing else can be captioned, and the button says so by
+// being disabled.
+const captionable = (state) => {
+  const { node, from } = state.selection;
+
+  return node && "caption" in (node.type.spec.attrs ?? {}) ? { node, pos: from } : null;
 };
 
 const commandActive = (state, name, options) => {
@@ -478,7 +493,7 @@ export const createCoelhoHook = (dom = {}) =>
           // `_pendingLink` is a pair of positions, and any edit shifts them.
           // With the field still open, confirming afterwards would have put
           // the link on a stretch of text that is no longer the one aimed at.
-          if (transaction.docChanged && this._pendingLink) this.closeLink({ focus: false });
+          if (transaction.docChanged && this._pendingField) this.closeField({ focus: false });
 
           // Writing the input back when the change *came from* the server
           // would post it straight back: the server normalises, so its copy
@@ -548,37 +563,51 @@ export const createCoelhoHook = (dom = {}) =>
       this._linkZone = el.querySelector("[data-coelho-link-zone]");
       this._linkInput = el.querySelector("[data-coelho-link-input]");
 
-      // The selection is what says *what* to link, so a field that took the
-      // focus would lose the answer: the range is remembered before opening.
-      this.openLink = ({ from, to }, href) => {
+      // One field, whatever asked for it. What it does on Enter is decided
+      // when it opens, because the selection is what says what to act on and
+      // a field that took the focus would lose the answer.
+      this.openField = ({ value, label, apply }) => {
         if (!this._linkInput) return;
 
-        this._pendingLink = { from, to };
+        this._pendingField = apply;
         this._linkZone.hidden = false;
-        this._linkInput.value = href ?? "";
+        this._linkInput.value = value ?? "";
+        this._linkInput.setAttribute("aria-label", label);
         this._linkInput.focus();
         this._linkInput.select();
       };
 
-      this.closeLink = ({ focus = true } = {}) => {
-        this._pendingLink = null;
+      this.closeField = ({ focus = true } = {}) => {
+        this._pendingField = null;
 
         if (this._linkZone) this._linkZone.hidden = true;
         if (this._linkInput) this._linkInput.value = "";
         if (focus) this._view.focus();
       };
 
-      this.confirmLink = (href) => {
-        const link = this._schema.marks.link;
-        if (!link || !this._pendingLink) return this.closeLink();
+      this.confirmField = (value) => {
+        if (!this._pendingField) return this.closeField();
 
-        if (href && EXECUTABLE.test(href)) {
-          this._linkInput.setCustomValidity("This kind of address cannot be linked.");
+        const refusal = this._pendingField(value);
+
+        // An apply that hands back a reason keeps the field open with it
+        // showing, rather than letting the writer walk away from a change
+        // that never happened.
+        if (typeof refusal === "string") {
+          this._linkInput.setCustomValidity(refusal);
           this._linkInput.reportValidity();
           return undefined;
         }
 
-        const { from, to } = this._pendingLink;
+        return this.closeField();
+      };
+
+      this.applyLink = ({ from, to }) => (href) => {
+        const link = this._schema.marks.link;
+        if (!link) return undefined;
+
+        if (href && EXECUTABLE.test(href)) return "This kind of address cannot be linked.";
+
         const { state } = this._view;
 
         // An emptied field removes the link and leaves the text alone, which
@@ -589,7 +618,34 @@ export const createCoelhoHook = (dom = {}) =>
           : state.tr.removeMark(from, to, link);
 
         this._view.dispatch(transaction);
-        return this.closeLink();
+        return undefined;
+      };
+
+      // A caption is an attribute of the node, not content inside it, so it
+      // is set rather than typed into: the alternative is a node view that
+      // mirrors an editable region back into an attribute, which is a lot of
+      // machinery for one line of text.
+      this.applyCaption = (pos) => (caption) => {
+        const { state } = this._view;
+        const node = state.doc.nodeAt(pos);
+        if (!node) return undefined;
+
+        this._view.dispatch(
+          state.tr.setNodeMarkup(pos, null, { ...node.attrs, caption: caption || null })
+        );
+
+        return undefined;
+      };
+
+      this.editCaption = () => {
+        const selected = captionable(this._view.state);
+        if (!selected) return;
+
+        this.openField({
+          value: selected.node.attrs.caption ?? "",
+          label: "Caption",
+          apply: this.applyCaption(selected.pos)
+        });
       };
 
       this.editLink = () => {
@@ -602,7 +658,7 @@ export const createCoelhoHook = (dom = {}) =>
           cancelable: true,
           detail: {
             selection: this._view.state.selection,
-            apply: (href) => this.confirmLink(href)
+            apply: (href) => this.confirmField(href)
           }
         });
 
@@ -617,9 +673,17 @@ export const createCoelhoHook = (dom = {}) =>
         // reaching past it, and "extend this link" would extend nothing.
         if (!state.selection.empty) {
           const { from, to } = state.selection;
-          this.openLink({ from, to }, existing?.href ?? "");
+          this.openField({
+            value: existing?.href ?? "",
+            label: "Link address",
+            apply: this.applyLink({ from, to })
+          });
         } else if (existing) {
-          this.openLink(existing, existing.href);
+          this.openField({
+            value: existing.href,
+            label: "Link address",
+            apply: this.applyLink(existing)
+          });
         }
       };
 
@@ -629,10 +693,10 @@ export const createCoelhoHook = (dom = {}) =>
 
           if (event.key === "Enter") {
             event.preventDefault();
-            this.confirmLink(this._linkInput.value.trim());
+            this.confirmField(this._linkInput.value.trim());
           } else if (event.key === "Escape") {
             event.preventDefault();
-            this.closeLink();
+            this.closeField();
           }
         };
 
@@ -743,6 +807,7 @@ export const createCoelhoHook = (dom = {}) =>
       // The link command only gets `(state, dispatch, view)`, so the view is
       // where it can find its way back to the editor's own machinery.
       this._view.coelhoEditLink = () => this.editLink();
+      this._view.coelhoEditCaption = () => this.editCaption();
 
       this._content = content;
 

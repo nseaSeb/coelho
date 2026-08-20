@@ -48,6 +48,24 @@ const paneEventually = async (page, name, contains) => {
 
 const spaces = (text) => text.replaceAll("\u00a0", " ");
 
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64"
+);
+
+// A test that needs an attachment makes its own: depending on one another
+// test happened to leave behind fails wherever that test is skipped.
+const attach = async (page, name) => {
+  await page.click(EDITOR);
+  await page.setInputFiles(".coelho-file-input", { name, mimeType: "image/png", buffer: png });
+
+  await documentEventually(
+    page,
+    `no attachment came back for ${name}`,
+    "return doc.content.some((n) => n.type === 'attachment')"
+  );
+};
+
 const LINK_INPUT = "[data-coelho-link-input]";
 const HAS_LINK =
   "return doc.content.flatMap((b) => b.content ?? []).some((n) => n.marks?.some((m) => m.type === 'link'))";
@@ -281,7 +299,21 @@ const run = async () => {
       await selectAll(page);
       await page.keyboard.press("ArrowLeft");
       await page.keyboard.press("ArrowRight");
-      await settle(page);
+
+      // Two conditions, both of which the branch under test depends on: the
+      // selection has actually collapsed — the field opens on the selection
+      // when it has not, and then rewrites only that — and the toolbar agrees
+      // the caret sits inside the link.
+      await page.waitForFunction(
+        () =>
+          document.getSelection()?.isCollapsed &&
+          document
+            .querySelector('[data-coelho-command="link"]')
+            ?.getAttribute("aria-pressed") === "true",
+        null,
+        { timeout: 5000 }
+      );
+
       await page.click('[data-coelho-command="link"]');
 
       assert.equal(await page.inputValue(LINK_INPUT), "https://old.example/x", "prefilled");
@@ -385,11 +417,6 @@ const run = async () => {
     });
 
     await test("an uploaded file becomes an attachment node and is served", async () => {
-      const png = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-        "base64"
-      );
-
       await page.click(EDITOR);
       await page.setInputFiles(".coelho-file-input", {
         name: "dot.png",
@@ -471,6 +498,44 @@ const run = async () => {
       assert.match(spaces(await page.textContent(EDITOR)), /from elsewhere/);
     });
 
+    await test("an attachment caption is written from the toolbar", async () => {
+      // The caption is an attribute of the node, not content inside it, so
+      // there is nowhere to type it: the button opens the same field the
+      // link uses, on whichever selected node declares the attribute.
+      await typeInEditor(page, "with an attachment");
+      await attach(page, "captioned.png");
+
+      // Inserting leaves the attachment selected, so the caret goes back into
+      // the text before asking what the button does with nothing captionable.
+      await page.click(EDITOR, { position: { x: 6, y: 8 } });
+      await settle(page);
+
+      assert.ok(
+        await page.isDisabled('[data-coelho-command="caption"]'),
+        "disabled with nothing captionable selected"
+      );
+
+      await page.click(".coelho-content figure");
+      await settle(page);
+
+      assert.ok(!(await page.isDisabled('[data-coelho-command="caption"]')), "enabled on one");
+
+      await page.click('[data-coelho-command="caption"]');
+      await page.fill(LINK_INPUT, "Written from the toolbar");
+      await page.keyboard.press("Enter");
+
+      await documentEventually(
+        page,
+        "the caption was not written",
+        `return doc.content.some((n) => n.attrs?.caption === "Written from the toolbar")`
+      );
+
+      assert.match(
+        await paneEventually(page, "html", "Written from the toolbar"),
+        /<figcaption>Written from the toolbar<\/figcaption>/
+      );
+    });
+
     await test("a node the application added to the schema round trips", async () => {
       await typeInEditor(page, "written by ");
       await paneEventually(page, "stored", "written by");
@@ -509,6 +574,46 @@ const run = async () => {
       // and that is what gets stored, so it comes back out of the server too.
       assert.match(spaces(await pane(page, "text")), /written by @ada/);
       assert.match(spaces(await page.textContent(EDITOR)), /written by @ada/);
+    });
+
+    await test("composed input survives a server round trip", async () => {
+      // Typing Japanese, or dictating, goes through composition events: the
+      // browser holds a provisional string in the DOM and replaces it when
+      // the writer commits. Nothing else here types anything but ASCII.
+      //
+      // What this covers: a composition committing correctly, and surviving
+      // the round trip that follows. What it does not: an echo from the
+      // server landing *during* a composition. The document does not change
+      // while one is open, so nothing here provokes that, and it stays a
+      // known gap rather than a claim.
+      //
+      // Only Chromium can be told to compose, through CDP.
+      if (BROWSER !== "chromium") {
+        console.log("      (composition can only be driven in chromium)");
+        return;
+      }
+
+      await typeInEditor(page, "before ");
+
+      const cdp = await page.context().newCDPSession(page);
+
+      for (const provisional of ["n", "ni", "nihon"]) {
+        await cdp.send("Input.imeSetComposition", {
+          text: provisional,
+          selectionStart: provisional.length,
+          selectionEnd: provisional.length
+        });
+      }
+
+      // Committing replaces the provisional string, it does not add to it.
+      await cdp.send("Input.insertText", { text: "日本" });
+      await settle(page);
+      await paneEventually(page, "stored", "日本");
+
+      const text = spaces(await page.textContent(EDITOR));
+
+      assert.equal(text, "before 日本", `composition left ${JSON.stringify(text)}`);
+      assert.match(await pane(page, "text"), /before 日本/);
     });
 
     await test("nothing threw along the way", () => {

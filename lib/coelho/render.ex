@@ -75,8 +75,8 @@ defmodule Coelho.Render do
   Returns a URL fit to be emitted, or `nil` for one that is not.
 
   Validation already rejects unsafe URLs on the way in, but stored documents
-  are not re-validated on the way out — `Coelho.Ecto.Type.load/3` deliberately
-  trusts what is in the column. A row written before the schema tightened, by
+  are not re-validated on the way out — `Coelho.Ecto.Type` deliberately trusts
+  what is in the column. A row written before the schema tightened, by
   a direct database write, or under a looser custom schema, would otherwise
   put `javascript:` straight into an `href`. Escaping does not help there:
   the value is quoted correctly and still executes.

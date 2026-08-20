@@ -123,6 +123,14 @@ defmodule Coelho.HTMLTest do
     test "but a block does not begin or end with the source's indentation" do
       assert round_trip("<p>\n  spaced out\n</p>") == "<p>spaced out</p>"
     end
+
+    test "and does not end with one hiding behind another" do
+      # Trimming empties the last child and drops it, and what it was hiding
+      # is then the last child in its turn. Stopping after one pass left a
+      # document that trimmed further the next time it was imported.
+      assert round_trip("<p>text<code> </code>   </p>") == "<p>text</p>"
+      assert round_trip("<p>text<code> </code>b</p>") == "<p>text<code> </code>b</p>"
+    end
   end
 
   describe "the result is a real document" do
@@ -303,6 +311,27 @@ defmodule Coelho.HTMLTest do
         import_html!(~s(<p><span data-user-id="abc">text</span></p>), Mentions.schema())
 
       assert [%{"content" => [%{"type" => "text"}]}] = document["content"]
+    end
+  end
+
+  describe "what a code block quotes" do
+    test "does not include a script or style that was inside it" do
+      # `<script>` and `<style>` are dropped with their content everywhere
+      # else, and a raw-text element survives the parser's whitespace
+      # handling, so Floki's own text function let exactly that content
+      # through here and nowhere else.
+      assert round_trip("<pre>keep<style>  .a{}  </style><script>alert(1)</script></pre>") ==
+               "<pre><code>keep</code></pre>"
+    end
+
+    test "never contains the character used to carry whitespace" do
+      # An unclosed `<pre>` escapes the region the separator skips, and it
+      # would otherwise be stored — invisible on the page and a real
+      # character in the database.
+      document = import_html!("<p><p><pre>   </p></p>")
+
+      refute inspect(document, binaries: :as_binaries) =~ "238, 128, 128"
+      refute document |> Coelho.to_text() |> String.contains?("\u{E000}")
     end
   end
 end

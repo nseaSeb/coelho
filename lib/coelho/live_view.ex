@@ -19,6 +19,13 @@ if Code.ensure_loaded?(Phoenix.Component) do
     its ProseMirror schema from the same declaration that validates the
     document server side.
 
+    ## Captions
+
+    A caption is an attribute of the node carrying it, not content inside it,
+    so `caption` in the toolbar opens the same field on whichever node is
+    selected and declares the attribute — an attachment, by default. The
+    button is disabled the rest of the time.
+
     ## Links
 
     When the toolbar carries `link`, the component renders a field beside it
@@ -163,7 +170,8 @@ if Code.ensure_loaded?(Phoenix.Component) do
     )
 
     attr(:toolbar, :list,
-      default: ~w(bold italic strike code link heading bullet_list ordered_list blockquote),
+      default:
+        ~w(bold italic strike code link heading bullet_list ordered_list blockquote caption),
       doc: "commands to show, in order; an empty list hides the toolbar"
     )
 
@@ -214,7 +222,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
             {command}
           </button>
 
-          <span :if={"link" in @toolbar} class="coelho-link" data-coelho-link-zone hidden>
+          <span
+            :if={"link" in @toolbar or "caption" in @toolbar}
+            class="coelho-link"
+            data-coelho-link-zone
+            hidden
+          >
             <input
               type="url"
               class="coelho-link-input"
@@ -248,7 +261,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # clicked, so the toolbar is filtered against the schema rather than
     # trusting the caller to keep the two lists in step.
     @mark_commands ~w(bold italic strike code link)
-    @always ~w(undo redo)
+    # `caption` acts on whichever selected node declares the attribute, so it
+    # cannot be looked up as a node or a mark of its own.
+    @always ~w(undo redo caption)
 
     defp supported?(_schema, command) when command in @always, do: true
 

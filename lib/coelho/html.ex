@@ -176,6 +176,25 @@ defmodule Coelho.HTML do
     if Enum.any?(marks, &(&1["type"] == mark["type"])), do: marks, else: marks ++ [mark]
   end
 
+  # What a code block quotes, with two things taken out.
+  #
+  # A `<script>` or `<style>` is dropped with its content everywhere else, and
+  # a raw-text element survives the parser's whitespace handling, so `Floki`'s
+  # own text function would let exactly that content through here and nowhere
+  # else. And the separator planted before parsing is invisible on the page
+  # but is a real character: an unclosed `<pre>` escapes the region that is
+  # spared, and it would end up stored.
+  defp verbatim_text(trees) do
+    trees
+    |> Enum.map(fn
+      text when is_binary(text) -> scrub(text)
+      {tag, _attrs, _children} when tag in @discarded -> ""
+      {_tag, _attrs, children} -> verbatim_text(children)
+      _other -> ""
+    end)
+    |> IO.iodata_to_binary()
+  end
+
   defp text_node(text, []), do: %{"type" => "text", "text" => text}
   defp text_node(text, marks), do: %{"type" => "text", "text" => text, "marks" => marks}
 
@@ -191,7 +210,7 @@ defmodule Coelho.HTML do
       spec.marks == [] ->
         # A node that forbids marks — a code block — takes its text verbatim,
         # tags and all, rather than losing what it was quoting.
-        text = children |> floki_text() |> String.trim_trailing("\n")
+        text = children |> verbatim_text() |> String.trim_trailing("\n")
         content = if text == "", do: [], else: [%{"type" => "text", "text" => text}]
         [Map.put(node, "content", content)]
 
@@ -425,11 +444,18 @@ defmodule Coelho.HTML do
   # indentation suggested.
   defp trim_edges([]), do: []
 
+  # Until it settles: trimming can empty the last child and drop it, and
+  # whatever it was hiding is then the last child in its turn. Trimming once
+  # leaves a document that trims further the next time it is imported, and a
+  # round trip through storage would then keep changing it.
   defp trim_edges(children) do
-    children
-    |> List.update_at(0, &trim_text(&1, :leading))
-    |> List.update_at(-1, &trim_text(&1, :trailing))
-    |> Enum.reject(&(Map.get(&1, "type") == "text" and Map.get(&1, "text") == ""))
+    trimmed =
+      children
+      |> List.update_at(0, &trim_text(&1, :leading))
+      |> List.update_at(-1, &trim_text(&1, :trailing))
+      |> Enum.reject(&(Map.get(&1, "type") == "text" and Map.get(&1, "text") == ""))
+
+    if trimmed == children, do: children, else: trim_edges(trimmed)
   end
 
   defp trim_text(%{"type" => "text", "text" => text} = node, :leading),

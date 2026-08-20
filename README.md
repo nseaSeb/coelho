@@ -145,7 +145,8 @@ The component renders a toolbar, an empty container and a hidden input
 holding the document as JSON. Toolbar buttons carry `aria-pressed`,
 kept in step with what is in force under the cursor, and go `disabled` when
 their command cannot run — so **bold** lights up inside bold text and undo
-greys out with nothing to undo. The container carries `phx-update="ignore"` —
+greys out with nothing to undo. Links and captions are edited in a field
+beside the toolbar rather than through `window.prompt`. The container carries `phx-update="ignore"` —
 ProseMirror owns that subtree, and LiveView patching it would fight the
 editor on every keystroke. Everything the server needs travels through the
 hidden input, so the editor is an ordinary form field: no custom events, no
@@ -240,7 +241,20 @@ signed blob of identity smuggled through an HTML attribute, so the same
 walk that validates the document also enumerates its attachments.
 
 `Coelho.Attachment` records the metadata; `mix coelho.gen.migration`
-creates its table.
+creates its table. Deleting an image from a document leaves its bytes
+behind, so something has to sweep:
+
+```elixir
+stored = Repo.all(from a in Coelho.Attachment, select: a.key)
+documents = Repo.all(from p in Post, select: p.body)
+
+{:ok, removed} = Coelho.Attachments.sweep(storage, stored, documents, dry_run: true)
+```
+
+`documents` must be **every** document that could still refer to something.
+Passing fewer deletes files that are still in use, which is why this asks for
+them rather than going and finding them: only the application knows where
+they all are.
 
 The bytes themselves go through `Coelho.Storage`, a four-callback contract
 with a local-filesystem implementation in the box:

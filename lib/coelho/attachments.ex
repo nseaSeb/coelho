@@ -32,7 +32,7 @@ defmodule Coelho.Attachments do
   and the renderer need.
   """
 
-  alias Coelho.{Render, Schema}
+  alias Coelho.{Render, Schema, Storage}
   alias Coelho.Schema.{Attr, NodeSpec}
 
   @typedoc """
@@ -121,6 +121,71 @@ defmodule Coelho.Attachments do
   @spec keys(map(), Schema.t()) :: [String.t()]
   def keys(document, %Schema{} = schema \\ Schema.default()) do
     document |> collect_keys(schema) |> Enum.uniq()
+  end
+
+  @doc """
+  The keys that are stored and that no document mentions any more.
+
+  Deleting an image from a document leaves its bytes behind, so without
+  something calling this a Coelho store only ever grows.
+
+      stored = Repo.all(from a in Coelho.Attachment, select: a.key)
+      documents = Repo.all(from p in Post, select: p.body)
+
+      Coelho.Attachments.orphans(stored, documents)
+
+  `stored_keys` is usually every `Coelho.Attachment` row: the table knows what
+  was uploaded, where a storage may not be able to enumerate itself cheaply.
+
+  `documents` is every document that could still be referring to something —
+  every row of every rich text column. **Passing fewer deletes files that are
+  still in use**, which is why this asks for the documents rather than going
+  and finding them: only the application knows where they all are, and a
+  half-answer here is data loss.
+
+  Deleting is left to the caller for the same reason. `sweep/4` does it when
+  the caller says so.
+  """
+  @spec orphans([String.t()], Enumerable.t(), Schema.t()) :: [String.t()]
+  def orphans(stored_keys, documents, %Schema{} = schema \\ Schema.default()) do
+    in_use =
+      documents
+      |> Stream.reject(&is_nil/1)
+      |> Stream.flat_map(&keys(&1, schema))
+      |> MapSet.new()
+
+    Enum.reject(stored_keys, &MapSet.member?(in_use, &1))
+  end
+
+  @doc """
+  Deletes the stored keys no document mentions, returning what it removed.
+
+  Pass `dry_run: true` to be told what would go without anything going —
+  which is how this should be run the first time, against a real store.
+
+      Coelho.Attachments.sweep(storage, keys, documents, dry_run: true)
+  """
+  @spec sweep(Storage.t(), [String.t()], Enumerable.t(), keyword()) ::
+          {:ok, [String.t()]} | {:error, {String.t(), term()}}
+  def sweep(storage, stored_keys, documents, opts \\ []) do
+    schema = Keyword.get(opts, :schema, Schema.default())
+    dry_run? = Keyword.get(opts, :dry_run, false)
+    gone = orphans(stored_keys, documents, schema)
+
+    if dry_run? do
+      {:ok, gone}
+    else
+      Enum.reduce_while(gone, {:ok, []}, fn key, {:ok, removed} ->
+        case Storage.delete(storage, key) do
+          :ok -> {:cont, {:ok, [key | removed]}}
+          {:error, reason} -> {:halt, {:error, {key, reason}}}
+        end
+      end)
+      |> case do
+        {:ok, removed} -> {:ok, Enum.reverse(removed)}
+        error -> error
+      end
+    end
   end
 
   defp collect_keys(node, schema) when is_map(node) do

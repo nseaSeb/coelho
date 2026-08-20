@@ -1,7 +1,7 @@
 defmodule Coelho.MixProject do
   use Mix.Project
 
-  @version "0.1.0-dev"
+  @version "0.1.0"
   @source_url "https://github.com/nseaSeb/coelho"
 
   def project do
@@ -62,7 +62,7 @@ defmodule Coelho.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      files: ~w(lib assets mix.exs README.md LICENSE),
+      files: ~w(lib assets mix.exs README.md CHANGELOG.md LICENSE),
       links: %{"GitHub" => @source_url}
     ]
   end
@@ -71,7 +71,25 @@ defmodule Coelho.MixProject do
     [
       main: "readme",
       source_url: @source_url,
-      extras: ["README.md"]
+      extras: ["README.md", "CHANGELOG.md"],
+      groups_for_modules: [
+        Document: [Coelho.Document, Coelho.Document.Error, Coelho.Render],
+        Schema: [
+          Coelho.Schema,
+          Coelho.Schema.NodeSpec,
+          Coelho.Schema.MarkSpec,
+          Coelho.Schema.Attr,
+          Coelho.Schema.ContentExpression,
+          Coelho.Schema.Default
+        ],
+        Phoenix: [Coelho.Ecto, Coelho.Ecto.Type, Coelho.LiveView, Coelho.Plug.Attachments],
+        Attachments: [
+          Coelho.Attachment,
+          Coelho.Attachments,
+          Coelho.Storage,
+          Coelho.Storage.Disk
+        ]
+      ]
     ]
   end
 end
