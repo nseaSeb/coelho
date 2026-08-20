@@ -46,6 +46,22 @@ defmodule DemoWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+  # A one-pixel PNG served with a permissive CORS header, so the browser test
+  # can paste an image from "another host" and watch it be captured. Reached
+  # through 127.0.0.1 while the page is on localhost: different origins, same
+  # server.
+  plug :remote_image
+
+  defp remote_image(%Plug.Conn{path_info: ["remote-image.png"]} = conn, _opts) do
+    conn
+    |> Plug.Conn.put_resp_header("access-control-allow-origin", "*")
+    |> Plug.Conn.put_resp_content_type("image/png")
+    |> Plug.Conn.send_resp(200, Demo.Uploads.pixel())
+    |> Plug.Conn.halt()
+  end
+
+  defp remote_image(conn, _opts), do: conn
+
   # Serves attachment bytes behind a signature, before the router sees them.
   plug Coelho.Plug.Attachments,
     at: "/attachments",

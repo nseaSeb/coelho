@@ -58,8 +58,10 @@
 .coelho-attachment-missing { color: #b45309; font-family: ui-monospace, monospace; font-size: .8rem; }
 .pane .field-error { color: #b91c1c; font-size: .8rem; margin: .25rem 0 0; }
 .pane button[type=submit] { margin-top: .75rem; padding: .4rem .9rem; border: 1px solid #ccc; border-radius: .375rem; background: #fff; cursor: pointer; }
-.coelho-empty .coelho-content::before { content: attr(data-placeholder); color: #999; pointer-events: none; float: left; height: 0; }
+.coelho-content .ProseMirror.coelho-empty::before { content: attr(data-placeholder); color: #999; pointer-events: none; float: left; height: 0; }
 .pane .hint { font-size: .75rem; color: #777; margin-top: .375rem; }
 .coelho-file-input { display: none; }
 .mention { background: #eef2ff; color: #3730a3; border-radius: .25rem; padding: 0 .2rem; }
 .pane button.link { background: none; border: 0; padding: 0; margin: 0; color: #2563eb; text-decoration: underline; cursor: pointer; font-size: inherit; }
+.coelho-command[aria-pressed="true"] { background: #1f2937; border-color: #1f2937; color: #fff; }
+.coelho-command:disabled { opacity: .4; cursor: default; }

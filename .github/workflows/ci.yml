@@ -108,11 +108,19 @@ jobs:
           mix assets.build
 
   browser:
-    name: Browser
+    name: Browser (${{ matrix.browser }})
     runs-on: ubuntu-latest
     # The demo has to actually run, which it does in dev.
     env:
       MIX_ENV: dev
+      BROWSER: ${{ matrix.browser }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # contenteditable and selection are where browsers disagree, which is
+        # where every bug this suite has found was hiding.
+        browser: [chromium, firefox, webkit]
 
     steps:
       - uses: actions/checkout@v4
@@ -132,14 +140,14 @@ jobs:
         working-directory: demo
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps ${{ matrix.browser }}
           mix deps.get
           mix assets.setup
           mix assets.build
 
       # Everything else proves the halves fit. This proves the thing runs:
-      # typing, the round trip to the server, marks, undo, and an upload
-      # stored and served back through a signed URL.
+      # typing, the round trip to the server, marks, undo, an upload stored
+      # and served back through a signed URL, and a pasted image captured.
       - name: Drive the editor in a real browser
         working-directory: demo
         run: |

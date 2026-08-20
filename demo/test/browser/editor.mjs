@@ -5,9 +5,12 @@
 //   mix phx.server &            # or any running instance
 //   node test/browser/editor.mjs
 import assert from "node:assert/strict";
-import { chromium } from "playwright";
+import * as playwright from "playwright";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:4321";
+// contenteditable and selection are where browsers disagree, which is
+// exactly where every bug this file has found so far was hiding.
+const BROWSER = process.env.BROWSER ?? "chromium";
 const EDITOR = ".coelho-content .ProseMirror";
 
 let passed = 0;
@@ -68,7 +71,7 @@ const typeInEditor = async (page, text) => {
 };
 
 const run = async () => {
-  const browser = await chromium.launch();
+  const browser = await playwright[BROWSER].launch();
   const page = await browser.newPage();
   const errors = watched;
 
@@ -185,11 +188,21 @@ const run = async () => {
       await selectAll(page);
       await page.keyboard.press("Backspace");
 
-      await page.waitForFunction(() => document.querySelector(".coelho")?.classList.contains("coelho-empty"));
-      assert.equal(
-        await page.getAttribute(".coelho-content", "data-placeholder"),
-        "Write something…"
+      // On the editor's own element: a class on the root would be patched
+      // away by the next render, so the placeholder would never show.
+      await page.waitForFunction(
+        () => document.querySelector(".ProseMirror")?.classList.contains("coelho-empty"),
+        null,
+        { timeout: 5000 }
       );
+
+      // And it survives a server round trip.
+      await paneEventually(page, "text", "");
+      assert.ok(
+        await page.$eval(".ProseMirror", (el) => el.classList.contains("coelho-empty")),
+        "the empty marker survives a render"
+      );
+      assert.equal(await page.getAttribute(".ProseMirror", "data-placeholder"), "Write something…");
     });
 
     await test("an uploaded file becomes an attachment node and is served", async () => {
@@ -228,6 +241,53 @@ const run = async () => {
       assert.equal(response.status(), 200);
       assert.equal(response.headers()["x-content-type-options"], "nosniff");
       assert.equal(Buffer.compare(Buffer.from(await response.body()), png), 0);
+    });
+
+    await test("an image pasted from another host is captured, not hotlinked", async () => {
+      // Storing someone else's URL leaks every reader's address to that host
+      // and breaks the day the file moves.
+      const remote = "http://127.0.0.1:4321/remote-image.png";
+
+      await typeInEditor(page, "pasted:");
+
+      const delivered = await page.evaluate((src) => {
+        const transfer = new DataTransfer();
+        transfer.setData("text/html", `<p>from elsewhere <img src="${src}"></p>`);
+        const event = new ClipboardEvent("paste", {
+          clipboardData: transfer,
+          bubbles: true,
+          cancelable: true
+        });
+
+        document.querySelector(".ProseMirror").dispatchEvent(event);
+        return event.clipboardData?.getData("text/html")?.length > 0;
+      }, remote);
+
+      // Firefox and WebKit refuse to build a paste event carrying data, so
+      // the mechanics can only be driven where they can.
+      if (!delivered) {
+        console.log("      (synthetic paste unavailable in this browser)");
+        return;
+      }
+
+      await documentEventually(
+        page,
+        "the pasted image was not captured",
+        "return doc.content.flatMap((b) => b.content ?? []).concat(doc.content).some((n) => n.type === 'attachment')"
+      );
+
+      const document_ = await stored(page);
+      const nodes = document_.content.flatMap((block) => [block, ...(block.content ?? [])]);
+
+      assert.ok(
+        nodes.some((node) => node.type === "attachment"),
+        "the bytes were stored as an attachment"
+      );
+      assert.ok(
+        !nodes.some((node) => node.type === "image" && node.attrs.src === remote),
+        "and no node kept pointing at the other host"
+      );
+      assert.match(spaces(await page.textContent(EDITOR)), /from elsewhere/);
     });
 
     await test("a node the application added to the schema round trips", async () => {
@@ -277,10 +337,10 @@ const run = async () => {
     await browser.close();
   }
 
-  console.log(`\n${passed} browser checks passed against ${BASE}`);
+  console.log(`\n${passed} checks passed in ${BROWSER} against ${BASE}`);
 };
 
 run().catch((error) => {
-  console.error(`\nFAILED: ${error.message}`);
+  console.error(`\nFAILED in ${BROWSER}: ${error.message}`);
   process.exit(1);
 });

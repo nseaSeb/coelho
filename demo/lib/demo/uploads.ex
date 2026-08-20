@@ -67,6 +67,15 @@ defmodule Demo.Uploads do
   end
 
   @doc """
+  A one-pixel PNG, for the browser test to paste from another origin.
+  """
+  def pixel do
+    Base.decode64!(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+  end
+
+  @doc """
   A URL for a key, valid for five minutes.
 
   This is the resolver the renderer is given. It is called on every render,

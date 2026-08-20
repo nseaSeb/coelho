@@ -142,7 +142,10 @@ deliberately, not a failure to discover at read time.
 ```
 
 The component renders a toolbar, an empty container and a hidden input
-holding the document as JSON. The container carries `phx-update="ignore"` —
+holding the document as JSON. Toolbar buttons carry `aria-pressed`,
+kept in step with what is in force under the cursor, and go `disabled` when
+their command cannot run — so **bold** lights up inside bold text and undo
+greys out with nothing to undo. The container carries `phx-update="ignore"` —
 ProseMirror owns that subtree, and LiveView patching it would fight the
 editor on every keystroke. Everything the server needs travels through the
 hidden input, so the editor is an ordinary form field: no custom events, no
@@ -267,7 +270,13 @@ Writing to object storage instead means implementing the same four
 callbacks. Coelho itself never touches the bytes.
 
 In the editor, pass an upload config and dropped or pasted files go up
-through LiveView's own upload channel:
+through LiveView's own upload channel — and so do **images pasted from other
+websites**, which are fetched and stored rather than left as a URL on
+somebody else's host. Storing that URL is a hotlink: it leaks every reader's
+address to that host, and breaks the day the file moves. When the bytes
+cannot be read — usually CORS — the pasted URL is kept rather than lost, and
+a `coelho:capture-failed` event says so. Without an upload config nothing
+changes: the URL is stored as before.
 
 ```heex
 <.coelho_editor field={@form[:body]} upload={@uploads.attachment} />

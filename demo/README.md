@@ -37,16 +37,22 @@ whole persistence story.
 ## Checking that a person can actually type in it
 
 No Elixir test can establish that. `test/browser/editor.mjs` drives a real
-Chromium against a running instance and checks the things only a browser
+browser against a running instance and checks the things only a browser
 knows: that the editor mounts, that typing reaches the document *and* the
-server, that the toolbar and the keyboard apply marks, that undo works, and
-that dropping a file in stores it and serves the bytes back through a signed
-URL.
+server, that the caret survives a round trip and a slow echo does not roll
+the writer back, that the toolbar and the keyboard apply marks and the
+toolbar says what is in force, that dropping a file stores it and serves the
+bytes back through a signed URL, and that an image pasted from another host
+is captured rather than hotlinked.
+
+It runs against all three engines, because `contenteditable` and selection
+are where they disagree — which is where every bug this suite has found was
+hiding.
 
 ```
-npx playwright install chromium
+npx playwright install chromium firefox webkit
 PORT=4321 mix phx.server &
-BASE_URL=http://localhost:4321 npm run test:browser
+npm run test:browsers            # or BROWSER=webkit npm run test:browser
 ```
 
 ## Checking that both halves agree

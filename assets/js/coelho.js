@@ -200,7 +200,15 @@ const commandFor = (name, schema, options) => {
     case "code":
       return marks[name] && toggleMark(marks[name]);
     case "link":
-      return marks.link && ((state, dispatch, view) => (askForHref(view), true));
+      // Asked whether it *could* run — which is what the toolbar does on
+      // every selection change — it must not go and ask for a URL.
+      return (
+        marks.link &&
+        ((state, dispatch, view) => {
+          if (dispatch) askForHref(view);
+          return true;
+        })
+      );
     case "heading":
       return (
         nodes.heading &&
@@ -228,6 +236,60 @@ const commandFor = (name, schema, options) => {
       return undo;
     case "redo":
       return redo;
+    default:
+      return null;
+  }
+};
+
+// -- Toolbar state ----------------------------------------------------------
+
+// A toolbar that never says what is in force leaves the writer guessing
+// whether the last click did anything.
+const markActive = (state, type) => {
+  const { from, $from, to, empty } = state.selection;
+
+  return empty
+    ? Boolean(type.isInSet(state.storedMarks || $from.marks()))
+    : state.doc.rangeHasMark(from, to, type);
+};
+
+const blockActive = (state, type, attrs = {}) => {
+  const { $from, node } = state.selection;
+
+  if (node) return node.hasMarkup(type, attrs);
+
+  // Anywhere above the cursor counts: a list and a quote can both be in
+  // force at once, and a heading is still a heading when the whole document
+  // is selected. Asking whether the selection *ends* inside the block, the
+  // way the usual snippet does, answers no on a select-all.
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if ($from.node(depth).hasMarkup(type, attrs)) return true;
+  }
+
+  return false;
+};
+
+const commandActive = (state, name, options) => {
+  const { nodes, marks } = state.schema;
+
+  switch (name) {
+    case "bold":
+    case "italic":
+    case "strike":
+    case "code":
+      return marks[name] ? markActive(state, marks[name]) : false;
+    case "link":
+      return marks.link ? markActive(state, marks.link) : false;
+    case "heading":
+      return nodes.heading
+        ? blockActive(state, nodes.heading, { level: Number(options.level ?? 2) })
+        : false;
+    case "paragraph":
+    case "code_block":
+    case "blockquote":
+    case "bullet_list":
+    case "ordered_list":
+      return nodes[name] ? blockActive(state, nodes[name]) : false;
     default:
       return null;
   }
@@ -280,6 +342,25 @@ const selectionAt = (doc, from, to) => {
   }
 };
 
+// Someone else's host — not a relative URL, not our own origin, which is
+// where our own attachments already live.
+const isRemote = (src) => {
+  try {
+    const url = new URL(src, window.location.href);
+    return /^https?:$/.test(url.protocol) && url.origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+};
+
+const filenameFor = (url, blob) => {
+  const name = decodeURIComponent(new URL(url, window.location.href).pathname.split("/").pop() || "");
+  if (name) return name;
+
+  const [, extension = "bin"] = (blob.type || "").split("/");
+  return `pasted.${extension}`;
+};
+
 // Marks a transaction as the server's, not the writer's.
 const REMOTE = "coelho:remote";
 
@@ -321,8 +402,10 @@ export const createCoelhoHook = (dom = {}) =>
 
       this._view = new EditorView(content, {
         state,
+        transformPastedHTML: (html) => (uploadName ? this.captureFrom(html) : html),
         dispatchTransaction: (transaction) => {
           this._view.updateState(this._view.state.apply(transaction));
+          this.refreshToolbar();
 
           // Writing the input back when the change *came from* the server
           // would post it straight back: the server normalises, so its copy
@@ -331,6 +414,23 @@ export const createCoelhoHook = (dom = {}) =>
           if (transaction.docChanged && !transaction.getMeta(REMOTE)) this.syncInput();
         }
       });
+
+      // Runs while the paste is still being parsed, so it is synchronous:
+      // the images come out of the HTML now, and their bytes follow.
+      this.captureFrom = (html) => {
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const remote = [...parsed.querySelectorAll("img[src]")].filter((image) =>
+          isRemote(image.getAttribute("src"))
+        );
+
+        if (!remote.length) return html;
+
+        const urls = remote.map((image) => image.getAttribute("src"));
+        remote.forEach((image) => image.remove());
+        this.captureImages(urls);
+
+        return parsed.body.innerHTML;
+      };
 
       this.syncInput = () => {
         const json = JSON.stringify(this._view.state.doc.toJSON());
@@ -344,7 +444,11 @@ export const createCoelhoHook = (dom = {}) =>
           input.value = json;
           input.dispatchEvent(new Event("input", { bubbles: true }));
         }
-        el.classList.toggle("coelho-empty", !this._view.state.doc.textContent);
+        // On the editor's own element, which lives inside the ignored
+        // container: LiveView patches an element's attributes even when it
+        // spares its children, so a class set on the root or on the
+        // container is undone by the next render.
+        this._view.dom.classList.toggle("coelho-empty", !this._view.state.doc.textContent);
       };
 
       this._onToolbar = (event) => {
@@ -360,6 +464,20 @@ export const createCoelhoHook = (dom = {}) =>
       };
 
       el.addEventListener("mousedown", this._onToolbar);
+
+      this.refreshToolbar = () => {
+        const { state } = this._view;
+
+        for (const button of el.querySelectorAll("[data-coelho-command]")) {
+          const name = button.dataset.coelhoCommand;
+          const active = commandActive(state, name, button.dataset);
+
+          if (active !== null) button.setAttribute("aria-pressed", String(active));
+
+          const command = commandFor(name, state.schema, button.dataset);
+          button.disabled = Boolean(command) && !command(state, null, this._view);
+        }
+      };
 
       // Anything the server decides to put in the document arrives here: an
       // attachment it has just stored, a mention it has just resolved, an
@@ -381,6 +499,37 @@ export const createCoelhoHook = (dom = {}) =>
 
       const uploadName = el.dataset.coelhoUpload;
 
+      // An image pasted from a web page arrives as a URL on someone else's
+      // host. Storing that is a hotlink: it leaks every reader's address to
+      // that host, and breaks the day the file moves. When an upload is
+      // configured, the bytes are fetched and go through the same path as a
+      // dropped file; when it is not, the URL is kept as it always was.
+      this.captureImages = async (urls) => {
+        for (const url of urls) {
+          try {
+            const response = await fetch(url, { mode: "cors", credentials: "omit" });
+            if (!response.ok) throw new Error(`responded ${response.status}`);
+
+            const blob = await response.blob();
+            ctx.upload(uploadName, [new File([blob], filenameFor(url, blob), { type: blob.type })]);
+          } catch (error) {
+            // Usually CORS: the bytes cannot be read, only displayed. Keeping
+            // the image the writer pasted beats losing it, so the URL goes in
+            // and the application is told what happened.
+            el.dispatchEvent(
+              new CustomEvent("coelho:capture-failed", {
+                bubbles: true,
+                detail: { url, error }
+              })
+            );
+
+            if (this._schema.nodes.image) {
+              this.insertNode({ type: "image", attrs: { src: url } });
+            }
+          }
+        }
+      };
+
       if (uploadName) {
         this._onFiles = (event) => {
           const files = [...(event.dataTransfer ?? event.clipboardData)?.files ?? []];
@@ -395,7 +544,20 @@ export const createCoelhoHook = (dom = {}) =>
       }
 
       this._content = content;
+
+      // Same reason: the server renders the placeholder onto the container,
+      // and it is carried inside where nothing will patch it away.
+      if (content.dataset.placeholder) {
+        this._view.dom.dataset.placeholder = content.dataset.placeholder;
+      }
+
       this.syncInput();
+      this.refreshToolbar();
+
+      // Moving the caret changes what is in force without changing the
+      // document, and that never reaches dispatchTransaction as a doc change.
+      this._onSelection = () => this.refreshToolbar();
+      document.addEventListener("selectionchange", this._onSelection);
     },
 
     updated() {
@@ -448,6 +610,7 @@ export const createCoelhoHook = (dom = {}) =>
 
     destroyed() {
       this.el.removeEventListener("mousedown", this._onToolbar);
+      document.removeEventListener("selectionchange", this._onSelection);
 
       if (this._onFiles) {
         this._content?.removeEventListener("drop", this._onFiles);

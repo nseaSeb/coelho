@@ -16,6 +16,7 @@
     "playwright": "^1.62.1"
   },
   "scripts": {
-    "test:browser": "node test/browser/editor.mjs"
+    "test:browser": "node test/browser/editor.mjs",
+    "test:browsers": "for b in chromium firefox webkit; do BROWSER=$b node test/browser/editor.mjs || exit 1; done"
   }
 }

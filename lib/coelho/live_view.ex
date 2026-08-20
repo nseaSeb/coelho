@@ -21,15 +21,26 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     ## Styling
 
-    The component ships no styles. It gives CSS two things to work with: the
-    root carries `coelho-empty` while the document has no text, and the
-    content element carries `data-placeholder` — rendered by the server, not
-    set by the hook, because `phx-update="ignore"` stops LiveView patching an
-    element's children but not its own attributes, so anything JavaScript
-    writes there is undone on the next patch. An empty editor shows its
-    placeholder with
+    The toolbar carries `phx-update="ignore"` for the same reason the editor
+    does: the hook keeps `aria-pressed` on each button in step with what is in
+    force under the cursor, and LiveView would patch that away on the next
+    render. The consequence is that the button list is fixed once rendered —
+    changing `:toolbar` or the schema on a mounted editor will not redraw it.
 
-        .coelho-empty .coelho-content::before { content: attr(data-placeholder); }
+    The component ships no styles. It gives CSS what it needs on the editor's
+    own element, which ProseMirror creates inside the ignored container:
+    `coelho-empty` while the document has no text, and `data-placeholder`,
+    carried in from the container the server rendered it on. An empty editor
+    shows its placeholder with
+
+        .coelho-content .ProseMirror.coelho-empty::before {
+          content: attr(data-placeholder);
+        }
+
+    Both live *inside* the ignored subtree on purpose: `phx-update="ignore"`
+    stops LiveView patching an element's children, not its own attributes, so
+    a class or attribute JavaScript writes on the root or on the container is
+    undone by the next render.
 
     A placeholder node would have to be a node, and would end up validated,
     stored and rendered; this stays out of the document entirely.
@@ -173,7 +184,13 @@ if Code.ensure_loaded?(Phoenix.Component) do
         data-coelho-upload={@upload && @upload.name}
         {@rest}
       >
-        <div :if={@toolbar != []} class="coelho-toolbar" role="toolbar">
+        <div
+          :if={@toolbar != []}
+          id={@id <> "-toolbar"}
+          class="coelho-toolbar"
+          role="toolbar"
+          phx-update="ignore"
+        >
           <button
             :for={command <- @toolbar}
             type="button"

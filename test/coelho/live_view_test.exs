@@ -54,6 +54,15 @@ defmodule Coelho.LiveViewTest do
       assert html =~ ~s(id="#{Coelho.LiveView.editor_id(field)}")
     end
 
+    test "the toolbar is the hook's too, so its state survives a render" do
+      html = render(%{field: form(nil)[:body]})
+
+      # Two ignored regions: the editor's DOM, and the toolbar whose
+      # aria-pressed the hook keeps in step with the cursor.
+      assert html |> String.split(~s(phx-update="ignore")) |> length() == 3
+      assert html =~ ~s(id="post_body-editor-toolbar")
+    end
+
     test "hands ProseMirror its own subtree, and only that" do
       html = render(%{field: form(nil)[:body]})
 
