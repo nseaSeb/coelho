@@ -102,6 +102,22 @@ if Code.ensure_loaded?(Phoenix.Component) do
     `prosemirror-commands` and `prosemirror-history` to be installed in the
     application.
 
+    ## What stays the browser's
+
+    Two things about a node cannot come from Elixir, because both are
+    functions: how it *looks* (`toDOM`/`parseDOM`) and how it *behaves* — the
+    drag handles on an image, a menu on an embed. `createCoelhoHook/1` takes
+    the first as `nodes`/`marks` and the second as `nodeViews`, which is
+    ProseMirror's own extension point, handed through untouched.
+
+    Resizing an image is an example of the division. The *size* is a schema
+    attribute like any other, added with `Coelho.Schema.extend/2`, validated
+    and stored like any other; the *handles* that set it are a node view. And
+    producing a smaller file — a thumbnail, a variant — is neither: the
+    document stores a key, and what a key resolves to is the application's,
+    so a resolver can answer with a variant it generated however it likes.
+    Coelho never touches the bytes.
+
     A schema of your own also needs its DOM mapping on the browser side, which
     `createCoelhoHook/1` takes:
 

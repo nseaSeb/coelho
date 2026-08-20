@@ -52,6 +52,16 @@ What follows from that:
   the browser. A document the server rejects is one the client could not
   have produced.
 
+## What is deliberately not here
+
+Storing bytes, processing images, and two people editing at once. Each has a
+place to plug into — a `Coelho.Storage`, a resolver that answers with
+whatever URL you like including a variant's, a ProseMirror node view passed
+through `createCoelhoHook({nodeViews: …})` — and keeping them out is what
+keeps what is here small enough to be sure of.
+
+See `CONTRIBUTING.md` for the ones worth writing.
+
 ## Status
 
 Early, but complete enough to use: the document core — schema, content
@@ -284,8 +294,10 @@ always sends `x-content-type-options: nosniff` and serves only a short list
 of image types inline. Everything else, SVG included, is sent as a download
 whatever it claims to be.
 
-Writing to object storage instead means implementing the same four
-callbacks. Coelho itself never touches the bytes.
+Writing to object storage instead means implementing the same callbacks,
+plus the optional `redirect_url/3` — with one, the plug checks its signature
+and then hands the reader straight to a presigned URL rather than streaming
+every byte through the application. Coelho itself never touches the bytes.
 
 In the editor, pass an upload config and dropped or pasted files go up
 through LiveView's own upload channel — and so do **images pasted from other

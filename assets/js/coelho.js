@@ -456,7 +456,11 @@ const parseDoc = (schema, value) => {
 
 // -- Hook -------------------------------------------------------------------
 
-export const createCoelhoHook = (dom = {}) =>
+// `nodes` and `marks` say how a node *looks*; `nodeViews` say how it
+// *behaves* — drag handles on an image, a menu on an embed. Both are
+// functions and neither can come from Elixir, which is why they are taken
+// here rather than exported with the schema.
+export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
   createHook({
     mounted(ctx) {
       const el = ctx.el;
@@ -485,6 +489,7 @@ export const createCoelhoHook = (dom = {}) =>
 
       this._view = new EditorView(content, {
         state,
+        nodeViews,
         transformPastedHTML: (html) => (uploadName ? this.captureFrom(html) : html),
         dispatchTransaction: (transaction) => {
           this._view.updateState(this._view.state.apply(transaction));
@@ -546,19 +551,52 @@ export const createCoelhoHook = (dom = {}) =>
         this._view.dom.classList.toggle("coelho-empty", !this._view.state.doc.textContent);
       };
 
-      this._onToolbar = (event) => {
+      const buttonIn = (event) => {
         const button = event.target.closest("[data-coelho-command]");
-        if (!button || !el.contains(button)) return;
-
-        event.preventDefault();
-        const command = commandFor(button.dataset.coelhoCommand, schema, button.dataset);
-        if (command) {
-          command(this._view.state, this._view.dispatch, this._view);
-          this._view.focus();
-        }
+        return button && el.contains(button) ? button : null;
       };
 
-      el.addEventListener("mousedown", this._onToolbar);
+      this.runCommand = (button) => {
+        const command = commandFor(button.dataset.coelhoCommand, schema, button.dataset);
+        if (!command) return;
+
+        command(this._view.state, this._view.dispatch, this._view);
+        this._view.focus();
+      };
+
+      // A mouse press runs the command *here*, at `mousedown`, because this
+      // is the last moment the selection is still the writer's: preventing
+      // the default keeps focus, but the browser moves the caret on mouseup
+      // anyway, and a command reading the selection after that acts on the
+      // wrong place.
+      this._onToolbarDown = (event) => {
+        const button = buttonIn(event);
+        if (!button) return;
+
+        event.preventDefault();
+        this._pressed = button;
+        this.runCommand(button);
+      };
+
+      // A keyboard press produces a `click` with no `mousedown` before it, so
+      // this is what makes the toolbar reachable without a mouse — and it
+      // skips the press the mouse has already dealt with.
+      this._onToolbar = (event) => {
+        const button = buttonIn(event);
+        if (!button) return;
+
+        event.preventDefault();
+
+        if (this._pressed === button) {
+          this._pressed = null;
+          return;
+        }
+
+        this.runCommand(button);
+      };
+
+      el.addEventListener("mousedown", this._onToolbarDown);
+      el.addEventListener("click", this._onToolbar);
 
       this._linkZone = el.querySelector("[data-coelho-link-zone]");
       this._linkInput = el.querySelector("[data-coelho-link-input]");
@@ -875,7 +913,8 @@ export const createCoelhoHook = (dom = {}) =>
     },
 
     destroyed() {
-      this.el.removeEventListener("mousedown", this._onToolbar);
+      this.el.removeEventListener("mousedown", this._onToolbarDown);
+      this.el.removeEventListener("click", this._onToolbar);
       if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
       document.removeEventListener("selectionchange", this._onSelection);
 

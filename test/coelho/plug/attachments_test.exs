@@ -13,6 +13,29 @@ defmodule Coelho.Plug.AttachmentsTest do
 
   def secret, do: @secret
 
+  defmodule Presigned do
+    @moduledoc "Object storage: it hands out a URL rather than the bytes."
+    @behaviour Coelho.Storage
+
+    defstruct []
+
+    @impl true
+    def put(_storage, _key, _source), do: :ok
+    @impl true
+    def read(_storage, _key), do: {:error, :enoent}
+    @impl true
+    def path(_storage, _key), do: :error
+    @impl true
+    def delete(_storage, _key), do: :ok
+    @impl true
+    def exists?(_storage, _key), do: true
+
+    @impl true
+    def redirect_url(_storage, key, opts) do
+      {:ok, "https://bucket.example/#{key}?X-Expires=#{Keyword.fetch!(opts, :expires_in)}"}
+    end
+  end
+
   defmodule Remote do
     @moduledoc "A storage with no local path, the way object storage behaves."
     @behaviour Coelho.Storage
@@ -221,6 +244,49 @@ defmodule Coelho.Plug.AttachmentsTest do
       assert %{status: 403} = get("/attachments/image?expires[]=1&signature=x", options)
       assert %{status: 403} = get("/attachments/image?expires[a]=1&signature=x", options)
       assert %{status: 403} = get("/attachments/image?expires=1&signature[]=x", options)
+    end
+  end
+
+  describe "a storage that hands out its own URL" do
+    setup do
+      %{
+        options:
+          Plugged.init(
+            at: "/attachments",
+            storage: %Presigned{},
+            secret: {__MODULE__, :secret, []},
+            metadata: {__MODULE__, :metadata, []}
+          )
+      }
+    end
+
+    test "is redirected to rather than read through", %{options: options} do
+      conn = get(signed("image"), options)
+
+      assert conn.status == 302
+      assert [location] = get_resp_header(conn, "location")
+      assert location =~ "https://bucket.example/image"
+      assert conn.resp_body == ""
+    end
+
+    test "the redirect outlives nothing the signature does not", %{options: options} do
+      conn = get(signed("image", expires_in: 120), options)
+
+      assert [location] = get_resp_header(conn, "location")
+      assert [_, seconds] = Regex.run(~r/X-Expires=(\d+)/, location)
+      # What is left of the signature, not what it started with.
+      assert String.to_integer(seconds) in 118..120
+    end
+
+    test "the signature is still what decides", %{options: options} do
+      assert %{status: 403} = get("/attachments/image", options)
+      assert %{status: 410} = get(signed("image", expires_in: 60, now: 1000), options)
+    end
+
+    test "an expired signature leaves nothing to redirect to", %{options: options} do
+      conn = get(signed("image", expires_in: 60, now: 1000), options)
+
+      assert get_resp_header(conn, "location") == []
     end
   end
 end

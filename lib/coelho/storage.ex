@@ -44,6 +44,26 @@ defmodule Coelho.Storage do
   @doc "Whether the storage holds anything under this key."
   @callback exists?(t(), key()) :: boolean()
 
+  @doc """
+  Somewhere the reader can fetch the bytes directly, when there is such a
+  place.
+
+  Object storage can hand out a URL of its own — presigned, short lived —
+  and answering with one is what stops every byte travelling through the
+  application. `Coelho.Plug.Attachments` redirects to it after checking its
+  own signature, so the check still happens and the transfer does not.
+
+  `opts` carries `:expires_in`, the seconds left on the signature that got
+  the reader this far; a URL outliving it would widen the window the
+  signature was there to narrow.
+
+  Optional: a storage that has no such URL — the local filesystem — simply
+  does not implement it.
+  """
+  @callback redirect_url(t(), key(), keyword()) :: {:ok, String.t()} | :error
+
+  @optional_callbacks redirect_url: 3
+
   @spec put(t(), key(), source()) :: :ok | {:error, term()}
   def put(%module{} = storage, key, source), do: module.put(storage, key, source)
 
@@ -58,4 +78,19 @@ defmodule Coelho.Storage do
 
   @spec exists?(t(), key()) :: boolean()
   def exists?(%module{} = storage, key), do: module.exists?(storage, key)
+
+  @doc """
+  Asks the storage for a URL to redirect to, or `:error` when it has none.
+
+  Answers `:error` for a storage that does not implement the callback, so
+  callers need not know which do.
+  """
+  @spec redirect_url(t(), key(), keyword()) :: {:ok, String.t()} | :error
+  def redirect_url(%module{} = storage, key, opts \\ []) do
+    if function_exported?(module, :redirect_url, 3) do
+      module.redirect_url(storage, key, opts)
+    else
+      :error
+    end
+  end
 end

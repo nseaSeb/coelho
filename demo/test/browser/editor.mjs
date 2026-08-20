@@ -292,31 +292,26 @@ const run = async () => {
       const fragments = await linkedFragments(page);
       assert.ok(fragments.length >= 3, `expected several fragments, got ${fragments.length}`);
 
-      // Caret inside the first fragment. Collapsing a selection leftwards is
-      // the one way to reach the start that every engine agrees on: `Home`
-      // leaves the caret at the end of the line in Firefox.
-      await page.click(EDITOR);
-      await selectAll(page);
-      await page.keyboard.press("ArrowLeft");
-      await page.keyboard.press("ArrowRight");
+      // Put the caret inside the link and open the field, repeating until it
+      // comes up prefilled. Waiting for a condition and then clicking is not
+      // enough: the state can change between the two, and where a caret lands
+      // after ArrowLeft/ArrowRight is not the same in every engine — one run
+      // put it at the *end* of the link, where an `inclusive: false` mark
+      // deliberately does not apply, so there was nothing to edit.
+      for (let attempt = 1; ; attempt += 1) {
+        await page.click(EDITOR);
+        await selectAll(page);
+        await page.keyboard.press("ArrowLeft");
+        await page.keyboard.press("ArrowRight");
+        await settle(page);
+        await page.click('[data-coelho-command="link"]');
+        await settle(page);
 
-      // Two conditions, both of which the branch under test depends on: the
-      // selection has actually collapsed — the field opens on the selection
-      // when it has not, and then rewrites only that — and the toolbar agrees
-      // the caret sits inside the link.
-      await page.waitForFunction(
-        () =>
-          document.getSelection()?.isCollapsed &&
-          document
-            .querySelector('[data-coelho-command="link"]')
-            ?.getAttribute("aria-pressed") === "true",
-        null,
-        { timeout: 5000 }
-      );
+        if ((await page.inputValue(LINK_INPUT)) === "https://old.example/x") break;
 
-      await page.click('[data-coelho-command="link"]');
-
-      assert.equal(await page.inputValue(LINK_INPUT), "https://old.example/x", "prefilled");
+        assert.ok(attempt < 4, "the field never came up on the link under the caret");
+        await page.keyboard.press("Escape");
+      }
 
       await page.fill(LINK_INPUT, "https://new.example/y");
       await page.keyboard.press("Enter");
@@ -502,12 +497,9 @@ const run = async () => {
       // The caption is an attribute of the node, not content inside it, so
       // there is nowhere to type it: the button opens the same field the
       // link uses, on whichever selected node declares the attribute.
+      // Typing leaves the caret in text, which is the state to ask about
+      // first — before there is anything captionable to select at all.
       await typeInEditor(page, "with an attachment");
-      await attach(page, "captioned.png");
-
-      // Inserting leaves the attachment selected, so the caret goes back into
-      // the text before asking what the button does with nothing captionable.
-      await page.click(EDITOR, { position: { x: 6, y: 8 } });
       await settle(page);
 
       assert.ok(
@@ -515,6 +507,7 @@ const run = async () => {
         "disabled with nothing captionable selected"
       );
 
+      await attach(page, "captioned.png");
       await page.click(".coelho-content figure");
       await settle(page);
 
@@ -614,6 +607,84 @@ const run = async () => {
 
       assert.equal(text, "before 日本", `composition left ${JSON.stringify(text)}`);
       assert.match(await pane(page, "text"), /before 日本/);
+    });
+
+    await test("the toolbar can be worked without a mouse", async () => {
+      // Not an accessibility audit — it is the floor: a button that only a
+      // mouse can reach is a button half the people cannot use.
+      await typeInEditor(page, "keyboard only");
+      await page.click(EDITOR);
+      await selectAll(page);
+
+      await page.focus('[data-coelho-command="bold"]');
+      await page.keyboard.press("Enter");
+
+      await documentEventually(
+        page,
+        "the toolbar did not act on Enter",
+        "return doc.content.flatMap((b) => b.content ?? []).some((n) => n.marks?.some((m) => m.type === 'bold'))"
+      );
+
+      // And it says what it is and what state it is in, which is what a
+      // screen reader has to go on.
+      const described = await page.$$eval("[data-coelho-command]", (buttons) =>
+        buttons.every(
+          (button) =>
+            (button.getAttribute("aria-label") ?? "").length > 0 &&
+            (button.hasAttribute("aria-pressed") || button.dataset.coelhoCommand === "undo" ||
+              button.dataset.coelhoCommand === "redo" ||
+              button.dataset.coelhoCommand === "caption")
+        )
+      );
+
+      assert.ok(described, "every command is named, and says whether it is in force");
+    });
+
+    await test("it works under a finger, on a phone-sized screen", async () => {
+      // The checks above run in a desktop viewport with a mouse. Nothing here
+      // had ever been touched.
+      const mobile = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true
+      });
+
+      const small = await mobile.newPage();
+      const raised = [];
+
+      small.on("pageerror", (error) => raised.push(String(error)));
+
+      try {
+        await small.goto(BASE, { waitUntil: "networkidle" });
+        await small.waitForSelector(EDITOR);
+
+        await small.tap(EDITOR);
+        await small.keyboard.press("ControlOrMeta+a");
+        await small.keyboard.type("typed with a finger");
+
+        await small.waitForFunction(
+          () =>
+            JSON.parse(document.querySelector("#post_body").value)
+              .content.flatMap((block) => block.content ?? [])
+              .map((node) => node.text ?? "")
+              .join("") === "typed with a finger",
+          null,
+          { timeout: 5000 }
+        );
+
+        await small.tap('[data-coelho-command="bullet_list"]');
+
+        await small.waitForFunction(
+          () =>
+            JSON.parse(document.querySelector("#post_body").value).content[0].type ===
+            "bullet_list",
+          null,
+          { timeout: 5000 }
+        );
+
+        assert.deepEqual(raised, [], "nothing threw on the small screen");
+      } finally {
+        await mobile.close();
+      }
     });
 
     await test("nothing threw along the way", () => {

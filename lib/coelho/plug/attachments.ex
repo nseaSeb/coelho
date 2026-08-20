@@ -73,15 +73,42 @@ if Code.ensure_loaded?(Plug) do
       conn = fetch_query_params(conn)
 
       case Attachments.verify(key, conn.query_params, resolve(options.secret)) do
-        :ok -> send_bytes(conn, key, options)
+        :ok -> serve_bytes(conn, key, options)
         {:error, :expired} -> halt_with(conn, 410, "expired")
         {:error, :invalid} -> halt_with(conn, 403, "forbidden")
       end
     end
 
-    defp send_bytes(conn, key, options) do
+    defp serve_bytes(conn, key, options) do
       storage = resolve(options.storage)
 
+      # Object storage can hand out a URL of its own, and redirecting to it
+      # is what stops every byte travelling through the application. The
+      # signature is checked first either way, so this trades the transfer
+      # and not the check. The redirect is given only what is left of that
+      # signature's life: a URL outliving it would widen the window it was
+      # there to narrow.
+      case Storage.redirect_url(storage, key, expires_in: seconds_left(conn)) do
+        {:ok, url} ->
+          conn
+          |> put_resp_header("cache-control", options.cache_control)
+          |> put_resp_header("location", url)
+          |> send_resp(302, "")
+          |> halt()
+
+        :error ->
+          send_bytes(conn, storage, key, options)
+      end
+    end
+
+    defp seconds_left(conn) do
+      case conn.query_params |> Map.get("expires", "") |> Integer.parse() do
+        {expires, ""} -> max(expires - System.system_time(:second), 0)
+        _ -> 0
+      end
+    end
+
+    defp send_bytes(conn, storage, key, options) do
       # A storage with no local path — object storage — answers `:error` and
       # the bytes are read instead. Only the storage can tell an unusable key
       # from a missing one, so its own error decides the status.
