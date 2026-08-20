@@ -50,7 +50,9 @@ defmodule DemoWeb.Endpoint do
   # can paste an image from "another host" and watch it be captured. Reached
   # through 127.0.0.1 while the page is on localhost: different origins, same
   # server.
-  plug :remote_image
+  if Mix.env() in [:dev, :test] do
+    plug :remote_image
+  end
 
   defp remote_image(%Plug.Conn{path_info: ["remote-image.png"]} = conn, _opts) do
     conn

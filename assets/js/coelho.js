@@ -253,7 +253,10 @@ const markActive = (state, type) => {
     : state.doc.rangeHasMark(from, to, type);
 };
 
-const blockActive = (state, type, attrs = {}) => {
+// `attrs` stays undefined when the caller has none to match: `hasMarkup`
+// falls back to the type's defaults, and `{}` — being truthy — would stop it,
+// so every block declaring an attribute would compare false forever.
+const blockActive = (state, type, attrs) => {
   const { $from, node } = state.selection;
 
   if (node) return node.hasMarkup(type, attrs);
@@ -344,21 +347,53 @@ const selectionAt = (doc, from, to) => {
 
 // Someone else's host — not a relative URL, not our own origin, which is
 // where our own attachments already live.
-const isRemote = (src) => {
+export const isRemote = (src) => {
+  const here = globalThis.location;
+  if (!here) return false;
+
   try {
-    const url = new URL(src, window.location.href);
-    return /^https?:$/.test(url.protocol) && url.origin !== window.location.origin;
+    const url = new URL(src, here.href);
+    return /^https?:$/.test(url.protocol) && url.origin !== here.origin;
   } catch {
     return false;
   }
 };
 
-const filenameFor = (url, blob) => {
-  const name = decodeURIComponent(new URL(url, window.location.href).pathname.split("/").pop() || "");
-  if (name) return name;
+// Attribute values can hold a quoted `>`, so the tag is matched as
+// alternating plain text and quoted runs rather than "anything but >".
+const IMG_TAG = /<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+const SRC_ATTR = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
 
+export const srcOf = (tag) => {
+  const match = SRC_ATTR.exec(tag);
+  return match ? match[1] ?? match[2] ?? match[3] : null;
+};
+
+// The name reaches the server as the upload's client name, and applications
+// build paths out of those. A percent-encoded `..%2F` in someone else's URL
+// must not come out the other side as a path.
+export const filenameFor = (url, blob) => {
   const [, extension = "bin"] = (blob.type || "").split("/");
-  return `pasted.${extension}`;
+
+  let name = "";
+
+  try {
+    // No base outside a browser, which is where the checks run: an absolute
+    // URL needs none, and a relative one is not somebody else's host anyway.
+    const parsed = new URL(url, globalThis.location?.href);
+    name = decodeURIComponent(parsed.pathname.split("/").pop() || "");
+  } catch {
+    name = "";
+  }
+
+  name = name
+    .replace(/[\\/]/g, "")
+    .replace(/\.{2,}/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .trim();
+
+  if (!name) return `pasted.${extension}`;
+  return /\.[a-z0-9]+$/i.test(name) ? name : `${name}.${extension}`;
 };
 
 // Marks a transaction as the server's, not the writer's.
@@ -386,6 +421,7 @@ export const createCoelhoHook = (dom = {}) =>
       this._schema = schema;
       this._input = input;
       this._written = new Set();
+      this._pending = new Map();
 
       // A bounded memory of what this editor has put in the input.
       this.remember = (json) => {
@@ -418,18 +454,25 @@ export const createCoelhoHook = (dom = {}) =>
       // Runs while the paste is still being parsed, so it is synchronous:
       // the images come out of the HTML now, and their bytes follow.
       this.captureFrom = (html) => {
-        const parsed = new DOMParser().parseFromString(html, "text/html");
-        const remote = [...parsed.querySelectorAll("img[src]")].filter((image) =>
-          isRemote(image.getAttribute("src"))
-        );
+        const urls = [];
 
-        if (!remote.length) return html;
+        // The tags are cut out of the string rather than out of a parsed
+        // document: clipboard HTML is often a context-sensitive fragment — a
+        // table row, a list item — and a DOMParser round trip through
+        // `body.innerHTML` throws away exactly those.
+        const stripped = html.replace(IMG_TAG, (tag) => {
+          const src = srcOf(tag);
 
-        const urls = remote.map((image) => image.getAttribute("src"));
-        remote.forEach((image) => image.remove());
+          if (!isRemote(src)) return tag;
+
+          urls.push(src);
+          return "";
+        });
+
+        if (!urls.length) return html;
+
         this.captureImages(urls);
-
-        return parsed.body.innerHTML;
+        return stripped;
       };
 
       this.syncInput = () => {
@@ -482,13 +525,25 @@ export const createCoelhoHook = (dom = {}) =>
       // Anything the server decides to put in the document arrives here: an
       // attachment it has just stored, a mention it has just resolved, an
       // embed. The node is the server's, built against the same schema.
-      this.insertNode = (nodeJSON, preview) => {
+      this.insertNode = (nodeJSON, preview, { focus = true } = {}) => {
         setPreviewUrl(nodeJSON.attrs?.key, preview);
+        this._pending.delete(nodeJSON.attrs?.filename);
+
         const node = PMNode.fromJSON(this._schema, nodeJSON);
-        // Focus first: clicking whatever asked for the node took focus away,
-        // and an unfocused view inserts at the selection it was left with.
-        this._view.focus();
-        this._view.dispatch(this._view.state.tr.replaceSelectionWith(node).scrollIntoView());
+
+        // Whatever asked for the node took focus away, so the editor is
+        // focused first and the node lands at the caret. If the writer has
+        // since moved on — an insertion arriving seconds later, a failed
+        // capture — replacing their selection would destroy what they are
+        // doing, so it goes at the end instead.
+        if (focus) this._view.focus();
+
+        const { state } = this._view;
+        const transaction = this._view.hasFocus()
+          ? state.tr.replaceSelectionWith(node)
+          : state.tr.insert(state.doc.content.size, node);
+
+        this._view.dispatch(transaction.scrollIntoView());
       };
 
       // push_event reaches the whole page, so an insertion meant for one
@@ -511,22 +566,33 @@ export const createCoelhoHook = (dom = {}) =>
             if (!response.ok) throw new Error(`responded ${response.status}`);
 
             const blob = await response.blob();
-            ctx.upload(uploadName, [new File([blob], filenameFor(url, blob), { type: blob.type })]);
-          } catch (error) {
-            // Usually CORS: the bytes cannot be read, only displayed. Keeping
-            // the image the writer pasted beats losing it, so the URL goes in
-            // and the application is told what happened.
-            el.dispatchEvent(
-              new CustomEvent("coelho:capture-failed", {
-                bubbles: true,
-                detail: { url, error }
-              })
-            );
+            const filename = filenameFor(url, blob);
 
-            if (this._schema.nodes.image) {
-              this.insertNode({ type: "image", attrs: { src: url } });
-            }
+            this._pending.set(filename, url);
+            ctx.upload(uploadName, [new File([blob], filename, { type: blob.type })]);
+
+            // `upload` is fire and forget: an entry refused for being one too
+            // many, too large, or the wrong type raises nothing here, and the
+            // image would vanish without a word. If nothing comes back for it,
+            // the URL goes in after all.
+            setTimeout(() => this.captureFailed(filename, "the upload never came back"), 15000);
+          } catch (error) {
+            // Usually CORS: the bytes can be displayed but not read.
+            this.captureFailed(filenameFor(url, { type: "" }), error, url);
           }
+        }
+      };
+
+      this.captureFailed = (filename, reason, url = this._pending.get(filename)) => {
+        if (url === undefined) return;
+
+        this._pending.delete(filename);
+        el.dispatchEvent(
+          new CustomEvent("coelho:capture-failed", { bubbles: true, detail: { url, reason } })
+        );
+
+        if (this._schema.nodes.image) {
+          this.insertNode({ type: "image", attrs: { src: url } }, null, { focus: false });
         }
       };
 

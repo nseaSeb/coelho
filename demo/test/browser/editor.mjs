@@ -196,8 +196,10 @@ const run = async () => {
         { timeout: 5000 }
       );
 
-      // And it survives a server round trip.
-      await paneEventually(page, "text", "");
+      // And it survives a server round trip. Waiting on the empty document
+      // reaching the server is falsifiable; waiting on the text pane
+      // containing "" is true on the first poll and waits for nothing.
+      await paneEventually(page, "stored", '"content":[{"type":"paragraph"}]');
       assert.ok(
         await page.$eval(".ProseMirror", (el) => el.classList.contains("coelho-empty")),
         "the empty marker survives a render"
@@ -246,7 +248,9 @@ const run = async () => {
     await test("an image pasted from another host is captured, not hotlinked", async () => {
       // Storing someone else's URL leaks every reader's address to that host
       // and breaks the day the file moves.
-      const remote = "http://127.0.0.1:4321/remote-image.png";
+      // The same server on its other name: a different origin, so the capture
+      // path runs, without hardcoding where the instance is.
+      const remote = new URL("/remote-image.png", BASE.replace("localhost", "127.0.0.1")).href;
 
       await typeInEditor(page, "pasted:");
 
