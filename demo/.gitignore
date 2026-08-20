@@ -38,3 +38,7 @@ npm-debug.log
 # npm lives at the app root here, see README.
 /node_modules/
 
+
+# Written by the schema bridge check, see README.
+/schema.json
+/document.json

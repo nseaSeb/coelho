@@ -1,5 +1,7 @@
 # Coelho
 
+[![CI](https://github.com/nseaSeb/coelho/actions/workflows/ci.yml/badge.svg)](https://github.com/nseaSeb/coelho/actions/workflows/ci.yml)
+
 Structured rich text for Phoenix.
 
 Coelho is to Phoenix what Action Text is to Rails: the layer between a rich

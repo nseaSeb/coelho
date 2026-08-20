@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  MIX_ENV: test
+
+jobs:
+  library:
+    name: Library (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The floor the library declares, and the current release.
+          - elixir: "1.18.4"
+            otp: "27.3"
+          - elixir: "1.19.5"
+            otp: "28.1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
+
+      - run: mix deps.get
+
+      # The formatter's output can differ between Elixir versions, so the
+      # check runs on one of them only.
+      - run: mix format --check-formatted
+        if: matrix.elixir == '1.19.5'
+
+      - run: mix compile --warnings-as-errors
+
+      - run: mix test
+
+  demo:
+    name: Demo
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.1"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            demo/deps
+            demo/_build
+          key: ${{ runner.os }}-demo-${{ hashFiles('demo/mix.lock', 'mix.exs') }}
+          restore-keys: ${{ runner.os }}-demo-
+
+      - name: Install npm dependencies
+        working-directory: demo
+        # npm lives at the app root, not under assets/: Coelho's hook is
+        # outside the app and imports ProseMirror by bare specifier, and Node
+        # resolution walks up from the importing file. See demo/README.md.
+        run: npm ci
+
+      # The demo is a separate Mix project, so the library job above never
+      # runs any of this. The steps mirror the demo's own `precommit` alias,
+      # spelled out rather than invoked: `precommit` runs `format` and
+      # `deps.unlock --unused`, which rewrite files instead of checking them,
+      # so it would pass on unformatted code.
+      - name: Compile, check formatting, test
+        working-directory: demo
+        run: |
+          mix deps.get
+          mix compile --warnings-as-errors
+          mix format --check-formatted
+          mix test
+
+      - name: Build assets
+        working-directory: demo
+        # The only step that proves the hook and its ProseMirror imports
+        # actually bundle.
+        run: |
+          mix assets.setup
+          mix assets.build
+
+  bridge:
+    name: Schema bridge
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.1"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: demo
+        run: npm ci
+
+      # The schema is declared in Elixir and exported to the browser, but
+      # toDOM/parseDOM are functions and live in assets/js/coelho.js. This
+      # feeds the real exported JSON to the real browser code and builds an
+      # actual ProseMirror schema — the drift test in the library only
+      # compares names.
+      - name: Check both halves agree
+        working-directory: demo
+        run: |
+          # Node's ESM loader ignores NODE_PATH, so the library's own assets
+          # directory needs the modules reachable by walking up from it.
+          ln -sfn "$PWD/node_modules" ../assets/node_modules
+          mix deps.get
+          mix run -e 'File.write!("schema.json", JSON.encode!(Coelho.Schema.to_json(Coelho.Schema.default())))'
+          mix run -e 'File.write!("document.json", JSON.encode!(Coelho.empty()))'
+          node priv/check/schema_bridge.mjs schema.json document.json
