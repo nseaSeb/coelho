@@ -118,6 +118,21 @@ const run = async () => {
       assert.equal(spaces(await page.textContent(EDITOR)), "ABC!DEF");
     });
 
+    await test("a slow echo does not roll the writer back", async () => {
+      // The server answers asynchronously, so an echo arriving now may
+      // answer a keystroke from several ago. Applying it would put back what
+      // had been typed by then — which is what a loaded machine sees and a
+      // fast one hides.
+      const sentence = "the quick brown fox jumps over the lazy dog";
+
+      await page.click(EDITOR);
+      await selectAll(page);
+      await page.keyboard.type(sentence, { delay: 12 });
+      await paneEventually(page, "stored", "lazy dog");
+
+      assert.equal(spaces(await page.textContent(EDITOR)), sentence);
+    });
+
     await test("the toolbar applies a mark to the selection", async () => {
       await typeInEditor(page, "bold me");
       await page.click(EDITOR);

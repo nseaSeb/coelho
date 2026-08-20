@@ -304,6 +304,15 @@ export const createCoelhoHook = (dom = {}) =>
       const schema = buildSchema(exported, dom);
       this._schema = schema;
       this._input = input;
+      this._written = new Set();
+
+      // A bounded memory of what this editor has put in the input.
+      this.remember = (json) => {
+        this._written.add(json);
+        if (this._written.size > 20) {
+          this._written.delete(this._written.values().next().value);
+        }
+      };
 
       const state = EditorState.create({
         doc: parseDoc(schema, input.value) ?? schema.topNodeType.createAndFill(),
@@ -325,9 +334,12 @@ export const createCoelhoHook = (dom = {}) =>
 
       this.syncInput = () => {
         const json = JSON.stringify(this._view.state.doc.toJSON());
-        // Remember what we wrote, so `updated()` can tell a server-driven
-        // change from the echo of our own.
-        this._lastWritten = json;
+        // Remember what we wrote — and not only the last one. The server
+        // echoes asynchronously, so an echo arriving now may answer a
+        // keystroke from several ago; applying it would roll the writer back
+        // to what they had typed by then.
+        this.remember(json);
+
         if (input.value !== json) {
           input.value = json;
           input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -391,7 +403,7 @@ export const createCoelhoHook = (dom = {}) =>
       // input does not: the server can legitimately replace the document, and
       // when it does the editor has to follow.
       const value = this._input?.value;
-      if (!this._view || value === undefined || value === this._lastWritten) return;
+      if (!this._view || value === undefined || this._written.has(value)) return;
 
       const doc = parseDoc(this._schema, value);
 
@@ -400,7 +412,15 @@ export const createCoelhoHook = (dom = {}) =>
       // the editor from that is not possible, and losing their work over it
       // would be worse than ignoring the round trip.
       if (!doc) {
-        this._lastWritten = value;
+        this.remember(value);
+        return;
+      }
+
+      // Validation normalises, so the server's copy is rarely byte-identical
+      // to what the editor wrote even when it says the same thing. Comparing
+      // documents rather than text is what tells an echo from a replacement.
+      if (doc.eq(this._view.state.doc)) {
+        this.remember(value);
         return;
       }
 
@@ -422,7 +442,7 @@ export const createCoelhoHook = (dom = {}) =>
       // caret here; it has to be put back by hand, at the offsets it held.
       transaction.setSelection(selectionAt(transaction.doc, from, to));
 
-      this._lastWritten = value;
+      this.remember(value);
       this._view.dispatch(transaction);
     },
 
