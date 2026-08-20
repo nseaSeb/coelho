@@ -90,9 +90,13 @@ defmodule Coelho.Attachments do
     |> Base.url_encode64(padding: false)
   end
 
+  # A query parameter is whatever the client sent: `?expires[]=1` decodes to
+  # a list, and `Integer.parse/1` would raise rather than refuse it.
   defp integer_param(params, name) do
-    case params |> Map.get(name, "") |> Integer.parse() do
-      {value, ""} -> {:ok, value}
+    with value when is_binary(value) <- Map.get(params, name),
+         {value, ""} <- Integer.parse(value) do
+      {:ok, value}
+    else
       _ -> :error
     end
   end

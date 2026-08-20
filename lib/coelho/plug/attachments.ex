@@ -80,29 +80,50 @@ if Code.ensure_loaded?(Plug) do
     end
 
     defp send_bytes(conn, key, options) do
-      metadata = metadata(options.metadata, key)
+      storage = resolve(options.storage)
 
-      conn =
-        conn
-        |> put_resp_header("x-content-type-options", "nosniff")
-        |> put_resp_header("cache-control", options.cache_control)
-        |> put_resp_content_type(content_type(metadata))
-        |> put_resp_header("content-disposition", disposition(metadata))
-
-      case Storage.path(resolve(options.storage), key) do
+      # A storage with no local path — object storage — answers `:error` and
+      # the bytes are read instead. Only the storage can tell an unusable key
+      # from a missing one, so its own error decides the status.
+      case Storage.path(storage, key) do
         {:ok, path} ->
           if File.regular?(path) do
-            conn |> send_file(200, path) |> halt()
+            conn |> headers(key, options) |> send_file(200, path) |> halt()
           else
             halt_with(conn, 404, "not found")
           end
 
         :error ->
-          halt_with(conn, 403, "forbidden")
+          case Storage.read(storage, key) do
+            {:ok, bytes} -> conn |> headers(key, options) |> send_resp(200, bytes) |> halt()
+            {:error, :invalid_key} -> halt_with(conn, 403, "forbidden")
+            {:error, _reason} -> halt_with(conn, 404, "not found")
+          end
       end
     end
 
-    defp content_type(%{content_type: type}) when is_binary(type), do: type
+    # Only on the way to a body: an error response carrying a
+    # content-disposition makes the browser download the error text as a file.
+    defp headers(conn, key, options) do
+      metadata = metadata(options.metadata, key)
+
+      conn
+      |> put_resp_header("x-content-type-options", "nosniff")
+      |> put_resp_header("cache-control", options.cache_control)
+      |> put_resp_header("content-type", content_type(metadata))
+      |> put_resp_header("content-disposition", disposition(metadata))
+    end
+
+    # The content type comes from whatever was recorded at upload time, which
+    # is ultimately the browser's word. Anything that is not a plain type
+    # token is not passed on: a header value with a control character in it
+    # raises inside Plug and turns every fetch of that file into a 500.
+    defp content_type(%{content_type: type}) when is_binary(type) do
+      if String.match?(type, ~r{\A[\w.+-]+/[\w.+-]+\z}),
+        do: type,
+        else: "application/octet-stream"
+    end
+
     defp content_type(_metadata), do: "application/octet-stream"
 
     defp disposition(metadata) do

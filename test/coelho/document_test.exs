@@ -199,7 +199,11 @@ defmodule Coelho.DocumentTest do
           %{"type" => "blockquote", "content" => [inner]}
         end)
 
-      {microseconds, {:ok, _}} = :timer.tc(fn -> Document.validate(doc([deep]), schema()) end)
+      document = doc([deep])
+      # Measured cold, the first call pays for loading and JIT-compiling the
+      # module, which has nothing to do with what is being measured.
+      Document.validate(document, schema())
+      {microseconds, {:ok, _}} = :timer.tc(fn -> Document.validate(document, schema()) end)
 
       assert microseconds < 100_000
     end
@@ -259,14 +263,19 @@ defmodule Coelho.DocumentTest do
   describe "error accumulation" do
     test "many failing siblings stay linear" do
       # Appending to the growing accumulator made this quadratic: 4000 bad
-      # children cost 40.8 ms and 8000 cost 148 ms.
-      document = doc(List.duplicate(%{"type" => "script"}, 8000))
+      # children cost 40.8 ms and 8000 cost 148 ms, which extrapolates to
+      # about 2.4 s at the size below. Linear, it measures 49 ms — so the
+      # budget is wide enough to survive a cold, loaded machine and still far
+      # under what quadratic would cost.
+      document = doc(List.duplicate(%{"type" => "script"}, 32_000))
+
+      Document.validate(doc(List.duplicate(%{"type" => "script"}, 100)), schema())
 
       {microseconds, {:error, errors}} =
         :timer.tc(fn -> Document.validate(document, schema()) end)
 
-      assert length(errors) == 8000
-      assert microseconds < 100_000
+      assert length(errors) == 32_000
+      assert microseconds < 1_000_000
     end
   end
 

@@ -84,18 +84,25 @@ defmodule DemoWeb.EditorLive do
   # application's. Coelho only wants the node to insert.
   defp handle_progress(:attachment, entry, socket) do
     if entry.done? do
-      # consume_uploaded_entry/3 unwraps the {:ok, term} the callback returns,
-      # so what comes back here is the attachment itself.
-      attachment =
+      # The callback has to answer {:ok, term} or LiveView raises and takes the
+      # process with it, so a storage failure is wrapped rather than returned.
+      # consume_uploaded_entry/3 then hands back the term itself.
+      result =
         consume_uploaded_entry(socket, entry, fn %{path: path} ->
-          Demo.Uploads.store(path, entry.client_name, entry.client_type)
+          {:ok, Demo.Uploads.store(path, entry.client_name, entry.client_type)}
         end)
 
-      {:noreply,
-       push_event(socket, "coelho:attachment", %{
-         node: Coelho.Attachment.to_node(attachment),
-         url: Demo.Uploads.url(attachment.key)
-       })}
+      case result do
+        {:ok, attachment} ->
+          {:noreply,
+           push_event(socket, "coelho:attachment", %{
+             node: Coelho.Attachment.to_node(attachment),
+             url: Demo.Uploads.url(attachment.key)
+           })}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Could not store the file: #{inspect(reason)}")}
+      end
     else
       {:noreply, socket}
     end
