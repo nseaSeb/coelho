@@ -92,19 +92,32 @@ const documentEventually = async (page, description, predicate) => {
 // one: a click landing before the editor is ready, or a select-all that has
 // not taken, leaves the old content in place and the failure then points at
 // whatever assertion came next rather than at the typing.
+const EMPTY = 'return doc.content.flatMap((b) => b.content ?? []).every((n) => (n.text ?? "") === "")';
+
+const isEmpty = async (page) =>
+  (await stored(page)).content
+    .flatMap((block) => block.content ?? [])
+    .every((node) => (node.text ?? "") === "");
+
 const typeInEditor = async (page, text) => {
-  await page.click(EDITOR);
   // A select-all sent before the click has moved focus selects nothing, and
   // the typing then *appends* to the previous test's document instead of
-  // replacing it. Emptying first makes that observable rather than silent.
-  await page.waitForFunction(() => document.activeElement?.closest(".ProseMirror") !== null);
-  await selectAll(page);
-  await page.keyboard.press("Backspace");
-  await documentEventually(
-    page,
-    "the editor never emptied",
-    'return doc.content.flatMap((b) => b.content ?? []).every((n) => (n.text ?? "") === "")'
-  );
+  // replacing it. Rather than ask the page whether it has focus — which the
+  // engines answer differently — the gesture is repeated until it has had
+  // the effect it is there for.
+  for (let attempt = 1; ; attempt += 1) {
+    await page.click(EDITOR);
+    await selectAll(page);
+    await page.keyboard.press("Backspace");
+    await settle(page);
+
+    if (await isEmpty(page)) break;
+
+    if (attempt === 3) {
+      await documentEventually(page, "the editor never emptied", EMPTY);
+      break;
+    }
+  }
 
   await page.keyboard.type(text);
 
