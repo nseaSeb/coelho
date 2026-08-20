@@ -243,8 +243,16 @@ defmodule Coelho.Schema do
   # node — a fixed map, or a function of the element's HTML attributes.
   defp normalize_parse(rules) do
     Enum.map(rules, fn
-      tag when is_binary(tag) -> {tag, %{}}
-      {tag, attrs} when is_binary(tag) -> {tag, attrs}
+      tag when is_binary(tag) ->
+        {tag, %{}}
+
+      {tag, attrs} when is_binary(tag) and (is_map(attrs) or is_function(attrs, 1)) ->
+        {tag, attrs}
+
+      other ->
+        raise ArgumentError,
+              "invalid parse rule #{inspect(other)}: expected a tag, or a {tag, attrs} " <>
+                "pair whose attrs is a map or a function of one argument"
     end)
   end
 

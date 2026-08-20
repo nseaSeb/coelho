@@ -208,7 +208,7 @@ defmodule Coelho.Document do
             mark_rpath = [index, "marks" | rpath]
 
             case validate_mark(mark, allowed_marks, schema, mark_rpath) do
-              {:ok, mark} -> {[mark | kept], errors}
+              {:ok, mark} -> {add_mark(kept, mark), errors}
               {:error, mark_errors} -> {kept, [mark_errors | errors]}
             end
           end)
@@ -245,6 +245,13 @@ defmodule Coelho.Document do
   defp validate_mark(_mark, _allowed_marks, _schema, rpath),
     do: {:error, [error(rpath, "expected an object")]}
 
+  # Marks are a set on the browser side, so the same mark twice is normalised
+  # away rather than rejected — keeping it would store a document the editor
+  # could never have produced.
+  defp add_mark(kept, mark) do
+    if Enum.any?(kept, &(&1["type"] == mark["type"])), do: kept, else: [mark | kept]
+  end
+
   defp mark_allowed?(:all, _name), do: true
   defp mark_allowed?(allowed, name) when is_list(allowed), do: name in allowed
 
@@ -271,7 +278,7 @@ defmodule Coelho.Document do
         {normalised, types, errors} =
           validate_children(children, schema, rpath, spec.marks, depth + 1)
 
-        {normalised, errors ++ content_errors(spec, children, types, schema, rpath)}
+        {merge_text(normalised), errors ++ content_errors(spec, children, types, schema, rpath)}
 
       _other ->
         {[], [error(["content" | rpath], "expected a list")]}
@@ -290,6 +297,25 @@ defmodule Coelho.Document do
       {nodes |> Enum.reverse() |> Enum.reject(&is_nil/1), Enum.reverse(types),
        concat_reversed(errors)}
     end)
+  end
+
+  # Two adjacent text nodes carrying the same marks are one run of text; the
+  # browser side merges them on the spot, so a document that kept them apart
+  # would render an extra element and grow one on every round trip.
+  defp merge_text(children) do
+    children
+    |> Enum.reduce([], fn
+      %{"type" => "text"} = node, [%{"type" => "text"} = previous | rest] ->
+        if Map.get(node, "marks", []) == Map.get(previous, "marks", []) do
+          [%{previous | "text" => previous["text"] <> node["text"]} | rest]
+        else
+          [node, previous | rest]
+        end
+
+      node, acc ->
+        [node | acc]
+    end)
+    |> Enum.reverse()
   end
 
   defp content_errors(%NodeSpec{content: nil}, [], _types, _schema, _rpath), do: []

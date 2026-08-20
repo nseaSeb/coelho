@@ -211,4 +211,47 @@ defmodule Coelho.HTMLTest do
       assert round_trip("<pre><code>a\n\n  b</code></pre>") == "<pre><code>a\n\n  b</code></pre>"
     end
   end
+
+  describe "content that must not be lost" do
+    test "an image outside a paragraph survives" do
+      # Reading a "text" key off any node made an image look like whitespace,
+      # and dropped the run it was in.
+      assert round_trip(~s(<img src="/x.png">)) == ~s(<p><img src="/x.png"></p>)
+      assert round_trip(~s(<div><img src="/x.png"></div>)) == ~s(<p><img src="/x.png"></p>)
+      assert round_trip("<div><br></div>") == "<p><br></p>"
+    end
+
+    test "a block the parent cannot hold is unwrapped, not deleted" do
+      # Floki does not auto-close <p> before <pre> the way a browser does, so
+      # this arrives as a code block nested in a paragraph.
+      assert round_trip("<p>a<pre>code</pre></p>") =~ "code"
+      assert round_trip("<h1><h2>x</h2></h1>") == "<h1>x</h1>"
+      assert round_trip("<li>text</li>") == "<p>text</p>"
+    end
+
+    test "a wrapped run does not keep the source's indentation" do
+      assert round_trip("  Hello  ") == "<p>Hello</p>"
+
+      assert round_trip("<blockquote>\n  quoted\n</blockquote>") ==
+               "<blockquote><p>quoted</p></blockquote>"
+
+      assert round_trip("<ul><li>\n  text\n</li></ul>") == "<ul><li><p>text</p></li></ul>"
+    end
+
+    test "a mark nested in itself is applied once" do
+      assert round_trip("<p>a<b>b<b>c</b></b></p>") == "<p>a<strong>bc</strong></p>"
+      assert round_trip("<p><strong>a <b>b</b></strong></p>") == "<p><strong>a b</strong></p>"
+    end
+
+    test "the carrier character never reaches an attribute either" do
+      document = import_html!(~s(<p><a href="/x" title="a >  < b">link</a></p>))
+
+      refute inspect(document) =~ "e000"
+
+      assert [%{"content" => [%{"marks" => [%{"attrs" => %{"title" => title}}]}]}] =
+               document["content"]
+
+      refute String.contains?(title, "\u{E000}")
+    end
+  end
 end

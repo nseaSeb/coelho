@@ -337,4 +337,39 @@ defmodule Coelho.DocumentTest do
       assert :erts_debug.same(kept, whole)
     end
   end
+
+  describe "adjacent text" do
+    test "runs carrying the same marks are merged" do
+      document =
+        doc([
+          paragraph([
+            text("a"),
+            text("b", [%{"type" => "bold"}]),
+            text("c", [%{"type" => "bold"}])
+          ])
+        ])
+
+      assert {:ok, normalised} = Document.validate(document, schema())
+      assert [%{"content" => [_, %{"text" => "bc"}]}] = normalised["content"]
+    end
+
+    test "runs carrying different marks stay apart" do
+      document = doc([paragraph([text("a", [%{"type" => "bold"}]), text("b")])])
+
+      assert {:ok, normalised} = Document.validate(document, schema())
+      assert [%{"content" => [%{"text" => "a"}, %{"text" => "b"}]}] = normalised["content"]
+    end
+  end
+
+  describe "marks are a set" do
+    test "the same mark twice is normalised away, not rejected" do
+      marks = [%{"type" => "bold"}, %{"type" => "bold"}, %{"type" => "italic"}]
+      document = doc([paragraph([text("x", marks)])])
+
+      assert {:ok, normalised} = Document.validate(document, schema())
+
+      assert [%{"content" => [%{"marks" => kept}]}] = normalised["content"]
+      assert kept == [%{"type" => "bold"}, %{"type" => "italic"}]
+    end
+  end
 end

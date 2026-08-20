@@ -121,4 +121,16 @@ defmodule Coelho.SchemaTest do
       end
     end
   end
+
+  describe "parse rules" do
+    test "a malformed rule names itself rather than crashing later" do
+      assert_raise ArgumentError, ~r/invalid parse rule :p/, fn ->
+        Schema.new(nodes: [doc: [content: "text*", parse: [:p]]])
+      end
+
+      assert_raise ArgumentError, ~r/invalid parse rule \{"a", "href"\}/, fn ->
+        Schema.new(nodes: [doc: [content: "text*", parse: [{"a", "href"}]]])
+      end
+    end
+  end
 end

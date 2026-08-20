@@ -106,14 +106,21 @@ defmodule Coelho.HTML do
       if String.starts_with?(String.downcase(part), "<pre") do
         part
       else
-        Regex.replace(~r/>(\s+)</u, part, ">" <> @separator <> "<")
+        # The `<` has to open a tag: a `>` and a `<` either side of whitespace
+        # inside an attribute value are just characters.
+        Regex.replace(~r{>(\s+)<(?=[a-zA-Z/!])}u, part, ">" <> @separator <> "<")
       end
     end)
   end
 
+  # Floki is optional, so it is called through `apply/3`: a direct call would
+  # warn at compile time in every application that does not use this path,
+  # and the module still has to exist there to answer with a clear error.
+  defp floki_text(trees), do: apply(Floki, :text, [trees])
+
   defp parse_fragment(html) do
     if Code.ensure_loaded?(Floki) do
-      case Floki.parse_fragment(html) do
+      case apply(Floki, :parse_fragment, [html]) do
         {:ok, trees} -> {:ok, trees}
         {:error, reason} -> {:error, {:unparsable_html, reason}}
       end
@@ -149,7 +156,7 @@ defmodule Coelho.HTML do
         build_node(node, children, schema, marks)
 
       mark = match_mark(schema, tag, attrs, allowed_marks) ->
-        convert(children, schema, allowed_marks, marks ++ [mark])
+        convert(children, schema, allowed_marks, add_mark(marks, mark))
 
       true ->
         # Transparent: an unknown element is not a reason to lose its content.
@@ -158,6 +165,13 @@ defmodule Coelho.HTML do
   end
 
   defp convert_tree(_other, _schema, _allowed_marks, _marks), do: []
+
+  # `<strong>a <b>b</b></strong>` is ordinary markup, and nesting a mark
+  # inside itself would build a document the browser side could never produce
+  # — marks are a set there — and markup that doubles on every round trip.
+  defp add_mark(marks, mark) do
+    if Enum.any?(marks, &(&1["type"] == mark["type"])), do: marks, else: marks ++ [mark]
+  end
 
   defp text_node(text, []), do: %{"type" => "text", "text" => text}
   defp text_node(text, marks), do: %{"type" => "text", "text" => text, "marks" => marks}
@@ -174,7 +188,7 @@ defmodule Coelho.HTML do
       spec.marks == [] ->
         # A node that forbids marks — a code block — takes its text verbatim,
         # tags and all, rather than losing what it was quoting.
-        text = children |> Floki.text() |> String.trim_trailing("\n")
+        text = children |> floki_text() |> String.trim_trailing("\n")
         content = if text == "", do: [], else: [%{"type" => "text", "text" => text}]
         [Map.put(node, "content", content)]
 
@@ -236,6 +250,8 @@ defmodule Coelho.HTML do
 
       case Map.fetch(extracted, key) do
         {:ok, value} ->
+          value = scrub(value)
+
           case Attr.validate(spec.validate, value) do
             :ok -> {:cont, {:ok, Map.put(acc, key, value)}}
             {:error, _reason} when spec.required -> {:halt, nil}
@@ -251,6 +267,12 @@ defmodule Coelho.HTML do
     end)
   end
 
+  # Nothing carrying the separator may reach the document, attribute values
+  # included: the regex that plants it works on raw HTML, and raw HTML is not
+  # only made of tags.
+  defp scrub(value) when is_binary(value), do: String.replace(value, @separator, " ")
+  defp scrub(value), do: value
+
   # -- Fitting --------------------------------------------------------------
 
   # Real HTML puts inline content where a schema wants blocks, all the time.
@@ -264,8 +286,26 @@ defmodule Coelho.HTML do
       children
     else
       children
+      |> lift_inadmissible(spec, schema, 0)
       |> wrap_inline_runs(spec, schema)
       |> Enum.filter(&admissible?(&1, spec, schema))
+    end
+  end
+
+  # A child the parent cannot hold — a `<pre>` inside a `<p>`, a heading
+  # inside a heading — is unwrapped rather than deleted, the same way an
+  # unknown element is transparent. Deleting it would take its text with it.
+  @lift_passes 8
+
+  defp lift_inadmissible(children, _spec, _schema, @lift_passes), do: children
+
+  defp lift_inadmissible(children, spec, schema, pass) do
+    lifted = Enum.flat_map(children, &lift_child(&1, spec, schema))
+
+    if lifted == children do
+      children
+    else
+      lift_inadmissible(lifted, spec, schema, pass + 1)
     end
   end
 
@@ -282,14 +322,30 @@ defmodule Coelho.HTML do
             cond do
               not inline?(first, schema) -> run
               blank?(run) -> []
-              true -> [%{"type" => Atom.to_string(block), "content" => run}]
+              true -> [%{"type" => Atom.to_string(block), "content" => trim_edges(run)}]
             end
         end)
     end
   end
 
+  # Only a text node can be blank. Reading `"text"` off any node made an
+  # image or a line break look like whitespace, and dropped the run it was in.
+  # Only a block with content of its own is unwrapped. An inline child is not
+  # inadmissible so much as unwrapped-yet — wrapping it is the next step —
+  # and a childless one would simply vanish.
+  defp lift_child(child, spec, schema) do
+    cond do
+      admissible?(child, spec, schema) -> [child]
+      inline?(child, schema) -> [child]
+      Map.get(child, "content", []) == [] -> [child]
+      true -> Map.get(child, "content")
+    end
+  end
+
   defp blank?(run) do
-    Enum.all?(run, fn node -> String.trim(Map.get(node, "text", "")) == "" end)
+    Enum.all?(run, fn node ->
+      Map.get(node, "type") == "text" and String.trim(Map.get(node, "text", "")) == ""
+    end)
   end
 
   defp default_block(spec, schema) do
