@@ -104,11 +104,18 @@ const run = async () => {
       // Rebuilding the editor from the server's copy used to start a fresh
       // state, whose selection is at the top of the document — so the caret
       // jumped to the beginning whenever normalisation changed anything.
-      await typeInEditor(page, "first");
-      await paneEventually(page, "stored", "first");
-      await page.keyboard.type(" then second");
+      await typeInEditor(page, "ABCDEF");
+      await paneEventually(page, "stored", "ABCDEF");
 
-      assert.equal(await page.textContent(EDITOR), "first then second");
+      // In the middle, not at the end: a caret parked at the end of the
+      // document passes an end-of-document test whether it was preserved or
+      // moved there.
+      await page.keyboard.press("End");
+      for (let i = 0; i < 3; i += 1) await page.keyboard.press("ArrowLeft");
+      await paneEventually(page, "stored", "ABCDEF");
+      await page.keyboard.type("!");
+
+      assert.equal(spaces(await page.textContent(EDITOR)), "ABC!DEF");
     });
 
     await test("the toolbar applies a mark to the selection", async () => {

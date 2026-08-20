@@ -102,11 +102,21 @@ defmodule Coelho.Render do
     ["<", name, attributes(attrs), ">", inner, "</", name, ">"]
   end
 
+  # The elements HTML itself closes. Anything else needs a closing tag, even
+  # when the node has no children: `<span class="mention">` on its own
+  # swallows the rest of the paragraph in the browser's parser, and a schema
+  # extension reaching for a `void: true` inline node is exactly how that
+  # happens.
+  @html_void ~w(area base br col embed hr img input link meta param source track wbr)
+
   @doc """
-  Builds a self-closing element.
+  Builds a childless element, self-closing only if HTML says it is.
   """
   @spec void_tag(String.t(), [{String.t(), term()}]) :: iodata()
-  def void_tag(name, attrs), do: ["<", name, attributes(attrs), ">"]
+  def void_tag(name, attrs) when name in @html_void,
+    do: ["<", name, attributes(attrs), ">"]
+
+  def void_tag(name, attrs), do: tag(name, attrs, [])
 
   defp attributes(attrs) do
     Enum.map(attrs, fn

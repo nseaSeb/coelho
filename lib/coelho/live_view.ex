@@ -96,19 +96,36 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
         socket
         |> Coelho.LiveView.insert_node(Coelho.Attachment.to_node(attachment),
+             id: editor_id(@form[:body]),
              preview: MyApp.Uploads.url(attachment.key))
 
-    `:preview` is for the editor's eyes only — an attachment's URL, which the
-    document does not carry and the renderer resolves again on every render.
+    ## Options
+
+      * `:id` — which editor to insert into, as `editor_id/1` returns it.
+        `push_event/3` reaches the whole page, so **without this every editor
+        on it inserts the node**, which is only ever right when there is one.
+      * `:preview` — for the editor's eyes only: an attachment's URL, which
+        the document does not carry and the renderer resolves again on every
+        render.
+
     """
     @spec insert_node(Phoenix.LiveView.Socket.t(), map(), keyword()) ::
             Phoenix.LiveView.Socket.t()
     def insert_node(socket, node, opts \\ []) when is_map(node) do
       Phoenix.LiveView.push_event(socket, "coelho:insert", %{
         node: node,
+        id: Keyword.get(opts, :id),
         preview: Keyword.get(opts, :preview)
       })
     end
+
+    @doc """
+    The DOM id of the editor rendered for a form field.
+
+    What `insert_node/3` needs to reach one editor rather than all of them.
+    """
+    @spec editor_id(Phoenix.HTML.FormField.t()) :: String.t()
+    def editor_id(%Phoenix.HTML.FormField{id: id}), do: id <> "-editor"
 
     @doc """
     Renders the rich text editor for a form field.
@@ -137,7 +154,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     def coelho_editor(assigns) do
       schema = assigns.document_schema || Schema.default()
-      id = assigns.id || assigns.field.id <> "-editor"
+      id = assigns.id || editor_id(assigns.field)
 
       assigns =
         assigns

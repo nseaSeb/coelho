@@ -47,6 +47,13 @@ defmodule Coelho.LiveViewTest do
       assert html =~ "paragraph"
     end
 
+    test "the editor's id is the one insert_node has to name" do
+      field = form(nil)[:body]
+      html = render(%{field: field})
+
+      assert html =~ ~s(id="#{Coelho.LiveView.editor_id(field)}")
+    end
+
     test "hands ProseMirror its own subtree, and only that" do
       html = render(%{field: form(nil)[:body]})
 

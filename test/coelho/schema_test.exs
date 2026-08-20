@@ -178,7 +178,10 @@ defmodule Coelho.SchemaTest do
       }
 
       assert {:ok, document} = Coelho.validate(document, schema)
-      assert Coelho.to_html(document, schema) == ~s(<p><span class="mention"></p>)
+      # A void node is not an HTML void element: only the tags HTML closes by
+      # itself are emitted unclosed, or a lone <span> would swallow the rest
+      # of the paragraph in the browser's parser.
+      assert Coelho.to_html(document, schema) == ~s(<p><span class="mention"></span></p>)
       # And the default schema still rejects it, which is the point of the copy.
       assert {:error, _} = Coelho.validate(document)
     end

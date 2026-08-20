@@ -54,9 +54,12 @@ defmodule Coelho.HTML do
 
       link: [parse: [{"a", &Coelho.HTML.take(&1, ~w(href title))}]]
 
-  A rule is a tag, optionally paired with the attributes to give the node:
-  a fixed map, or a function of the element's HTML attributes. Rules are
-  tried in declaration order, nodes before marks.
+  A rule is a tag, optionally paired with the attributes to give the node: a
+  fixed map, a function of the element's HTML attributes, or a function of
+  those and the element's text. Rules are tried in declaration order, nodes
+  before marks, and a rule whose attributes fail the schema does not match —
+  which is how `<span data-user-id="7">` becomes a mention while every other
+  span stays a span.
   """
 
   alias Coelho.Document
@@ -152,10 +155,10 @@ defmodule Coelho.HTML do
       tag in @discarded ->
         []
 
-      node = match_node(schema, tag, attrs) ->
+      node = match_node(schema, tag, attrs, children) ->
         build_node(node, children, schema, marks)
 
-      mark = match_mark(schema, tag, attrs, allowed_marks) ->
+      mark = match_mark(schema, tag, attrs, children, allowed_marks) ->
         convert(children, schema, allowed_marks, add_mark(marks, mark))
 
       true ->
@@ -203,21 +206,21 @@ defmodule Coelho.HTML do
     end
   end
 
-  defp match_node(schema, tag, attrs) do
+  defp match_node(schema, tag, attrs, children) do
     Enum.find_value(schema.node_order, fn name ->
       spec = Schema.node_spec(schema, name)
 
-      with {:ok, node_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs),
+      with {:ok, node_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs, children),
            do: {spec, node_attrs}
     end)
   end
 
-  defp match_mark(schema, tag, attrs, allowed_marks) do
+  defp match_mark(schema, tag, attrs, children, allowed_marks) do
     Enum.find_value(schema.mark_order, fn name ->
       if mark_allowed?(allowed_marks, name) do
         spec = Schema.mark_spec(schema, name)
 
-        with {:ok, mark_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs) do
+        with {:ok, mark_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs, children) do
           mark = %{"type" => Atom.to_string(name)}
           if mark_attrs == %{}, do: mark, else: Map.put(mark, "attrs", mark_attrs)
         end
@@ -231,17 +234,28 @@ defmodule Coelho.HTML do
   # A rule matches only if the attributes it produces survive the schema's
   # own validators. That is what turns `<a href="javascript:…">` into an
   # unknown element — the text stays, the link does not.
-  defp apply_rules(rules, specs, tag, html_attrs) do
+  defp apply_rules(rules, specs, tag, html_attrs, children) do
     html_attrs = Map.new(html_attrs)
 
     Enum.find_value(rules, fn
       {^tag, extract} ->
-        extracted = if is_function(extract, 1), do: extract.(html_attrs), else: extract
-        resolve_attrs(specs, extracted)
+        specs |> resolve_attrs(extract_attrs(extract, html_attrs, children))
 
       _rule ->
         nil
     end)
+  end
+
+  # A rule that only sees attributes cannot keep what the element said. The
+  # two-argument form is given the element's text as well, which is how a
+  # mention imported from `<span data-user-id="7">Ada</span>` keeps "Ada"
+  # instead of being re-rendered as "@7".
+  defp extract_attrs(extract, html_attrs, children) do
+    cond do
+      is_function(extract, 2) -> extract.(html_attrs, floki_text(children))
+      is_function(extract, 1) -> extract.(html_attrs)
+      true -> extract
+    end
   end
 
   defp resolve_attrs(specs, extracted) do

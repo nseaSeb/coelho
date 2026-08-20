@@ -294,13 +294,16 @@ defmodule Coelho.Schema do
       tag when is_binary(tag) ->
         {tag, %{}}
 
-      {tag, attrs} when is_binary(tag) and (is_map(attrs) or is_function(attrs, 1)) ->
+      {tag, attrs}
+      when is_binary(tag) and
+             (is_map(attrs) or is_function(attrs, 1) or is_function(attrs, 2)) ->
         {tag, attrs}
 
       other ->
         raise ArgumentError,
               "invalid parse rule #{inspect(other)}: expected a tag, or a {tag, attrs} " <>
-                "pair whose attrs is a map or a function of one argument"
+                "pair whose attrs is a map, or a function of the element's " <>
+                "attributes and optionally its text"
     end)
   end
 

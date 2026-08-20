@@ -193,4 +193,21 @@ defmodule Coelho.RenderTest do
       assert Render.to_html(document, schema()) == "<pre><code>x</code></pre>"
     end
   end
+
+  describe "childless elements" do
+    test "the tags HTML closes by itself are emitted unclosed" do
+      assert Render.void_tag("img", [{"src", "/a.png"}]) |> IO.iodata_to_binary() ==
+               ~s(<img src="/a.png">)
+
+      assert Render.void_tag("br", []) |> IO.iodata_to_binary() == "<br>"
+    end
+
+    test "anything else is closed, even with no children" do
+      # An unclosed <span> swallows the rest of the paragraph in the
+      # browser's parser, and a schema extension reaching for a `void: true`
+      # inline node is exactly how that happens.
+      assert Render.void_tag("span", [{"class", "mention"}]) |> IO.iodata_to_binary() ==
+               ~s(<span class="mention"></span>)
+    end
+  end
 end

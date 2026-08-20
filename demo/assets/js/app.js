@@ -42,10 +42,15 @@ const Coelho = createCoelhoHook({
       ],
       parseDOM: [{
         tag: "span[data-user-id]",
-        getAttrs: (dom) => ({
-          user_id: Number(dom.getAttribute("data-user-id")),
-          label: dom.textContent
-        })
+        // Returning false is how a ProseMirror rule declines. Without it,
+        // `data-user-id="abc"` builds a mention whose user_id is NaN, which
+        // serialises to null and makes the server reject the whole document
+        // — the two halves have to agree on what is a mention.
+        getAttrs: (dom) => {
+          const user_id = Number(dom.getAttribute("data-user-id"));
+          if (!Number.isInteger(user_id)) return false;
+          return {user_id, label: dom.textContent || null};
+        }
       }]
     }
   }

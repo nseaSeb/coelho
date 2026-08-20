@@ -254,4 +254,55 @@ defmodule Coelho.HTMLTest do
       refute String.contains?(title, "\u{E000}")
     end
   end
+
+  describe "a rule that reads the element's text" do
+    defmodule Mentions do
+      @moduledoc false
+      def schema do
+        Coelho.Schema.extend(Coelho.Schema.default(),
+          nodes: [
+            mention: [
+              group: "inline",
+              inline: true,
+              void: true,
+              attrs: [
+                user_id: [required: true, validate: :integer],
+                label: [default: nil, validate: {:nullable, :string}]
+              ],
+              render: {"span", [{"class", "mention"}]},
+              parse: [{"span", &__MODULE__.parse/2}]
+            ]
+          ]
+        )
+      end
+
+      def parse(attrs, text) do
+        case attrs |> Map.get("data-user-id", "") |> Integer.parse() do
+          {user_id, ""} -> %{"user_id" => user_id, "label" => text}
+          _ -> %{}
+        end
+      end
+    end
+
+    test "keeps what the element said" do
+      document = import_html!(~s(<p><span data-user-id="7">Ada</span></p>), Mentions.schema())
+
+      assert [%{"content" => [mention]}] = document["content"]
+      assert mention["attrs"] == %{"user_id" => 7, "label" => "Ada"}
+    end
+
+    test "and still declines the spans that are not mentions" do
+      document =
+        import_html!(~s(<p><span class="fancy">plain</span></p>), Mentions.schema())
+
+      assert [%{"content" => [%{"type" => "text", "text" => "plain"}]}] = document["content"]
+    end
+
+    test "an unparsable id is not a mention either" do
+      document =
+        import_html!(~s(<p><span data-user-id="abc">text</span></p>), Mentions.schema())
+
+      assert [%{"content" => [%{"type" => "text"}]}] = document["content"]
+    end
+  end
 end

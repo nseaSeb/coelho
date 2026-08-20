@@ -278,14 +278,15 @@ def handle_progress(:attachment, entry, socket) when entry.done? do
   attachment = consume_uploaded_entry(socket, entry, &MyApp.Uploads.store/1)
 
   {:noreply,
-   push_event(socket, "coelho:attachment", %{
-     node: Coelho.Attachment.to_node(attachment),
-     url: MyApp.Uploads.url(attachment.key)
-   })}
+   Coelho.LiveView.insert_node(socket, Coelho.Attachment.to_node(attachment),
+     id: Coelho.LiveView.editor_id(socket.assigns.form[:body]),
+     preview: MyApp.Uploads.url(attachment.key)
+   )}
 end
 ```
 
-The `url` there is only the editor's preview. What is stored is the key.
+The preview is only the editor's; what is stored is the key. Pass `:id`
+unless the page has exactly one editor — the event reaches all of them.
 
 ## Adding a node of your own
 
@@ -316,7 +317,9 @@ named rather than closures.
 Anything the server decides on reaches the document through one call:
 
 ```elixir
-Coelho.LiveView.insert_node(socket, %{"type" => "mention", "attrs" => %{"user_id" => 7}})
+Coelho.LiveView.insert_node(socket, %{"type" => "mention", "attrs" => %{"user_id" => 7}},
+  id: Coelho.LiveView.editor_id(@form[:body])
+)
 ```
 
 The browser needs the other half — `toDOM` and `parseDOM` are functions and
@@ -326,8 +329,20 @@ cannot come from Elixir:
 const Coelho = createCoelhoHook({
   nodes: {
     mention: {
-      toDOM: (node) => ["span", {class: "mention"}, `@${node.attrs.user_id}`],
-      parseDOM: [{tag: "span[data-user-id]", getAttrs: (dom) => ({user_id: Number(dom.dataset.userId)})}]
+      toDOM: (node) => [
+        "span",
+        {class: "mention", "data-user-id": String(node.attrs.user_id)},
+        `@${node.attrs.user_id}`
+      ],
+      parseDOM: [{
+        tag: "span[data-user-id]",
+        // `false` declines the rule. Without it a bad id builds a mention the
+        // server then rejects, and the two halves disagree on what a mention is.
+        getAttrs: (dom) => {
+          const user_id = Number(dom.dataset.userId)
+          return Number.isInteger(user_id) ? {user_id} : false
+        }
+      }]
     }
   }
 })

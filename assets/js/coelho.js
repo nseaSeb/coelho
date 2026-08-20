@@ -1,7 +1,7 @@
 import { createHook } from "@nseaprotector/acme-script";
 import OrderedMap from "orderedmap";
 import { Schema, Node as PMNode } from "prosemirror-model";
-import { EditorState } from "prosemirror-state";
+import { EditorState, Selection, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import { baseKeymap, toggleMark, setBlockType, wrapIn, chainCommands, exitCode } from "prosemirror-commands";
@@ -266,6 +266,20 @@ const buildKeymap = (schema) => {
   return bindings;
 };
 
+// Offsets survive the round trip when the text around them does; when the
+// server changed enough that they no longer point at text, the nearest
+// position is the best answer available.
+const selectionAt = (doc, from, to) => {
+  const end = doc.content.size;
+  const [start, stop] = [Math.min(from, end), Math.min(to, end)];
+
+  try {
+    return TextSelection.create(doc, start, stop);
+  } catch {
+    return Selection.near(doc.resolve(start));
+  }
+};
+
 // Marks a transaction as the server's, not the writer's.
 const REMOTE = "coelho:remote";
 
@@ -347,7 +361,11 @@ export const createCoelhoHook = (dom = {}) =>
         this._view.dispatch(this._view.state.tr.replaceSelectionWith(node).scrollIntoView());
       };
 
-      ctx.handle("coelho:insert", ({ node, preview }) => this.insertNode(node, preview));
+      // push_event reaches the whole page, so an insertion meant for one
+      // editor would otherwise land in every editor on it.
+      ctx.handle("coelho:insert", ({ node, id, preview }) => {
+        if (id == null || id === el.id) this.insertNode(node, preview);
+      });
 
       const uploadName = el.dataset.coelhoUpload;
 
@@ -393,10 +411,16 @@ export const createCoelhoHook = (dom = {}) =>
       // transaction maps the selection across, and stays out of the undo
       // history — it is not an edit anyone made.
       const { state } = this._view;
+      const { from, to } = state.selection;
       const transaction = state.tr
         .replaceWith(0, state.doc.content.size, doc.content)
         .setMeta("addToHistory", false)
         .setMeta(REMOTE, true);
+
+      // The replace spans the whole document, so every position falls inside
+      // the deleted range and maps to its end. Mapping cannot preserve the
+      // caret here; it has to be put back by hand, at the offsets it held.
+      transaction.setSelection(selectionAt(transaction.doc, from, to));
 
       this._lastWritten = value;
       this._view.dispatch(transaction);

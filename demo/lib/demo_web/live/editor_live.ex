@@ -66,10 +66,11 @@ defmodule DemoWeb.EditorLive do
     # A node the application decides on, built server side against the same
     # schema that will validate it on the way back.
     {:noreply,
-     insert_node(socket, %{
-       "type" => "mention",
-       "attrs" => %{"user_id" => 7, "label" => "@ada"}
-     })}
+     insert_node(
+       socket,
+       %{"type" => "mention", "attrs" => %{"user_id" => 7, "label" => "@ada"}},
+       id: editor_id(socket.assigns.form[:body])
+     )}
   end
 
   def handle_event("save", %{"post" => params}, socket) do
@@ -106,6 +107,7 @@ defmodule DemoWeb.EditorLive do
         {:ok, attachment} ->
           {:noreply,
            insert_node(socket, Coelho.Attachment.to_node(attachment),
+             id: editor_id(socket.assigns.form[:body]),
              preview: Demo.Uploads.url(attachment.key)
            )}
 

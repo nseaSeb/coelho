@@ -24,7 +24,7 @@ defmodule Demo.RichText do
                 ],
                 render: &__MODULE__.render_mention/2,
                 to_text: &__MODULE__.mention_text/1,
-                parse: [{"span", &__MODULE__.parse_mention/1}]
+                parse: [{"span", &__MODULE__.parse_mention/2}]
               ]
             ]
           )
@@ -46,16 +46,26 @@ defmodule Demo.RichText do
   def mention_text(node), do: label(node)
 
   @doc """
-  Imports `<span data-user-id="7">` and leaves every other span alone.
+  Imports `<span data-user-id="7">Ada</span>` and leaves every other span
+  alone, keeping what the element said as the label.
 
   A parse rule matches on the tag, and then on whether the attributes it
   extracts satisfy the schema: no `user_id`, no match, so the span falls
   through to the transparent rule and keeps its text.
   """
-  def parse_mention(attrs) do
+  def parse_mention(attrs, text) do
     case attrs |> Map.get("data-user-id", "") |> Integer.parse() do
-      {user_id, ""} -> %{"user_id" => user_id}
+      # The label is what the element actually said. Dropping it would
+      # re-render an imported mention as "@7".
+      {user_id, ""} -> %{"user_id" => user_id, "label" => label_from(text)}
       _ -> %{}
+    end
+  end
+
+  defp label_from(text) do
+    case String.trim(text) do
+      "" -> nil
+      label -> label
     end
   end
 
