@@ -47,15 +47,14 @@ if Code.ensure_loaded?(Phoenix.Component) do
           attachment = consume_uploaded_entry(socket, entry, &MyApp.Uploads.store/1)
 
           {:noreply,
-           push_event(socket, "coelho:attachment", %{
-             node: Coelho.Attachment.to_node(attachment),
-             url: MyApp.Uploads.url(attachment.key)
-           })}
+           insert_node(socket, Coelho.Attachment.to_node(attachment),
+             preview: MyApp.Uploads.url(attachment.key)
+           )}
         end
 
-    The `url` in that payload is only the editor's preview. What gets stored
-    in the document is the key; the URL is resolved again on every render.
-    See `Coelho.Attachments`.
+    The preview is for the editor's eyes only. What gets stored in the
+    document is the key; the URL is resolved again on every render. See
+    `Coelho.Attachments`.
 
     ## Wiring the hook
 
@@ -86,6 +85,30 @@ if Code.ensure_loaded?(Phoenix.Component) do
     use Phoenix.Component
 
     alias Coelho.Schema
+
+    @doc """
+    Inserts a node at the editor's selection.
+
+    The way anything the server decides on reaches the document: an
+    attachment it has just stored, a mention it has just resolved, an embed
+    it has just fetched. The node is built server side, against the same
+    schema that will validate it on the way back.
+
+        socket
+        |> Coelho.LiveView.insert_node(Coelho.Attachment.to_node(attachment),
+             preview: MyApp.Uploads.url(attachment.key))
+
+    `:preview` is for the editor's eyes only — an attachment's URL, which the
+    document does not carry and the renderer resolves again on every render.
+    """
+    @spec insert_node(Phoenix.LiveView.Socket.t(), map(), keyword()) ::
+            Phoenix.LiveView.Socket.t()
+    def insert_node(socket, node, opts \\ []) when is_map(node) do
+      Phoenix.LiveView.push_event(socket, "coelho:insert", %{
+        node: node,
+        preview: Keyword.get(opts, :preview)
+      })
+    end
 
     @doc """
     Renders the rich text editor for a form field.

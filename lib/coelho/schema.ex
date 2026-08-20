@@ -90,6 +90,54 @@ defmodule Coelho.Schema do
   def default, do: Coelho.Schema.Default.schema()
 
   @doc """
+  Adds nodes and marks to an existing schema.
+
+  Most applications want the default schema and one thing of their own — a
+  mention, an embed, a callout — and re-declaring the other fifteen nodes to
+  get there would guarantee they drift.
+
+      Coelho.Schema.extend(Coelho.Schema.default(),
+        nodes: [
+          mention: [
+            group: "inline",
+            inline: true,
+            void: true,
+            attrs: [user_id: [required: true, validate: :integer], label: [default: nil, validate: {:nullable, :string}]],
+            render: &MyApp.RichText.render_mention/2
+          ]
+        ]
+      )
+
+  Additions keep their declaration order, after what was already there.
+  Redeclaring an existing name replaces it, which is how the default
+  schema's rendering or attributes get adjusted without a fork.
+  """
+  @spec extend(t(), keyword()) :: t()
+  def extend(%__MODULE__{} = schema, opts) when is_list(opts) do
+    node_decls = Keyword.get(opts, :nodes, [])
+    mark_decls = Keyword.get(opts, :marks, [])
+
+    nodes = Map.merge(schema.nodes, Map.new(node_decls, fn {n, d} -> {n, build_node(n, d)} end))
+    marks = Map.merge(schema.marks, Map.new(mark_decls, fn {n, d} -> {n, build_mark(n, d)} end))
+
+    extended = %{
+      schema
+      | nodes: nodes,
+        marks: marks,
+        node_order: append_new(schema.node_order, Keyword.keys(node_decls)),
+        mark_order: append_new(schema.mark_order, Keyword.keys(mark_decls)),
+        groups: build_groups(nodes),
+        node_names: Map.new(nodes, fn {name, _} -> {Atom.to_string(name), name} end),
+        mark_names: Map.new(marks, fn {name, _} -> {Atom.to_string(name), name} end)
+    }
+
+    validate_schema!(extended)
+    extended
+  end
+
+  defp append_new(existing, added), do: existing ++ Enum.reject(added, &(&1 in existing))
+
+  @doc """
   Looks up a node spec by name, returning `nil` when unknown.
   """
   @spec node_spec(t(), atom()) :: NodeSpec.t() | nil

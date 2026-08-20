@@ -30,16 +30,36 @@ const pane = (page, name) => page.textContent(`[data-pane="${name}"]`);
 // The server re-renders on every keystroke, so the panes lag the editor by a
 // round trip.
 const paneEventually = async (page, name, contains) => {
-  await page.waitForFunction(
-    ([name, contains]) =>
-      document.querySelector(`[data-pane="${name}"]`)?.textContent?.includes(contains),
-    [name, contains],
-    { timeout: 5000 }
-  );
+  try {
+    await page.waitForFunction(
+      ([name, contains]) =>
+        document.querySelector(`[data-pane="${name}"]`)?.textContent?.includes(contains),
+      [name, contains],
+      { timeout: 5000 }
+    );
+  } catch {
+    throw new Error(`pane ${name} never contained ${JSON.stringify(contains)}; it held ${JSON.stringify((await pane(page, name)) ?? "").slice(0, 400)}`);
+  }
   return pane(page, name);
 };
 
+const spaces = (text) => text.replaceAll("\u00a0", " ");
+
 const selectAll = (page) => page.keyboard.press("ControlOrMeta+a");
+
+// A timeout that only says "timeout" costs an hour; one that shows the
+// document costs a glance.
+const documentEventually = async (page, description, predicate) => {
+  try {
+    await page.waitForFunction(
+      (source) => new Function("doc", source)(JSON.parse(document.querySelector("#post_body").value)),
+      predicate,
+      { timeout: 5000 }
+    );
+  } catch {
+    throw new Error(`${description}; document was ${JSON.stringify(await stored(page))}`);
+  }
+};
 
 const typeInEditor = async (page, text) => {
   await page.click(EDITOR);
@@ -78,6 +98,17 @@ const run = async () => {
       assert.match(await paneEventually(page, "stored", "typed in a real browser"), /"type":"doc"/);
       assert.match(await pane(page, "html"), /<p>typed in a real browser<\/p>/);
       assert.equal((await pane(page, "text")).trim(), "typed in a real browser");
+    });
+
+    await test("the caret stays put across a server round trip", async () => {
+      // Rebuilding the editor from the server's copy used to start a fresh
+      // state, whose selection is at the top of the document — so the caret
+      // jumped to the beginning whenever normalisation changed anything.
+      await typeInEditor(page, "first");
+      await paneEventually(page, "stored", "first");
+      await page.keyboard.type(" then second");
+
+      assert.equal(await page.textContent(EDITOR), "first then second");
     });
 
     await test("the toolbar applies a mark to the selection", async () => {
@@ -175,6 +206,44 @@ const run = async () => {
       assert.equal(response.status(), 200);
       assert.equal(response.headers()["x-content-type-options"], "nosniff");
       assert.equal(Buffer.compare(Buffer.from(await response.body()), png), 0);
+    });
+
+    await test("a node the application added to the schema round trips", async () => {
+      await typeInEditor(page, "written by ");
+      await paneEventually(page, "stored", "written by");
+      await page.click('button[phx-click="mention"]');
+
+      await documentEventually(
+        page,
+        "no mention was inserted",
+        "return doc.content.flatMap((b) => b.content ?? []).some((n) => n.type === 'mention')"
+      );
+
+      // The document still holds what the earlier steps put in it, so the
+      // mention is looked for rather than assumed to be at an index.
+      const mention = (await stored(page)).content
+        .flatMap((block) => block.content ?? [])
+        .find((node) => node.type === "mention");
+
+      assert.ok(mention, "the document holds a mention");
+      // Inserted where the caret was, not at the top of the document.
+      const paragraph = (await stored(page)).content.find((block) =>
+        (block.content ?? []).some((node) => node.type === "mention")
+      );
+      assert.deepEqual(
+        paragraph.content.map((node) => node.type),
+        ["text", "mention"]
+      );
+      assert.equal(mention.attrs.user_id, 7);
+      assert.equal(mention.attrs.label, "@ada");
+
+      // Rendered by the server from the same schema the browser is editing
+      // against, and reduced to text by it too.
+      assert.match(await paneEventually(page, "html", "mention"), /data-user-id="7"[^>]*>@ada</);
+      // contenteditable keeps a trailing space alive as a non-breaking one,
+      // and that is what gets stored, so it comes back out of the server too.
+      assert.match(spaces(await pane(page, "text")), /written by @ada/);
+      assert.match(spaces(await page.textContent(EDITOR)), /written by @ada/);
     });
 
     await test("nothing threw along the way", () => {

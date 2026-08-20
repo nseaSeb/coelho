@@ -22,7 +22,7 @@ defmodule DemoWeb.EditorLive do
 
     embedded_schema do
       field(:title, :string)
-      rich_text(:body)
+      rich_text(:body, document_schema: Demo.RichText.schema())
     end
 
     def changeset(post, attrs) do
@@ -62,6 +62,16 @@ defmodule DemoWeb.EditorLive do
      |> assign_form(changeset)}
   end
 
+  def handle_event("mention", _params, socket) do
+    # A node the application decides on, built server side against the same
+    # schema that will validate it on the way back.
+    {:noreply,
+     insert_node(socket, %{
+       "type" => "mention",
+       "attrs" => %{"user_id" => 7, "label" => "@ada"}
+     })}
+  end
+
   def handle_event("save", %{"post" => params}, socket) do
     changeset = socket.assigns.post |> Post.changeset(params) |> Map.put(:action, :insert)
 
@@ -95,10 +105,9 @@ defmodule DemoWeb.EditorLive do
       case result do
         {:ok, attachment} ->
           {:noreply,
-           push_event(socket, "coelho:attachment", %{
-             node: Coelho.Attachment.to_node(attachment),
-             url: Demo.Uploads.url(attachment.key)
-           })}
+           insert_node(socket, Coelho.Attachment.to_node(attachment),
+             preview: Demo.Uploads.url(attachment.key)
+           )}
 
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, "Could not store the file: #{inspect(reason)}")}
@@ -137,11 +146,11 @@ defmodule DemoWeb.EditorLive do
   defp rendered_html(nil), do: ""
 
   defp rendered_html(document) do
-    Coelho.to_html(document, Coelho.Schema.default(), context: %{resolve: &attachment_url/1})
+    Coelho.to_html(document, Demo.RichText.schema(), context: %{resolve: &attachment_url/1})
   end
 
   defp plain_text(nil), do: ""
-  defp plain_text(document), do: Coelho.to_text(document)
+  defp plain_text(document), do: Coelho.to_text(document, Demo.RichText.schema())
 
   defp stored_json(nil), do: ""
   defp stored_json(document), do: JSON.encode!(document)
@@ -201,10 +210,16 @@ defmodule DemoWeb.EditorLive do
 
           <.coelho_editor
             field={@form[:body]}
+            document_schema={Demo.RichText.schema()}
             placeholder="Write something…"
             upload={@uploads.attachment}
           />
-          <p class="hint">Drop or paste a file into the editor to attach it.</p>
+
+          <p class="hint">
+            Drop or paste a file into the editor to attach it, or
+            <button type="button" class="link" phx-click="mention">insert a mention</button>
+            — a node this application added to the schema.
+          </p>
 
           <button type="submit">Save</button>
         </.form>

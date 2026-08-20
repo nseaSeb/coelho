@@ -27,7 +27,29 @@ import topbar from "../vendor/topbar"
 // A path dependency is not copied into deps/, so the demo reaches into the
 // checkout above it. An application depending on Coelho from Hex writes:
 //   import {Coelho} from "../../deps/coelho/assets/js/coelho.js"
-import {Coelho} from "../../../assets/js/coelho.js"
+import {createCoelhoHook} from "../../../assets/js/coelho.js"
+
+// The schema is Elixir's, but how a node *looks while editing* cannot be:
+// toDOM and parseDOM are functions. A node the application added has to be
+// taught to the browser here. See lib/demo/rich_text.ex.
+const Coelho = createCoelhoHook({
+  nodes: {
+    mention: {
+      toDOM: (node) => [
+        "span",
+        {class: "mention", "data-user-id": String(node.attrs.user_id)},
+        node.attrs.label ?? `@${node.attrs.user_id}`
+      ],
+      parseDOM: [{
+        tag: "span[data-user-id]",
+        getAttrs: (dom) => ({
+          user_id: Number(dom.getAttribute("data-user-id")),
+          label: dom.textContent
+        })
+      }]
+    }
+  }
+})
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

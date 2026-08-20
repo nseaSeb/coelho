@@ -287,7 +287,56 @@ end
 
 The `url` there is only the editor's preview. What is stored is the key.
 
-## Declaring your own schema
+## Adding a node of your own
+
+Most applications want the default schema and one thing besides — a mention,
+an embed, a callout. Re-declaring the other fifteen nodes to get there would
+guarantee they drift, so extend instead:
+
+```elixir
+@schema Coelho.Schema.extend(Coelho.Schema.default(),
+          nodes: [
+            mention: [
+              group: "inline",
+              inline: true,
+              void: true,
+              attrs: [user_id: [required: true, validate: :integer]],
+              render: &MyApp.RichText.render_mention/2,
+              parse: [{"span", &MyApp.RichText.parse_mention/1}]
+            ]
+          ]
+        )
+```
+
+Redeclaring an existing name replaces it, which is how the default schema's
+rendering gets adjusted without a fork. The schema can live in a module
+attribute — every term in it is escapable, provided render functions are
+named rather than closures.
+
+Anything the server decides on reaches the document through one call:
+
+```elixir
+Coelho.LiveView.insert_node(socket, %{"type" => "mention", "attrs" => %{"user_id" => 7}})
+```
+
+The browser needs the other half — `toDOM` and `parseDOM` are functions and
+cannot come from Elixir:
+
+```js
+const Coelho = createCoelhoHook({
+  nodes: {
+    mention: {
+      toDOM: (node) => ["span", {class: "mention"}, `@${node.attrs.user_id}`],
+      parseDOM: [{tag: "span[data-user-id]", getAttrs: (dom) => ({user_id: Number(dom.dataset.userId)})}]
+    }
+  }
+})
+```
+
+`demo/lib/demo/rich_text.ex` does exactly this, and the browser test drives
+it end to end.
+
+## Declaring a schema from scratch
 
 ```elixir
 Coelho.Schema.new(
@@ -321,6 +370,7 @@ types by position.
 | 5 | Demo application and documentation | done |
 | 6 | HTML import, the migration path | done |
 | 7 | Attachment storage, signed URLs, serving | done |
+| 8 | Schema extension, node insertion, browser tests | done |
 
 Beyond that, and deliberately out of scope for now: real time collaboration
 over [`y_ex`](https://github.com/satoren/y_ex), which is where the BEAM has

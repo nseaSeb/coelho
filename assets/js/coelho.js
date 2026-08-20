@@ -266,6 +266,9 @@ const buildKeymap = (schema) => {
   return bindings;
 };
 
+// Marks a transaction as the server's, not the writer's.
+const REMOTE = "coelho:remote";
+
 const parseDoc = (schema, value) => {
   try {
     return PMNode.fromJSON(schema, JSON.parse(value));
@@ -297,7 +300,12 @@ export const createCoelhoHook = (dom = {}) =>
         state,
         dispatchTransaction: (transaction) => {
           this._view.updateState(this._view.state.apply(transaction));
-          if (transaction.docChanged) this.syncInput();
+
+          // Writing the input back when the change *came from* the server
+          // would post it straight back: the server normalises, so its copy
+          // never quite equals what the editor wrote, and the two would
+          // trade rounds forever.
+          if (transaction.docChanged && !transaction.getMeta(REMOTE)) this.syncInput();
         }
       });
 
@@ -327,16 +335,19 @@ export const createCoelhoHook = (dom = {}) =>
 
       el.addEventListener("mousedown", this._onToolbar);
 
-      this.insertAttachment = (nodeJSON, url) => {
-        setPreviewUrl(nodeJSON.attrs?.key, url);
+      // Anything the server decides to put in the document arrives here: an
+      // attachment it has just stored, a mention it has just resolved, an
+      // embed. The node is the server's, built against the same schema.
+      this.insertNode = (nodeJSON, preview) => {
+        setPreviewUrl(nodeJSON.attrs?.key, preview);
         const node = PMNode.fromJSON(this._schema, nodeJSON);
+        // Focus first: clicking whatever asked for the node took focus away,
+        // and an unfocused view inserts at the selection it was left with.
+        this._view.focus();
         this._view.dispatch(this._view.state.tr.replaceSelectionWith(node).scrollIntoView());
       };
 
-      // The server owns storage, so the round trip is: files go up through
-      // LiveView's own upload channel, the application consumes them and
-      // pushes back the node to insert.
-      ctx.handle("coelho:attachment", ({ node, url }) => this.insertAttachment(node, url));
+      ctx.handle("coelho:insert", ({ node, preview }) => this.insertNode(node, preview));
 
       const uploadName = el.dataset.coelhoUpload;
 
@@ -375,8 +386,20 @@ export const createCoelhoHook = (dom = {}) =>
         return;
       }
 
-      this._view.updateState(EditorState.create({ doc, plugins: this._view.state.plugins }));
+      // Replacing the content through a transaction rather than building a
+      // fresh EditorState: a new state starts with a default selection, so
+      // the caret would jump to the top of the document every time the
+      // server's normalisation differed from what the editor wrote. The
+      // transaction maps the selection across, and stays out of the undo
+      // history — it is not an edit anyone made.
+      const { state } = this._view;
+      const transaction = state.tr
+        .replaceWith(0, state.doc.content.size, doc.content)
+        .setMeta("addToHistory", false)
+        .setMeta(REMOTE, true);
+
       this._lastWritten = value;
+      this._view.dispatch(transaction);
     },
 
     destroyed() {

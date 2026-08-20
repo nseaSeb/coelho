@@ -133,4 +133,80 @@ defmodule Coelho.SchemaTest do
       end
     end
   end
+
+  describe "extend/2" do
+    test "adds nodes after what was already there" do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [
+            mention: [
+              group: "inline",
+              inline: true,
+              void: true,
+              attrs: [user_id: [required: true, validate: :integer]]
+            ]
+          ]
+        )
+
+      assert List.last(schema.node_order) == :mention
+      assert Schema.instance_of?(schema, :inline, :mention)
+      assert Enum.take(schema.node_order, 2) == Enum.take(Schema.default().node_order, 2)
+    end
+
+    test "the extended schema validates and renders the new node" do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [
+            mention: [
+              group: "inline",
+              inline: true,
+              void: true,
+              attrs: [user_id: [required: true, validate: :integer]],
+              render: {"span", [{"class", "mention"}]}
+            ]
+          ]
+        )
+
+      document = %{
+        "type" => "doc",
+        "content" => [
+          %{
+            "type" => "paragraph",
+            "content" => [%{"type" => "mention", "attrs" => %{"user_id" => 7}}]
+          }
+        ]
+      }
+
+      assert {:ok, document} = Coelho.validate(document, schema)
+      assert Coelho.to_html(document, schema) == ~s(<p><span class="mention"></p>)
+      # And the default schema still rejects it, which is the point of the copy.
+      assert {:error, _} = Coelho.validate(document)
+    end
+
+    test "redeclaring a name replaces it without a fork" do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [paragraph: [content: "inline*", group: "block", render: {"div", []}]]
+        )
+
+      assert length(schema.node_order) == length(Schema.default().node_order)
+      assert Schema.node_spec(schema, :paragraph).render == {"div", []}
+    end
+
+    test "an addition still has to be consistent" do
+      assert_raise ArgumentError, ~r/references :nowhere/, fn ->
+        Schema.extend(Schema.default(), nodes: [callout: [content: "nowhere+", group: "block"]])
+      end
+    end
+
+    test "the exported schema carries the addition, in order" do
+      schema =
+        Schema.extend(Schema.default(), nodes: [callout: [content: "block+", group: "block"]])
+
+      assert List.last(Schema.to_json(schema)["nodes"]) == [
+               "callout",
+               %{"content" => "block+", "group" => "block"}
+             ]
+    end
+  end
 end

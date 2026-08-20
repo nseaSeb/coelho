@@ -85,7 +85,7 @@ defmodule DemoWeb.EditorLiveTest do
       |> render_upload("photo.png")
 
       # The node carries a key; the URL is separate, and only a preview.
-      assert_push_event(view, "coelho:attachment", %{node: node, url: url})
+      assert_push_event(view, "coelho:insert", %{node: node, preview: url})
       assert %{"type" => "attachment", "attrs" => %{"key" => key}} = node
       assert node["attrs"]["filename"] == "photo.png"
       refute Map.has_key?(node["attrs"], "url")
@@ -107,7 +107,7 @@ defmodule DemoWeb.EditorLiveTest do
       |> file_input("form", :attachment, [%{name: "p.png", content: @png, type: "image/png"}])
       |> render_upload("p.png")
 
-      assert_push_event(view, "coelho:attachment", %{url: url})
+      assert_push_event(view, "coelho:insert", %{preview: url})
       %URI{path: path} = URI.parse(url)
 
       assert get(build_conn(), path).status == 403
