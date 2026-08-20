@@ -54,6 +54,13 @@ mix phx.server &
 npm run test:browsers            # or BROWSER=webkit npm run test:browser
 ```
 
+Locally that runs the engines as they are on *this* machine, which is not how
+CI sees them. To run them as CI does, use the image:
+
+```
+docker compose -f ../docker/compose.yml run --rm --build browsers
+```
+
 ## Checking that both halves agree
 
 The schema is declared in Elixir and exported to the browser, but `toDOM` and

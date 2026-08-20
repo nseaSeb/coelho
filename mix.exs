@@ -19,7 +19,23 @@ defmodule Coelho.MixProject do
         flags: [:error_handling, :extra_return, :missing_return, :unknown]
       ],
       docs: docs(),
-      deps: deps()
+      deps: deps(),
+      aliases: aliases(),
+      preferred_cli_env: [check: :test]
+    ]
+  end
+
+  # Everything CI runs that does not need a browser. The browser checks need
+  # Linux to mean anything — see docker/README.md.
+  defp aliases do
+    [
+      check: [
+        "format --check-formatted",
+        "compile --warnings-as-errors",
+        "credo --strict",
+        "dialyzer",
+        "test"
+      ]
     ]
   end
 

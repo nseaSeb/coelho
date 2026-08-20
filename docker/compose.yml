@@ -1,0 +1,22 @@
+name: coelho-check
+
+services:
+  browsers:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    working_dir: /coelho
+    # The working tree, so a check runs against what is about to be pushed.
+    volumes:
+      - ..:/coelho
+      # Anonymous volumes over everything platform-specific: the host's
+      # node_modules holds macOS binaries and its _build holds macOS beams,
+      # and `npm ci` inside would replace the first while Mix would fight
+      # over the second.
+      - /coelho/_build
+      - /coelho/deps
+      - /coelho/node_modules
+      - /coelho/demo/_build
+      - /coelho/demo/deps
+      - /coelho/demo/node_modules
+    command: docker/check.sh

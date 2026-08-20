@@ -408,10 +408,13 @@ LiveView so that this stays possible.
 ## Checking it
 
 ```
-mix test              # 209 tests, 5 properties
-mix credo --strict
-mix dialyzer
+mix check                                              # format, compile, credo, dialyzer, test
+docker compose -f docker/compose.yml run --rm --build browsers
 ```
+
+The second one runs the browser checks against all three engines **on
+Linux**, which is where they behave the way CI's do — see `docker/README.md`
+for why that turned out to matter.
 
 ## Demo
 

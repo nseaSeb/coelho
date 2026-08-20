@@ -87,10 +87,36 @@ const documentEventually = async (page, description, predicate) => {
   }
 };
 
+// Replaces the document and waits until it *is* what was typed. Without the
+// wait, a slow machine can carry the previous test's document into the next
+// one: a click landing before the editor is ready, or a select-all that has
+// not taken, leaves the old content in place and the failure then points at
+// whatever assertion came next rather than at the typing.
 const typeInEditor = async (page, text) => {
   await page.click(EDITOR);
+  // A select-all sent before the click has moved focus selects nothing, and
+  // the typing then *appends* to the previous test's document instead of
+  // replacing it. Emptying first makes that observable rather than silent.
+  await page.waitForFunction(() => document.activeElement?.closest(".ProseMirror") !== null);
   await selectAll(page);
+  await page.keyboard.press("Backspace");
+  await documentEventually(
+    page,
+    "the editor never emptied",
+    'return doc.content.flatMap((b) => b.content ?? []).every((n) => (n.text ?? "") === "")'
+  );
+
   await page.keyboard.type(text);
+
+  await documentEventually(
+    page,
+    `the editor never came to hold ${JSON.stringify(text)}`,
+    `return doc.content
+       .flatMap((block) => block.content ?? [])
+       .map((node) => node.text ?? "")
+       .join("")
+       .replaceAll("\\u00a0", " ") === ${JSON.stringify(text)}`
+  );
 };
 
 const run = async () => {
