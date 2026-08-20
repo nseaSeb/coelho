@@ -20,9 +20,12 @@ defmodule Coelho.MixProject do
       ],
       docs: docs(),
       deps: deps(),
-      aliases: aliases(),
-      preferred_cli_env: [check: :test]
+      aliases: aliases()
     ]
+  end
+
+  def cli do
+    [preferred_envs: [check: :test]]
   end
 
   # Everything CI runs that does not need a browser. The browser checks need
