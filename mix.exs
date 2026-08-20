@@ -62,7 +62,9 @@ defmodule Coelho.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      files: ~w(lib assets mix.exs README.md CHANGELOG.md LICENSE),
+      # `assets` as a whole would carry the node_modules symlink the schema
+      # bridge check makes, which points nowhere on anybody else's machine.
+      files: ~w(lib assets/js assets/package.json mix.exs README.md CHANGELOG.md LICENSE),
       links: %{"GitHub" => @source_url}
     ]
   end
