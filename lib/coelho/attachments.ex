@@ -151,10 +151,29 @@ defmodule Coelho.Attachments do
     in_use =
       documents
       |> Stream.reject(&is_nil/1)
-      |> Stream.flat_map(&keys(&1, schema))
+      |> Stream.flat_map(&keys(demand_document!(&1), schema))
       |> MapSet.new()
 
     Enum.reject(stored_keys, &MapSet.member?(in_use, &1))
+  end
+
+  # A document that is not a map refers to nothing as far as `keys/2` is
+  # concerned, and answering that here would report every stored key as an
+  # orphan and delete the lot. The shape most likely to arrive is a *string*:
+  # an application storing its documents as JSON in a `:text` column — which
+  # is exactly the migration `Coelho.HTML` exists for — selects the column and
+  # gets binaries. `nil` is the one thing that legitimately means "no rich
+  # text here"; anything else is a mistake worth stopping for.
+  defp demand_document!(document) when is_map(document), do: document
+
+  defp demand_document!(other) do
+    raise ArgumentError, """
+    expected a document, got: #{inspect(other, limit: 3)}
+
+    Every element must be a decoded document — a map — or nil. A list of
+    anything else looks like a list of documents referring to no attachments,
+    and every stored key would be reported as an orphan.
+    """
   end
 
   @doc """
@@ -164,9 +183,15 @@ defmodule Coelho.Attachments do
   which is how this should be run the first time, against a real store.
 
       Coelho.Attachments.sweep(storage, keys, documents, dry_run: true)
+
+  A refusal stops the sweep and hands back both the key that refused and
+  everything already deleted, so the caller can still tidy the rows that now
+  point at nothing:
+
+      {:error, {key, reason}, removed} = Coelho.Attachments.sweep(storage, keys, documents)
   """
   @spec sweep(Storage.t(), [String.t()], Enumerable.t(), keyword()) ::
-          {:ok, [String.t()]} | {:error, {String.t(), term()}}
+          {:ok, [String.t()]} | {:error, {String.t(), term()}, [String.t()]}
   def sweep(storage, stored_keys, documents, opts \\ []) do
     schema = Keyword.get(opts, :schema, Schema.default())
     dry_run? = Keyword.get(opts, :dry_run, false)
@@ -178,7 +203,10 @@ defmodule Coelho.Attachments do
       Enum.reduce_while(gone, {:ok, []}, fn key, {:ok, removed} ->
         case Storage.delete(storage, key) do
           :ok -> {:cont, {:ok, [key | removed]}}
-          {:error, reason} -> {:halt, {:error, {key, reason}}}
+          # What was already deleted goes back with the error: the caller has
+          # rows pointing at those bytes, and without the list it cannot tidy
+          # them, so a table would keep pointing at files that are gone.
+          {:error, reason} -> {:halt, {:error, {key, reason}, Enum.reverse(removed)}}
         end
       end)
       |> case do

@@ -75,8 +75,10 @@ defmodule Coelho.HTMLPropertyTest do
 
   property "no HTML raises, whatever it is" do
     check all(source <- html(), max_runs: 300) do
-      assert match?({:ok, _}, HTML.from_html(source, schema())) or
-               match?({:error, _}, HTML.from_html(source, schema()))
+      # `{:ok, _} or {:error, _}` holds for anything at all, and imports twice
+      # to say it. What is asserted is that the call returns rather than
+      # raises, and that what comes back is one of the two shapes.
+      assert elem(HTML.from_html(source, schema()), 0) in [:ok, :error]
     end
   end
 

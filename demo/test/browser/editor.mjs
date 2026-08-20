@@ -366,6 +366,34 @@ const run = async () => {
       assert.match(await paneEventually(page, "html", "<h2>"), /<h2>a title<\/h2>/);
     });
 
+    await test("a block button undoes what it did", async () => {
+      // Reported from using the demo: a heading could not be turned back into
+      // a paragraph. `setBlockType` answers false for a block that is already
+      // that type, so the button disabled *itself* the moment it worked —
+      // which also reads as "it ignores my selection".
+      await typeInEditor(page, "a block");
+
+      for (const command of ["heading", "blockquote", "bullet_list", "ordered_list"]) {
+        const button = `[data-coelho-command="${command}"]`;
+
+        await page.click(button);
+        await documentEventually(
+          page,
+          `${command} did not apply`,
+          `return doc.content[0].type === "${command}"`
+        );
+
+        assert.ok(!(await page.isDisabled(button)), `${command} disabled itself`);
+
+        await page.click(button);
+        await documentEventually(
+          page,
+          `${command} did not come back off`,
+          'return doc.content[0].type === "paragraph"'
+        );
+      }
+    });
+
     await test("a list is built from the toolbar", async () => {
       await typeInEditor(page, "an item");
       await page.click('[data-coelho-command="bullet_list"]');

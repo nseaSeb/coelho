@@ -27,18 +27,18 @@ if Code.ensure_loaded?(Plug) do
 
     ## Serving other people's files
 
-    A storage that hands out a URL of its own is redirected to — but only for
-    the types that would have been served inline anyway. Everything else goes
-    through the application, because the promise below is made by headers a
-    redirect does not carry.
-
 
     Uploads served from the application's own origin are a standing hazard:
     a file the browser decides to render as HTML runs as the application.
-    So the response always carries `x-content-type-options: nosniff`, and
-    only a short list of image types is served inline. Everything else —
+    So a response carrying bytes always has `x-content-type-options: nosniff`,
+    and only a short list of image types is served inline. Everything else —
     including SVG, which is a document that can carry script — is sent as a
     download, whatever it claims to be.
+
+    A redirect carries none of those headers, which is why one is only offered
+    for the types that would have been served inline anyway, and why a storage
+    implementing `c:Coelho.Storage.redirect_url/3` is expected to honour the
+    `:content_type` it is given.
     """
 
     @behaviour Plug
@@ -111,7 +111,7 @@ if Code.ensure_loaded?(Plug) do
       if inline?(metadata) and remaining >= @shortest_redirect do
         redirect(conn, storage, key, metadata, remaining, options)
       else
-        send_bytes(conn, storage, key, options)
+        send_bytes(conn, storage, key, metadata, options)
       end
     end
 
@@ -128,14 +128,18 @@ if Code.ensure_loaded?(Plug) do
 
       case Storage.redirect_url(storage, key, opts) do
         {:ok, url} ->
+          # Not the cache lifetime chosen for the bytes: this response carries
+          # a URL that stops working when the signature does, and a redirect
+          # cached past that point turns every later load into the bucket's
+          # 403 with nothing the application can do about it.
           conn
-          |> put_resp_header("cache-control", options.cache_control)
+          |> put_resp_header("cache-control", "private, max-age=#{remaining}")
           |> put_resp_header("location", url)
           |> send_resp(302, "")
           |> halt()
 
         :error ->
-          send_bytes(conn, storage, key, options)
+          send_bytes(conn, storage, key, metadata, options)
       end
     end
 
@@ -148,32 +152,38 @@ if Code.ensure_loaded?(Plug) do
 
     defp inline?(metadata), do: content_type(metadata) in @inline_types
 
-    defp send_bytes(conn, storage, key, options) do
+    defp send_bytes(conn, storage, key, metadata, options) do
       # A storage with no local path — object storage — answers `:error` and
       # the bytes are read instead. Only the storage can tell an unusable key
       # from a missing one, so its own error decides the status.
       case Storage.path(storage, key) do
         {:ok, path} ->
           if File.regular?(path) do
-            conn |> headers(key, options) |> send_file(200, path) |> halt()
+            conn |> headers(metadata, options) |> send_file(200, path) |> halt()
           else
             halt_with(conn, 404, "not found")
           end
 
         :error ->
           case Storage.read(storage, key) do
-            {:ok, bytes} -> conn |> headers(key, options) |> send_resp(200, bytes) |> halt()
-            {:error, :invalid_key} -> halt_with(conn, 403, "forbidden")
-            {:error, _reason} -> halt_with(conn, 404, "not found")
+            {:ok, bytes} ->
+              conn |> headers(metadata, options) |> send_resp(200, bytes) |> halt()
+
+            {:error, :invalid_key} ->
+              halt_with(conn, 403, "forbidden")
+
+            {:error, _reason} ->
+              halt_with(conn, 404, "not found")
           end
       end
     end
 
     # Only on the way to a body: an error response carrying a
     # content-disposition makes the browser download the error text as a file.
-    defp headers(conn, key, options) do
-      metadata = metadata(options.metadata, key)
-
+    # The metadata is looked up once per request and carried: an application's
+    # `metadata/1` is often a query, and may well be where it records a
+    # download.
+    defp headers(conn, metadata, options) do
       conn
       |> put_resp_header("x-content-type-options", "nosniff")
       |> put_resp_header("cache-control", options.cache_control)

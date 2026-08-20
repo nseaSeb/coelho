@@ -53,9 +53,18 @@ defmodule Coelho.Storage do
   application. `Coelho.Plug.Attachments` redirects to it after checking its
   own signature, so the check still happens and the transfer does not.
 
-  `opts` carries `:expires_in`, the seconds left on the signature that got
-  the reader this far; a URL outliving it would widen the window the
-  signature was there to narrow.
+  `opts` carries:
+
+    * `:expires_in` — the seconds left on the signature that got the reader
+      this far. A URL outliving it would widen the window the signature was
+      there to narrow.
+    * `:content_type` — what the application recorded for this file. **An
+      implementation is expected to pin it**, through whatever its service
+      offers — `response-content-type` on a presigned S3 URL, and the like.
+      The plug's own defence against a file that lies about what it is lives
+      in headers a redirect does not carry, so an implementation that passes
+      this over hands that defence back to whatever the bucket decides.
+    * `:filename` — for a service that can pin a download name too.
 
   Optional: a storage that has no such URL — the local filesystem — simply
   does not implement it.

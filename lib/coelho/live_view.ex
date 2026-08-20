@@ -244,13 +244,10 @@ if Code.ensure_loaded?(Phoenix.Component) do
             data-coelho-link-zone
             hidden
           >
-            <input
-              type="url"
-              class="coelho-link-input"
-              data-coelho-link-input
-              placeholder="https://…"
-              aria-label="Link address"
-            />
+            <%!-- The type, the placeholder and the label are set by the hook:
+                  the field serves links and captions, and asking for a URL
+                  when it wants a caption marks a good one as invalid. --%>
+            <input type="text" class="coelho-link-input" data-coelho-link-input />
           </span>
         </div>
         <div

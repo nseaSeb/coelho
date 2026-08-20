@@ -171,6 +171,21 @@ defmodule Coelho.AttachmentsTest do
       assert Attachments.orphans(["kept"], documents) == []
     end
 
+    test "a document that is not one stops the sweep rather than emptying it" do
+      # The shape most likely to arrive: a column of JSON strings, from an
+      # application that has not decoded them. Answering "refers to nothing"
+      # would report every stored key as an orphan.
+      encoded = JSON.encode!(Coelho.empty())
+
+      assert_raise ArgumentError, ~r/expected a document/, fn ->
+        Attachments.orphans(["kept"], [encoded])
+      end
+
+      assert_raise ArgumentError, ~r/expected a document/, fn ->
+        Attachments.sweep(nil, ["kept"], [encoded])
+      end
+    end
+
     test "nothing stored means nothing to remove" do
       assert Attachments.orphans([], [Coelho.empty()]) == []
     end
@@ -197,6 +212,15 @@ defmodule Coelho.AttachmentsTest do
       refute Coelho.Storage.exists?(storage, "gone")
     end
 
+    test "a refusal hands back what was already deleted", %{storage: storage} do
+      # Without the list, the caller cannot tidy the rows pointing at bytes
+      # that are already gone.
+      assert {:error, {"../escaped", :invalid_key}, ["gone"]} =
+               Attachments.sweep(storage, ["gone", "../escaped"], [])
+
+      refute Coelho.Storage.exists?(storage, "gone")
+    end
+
     test "a dry run touches nothing", %{storage: storage} do
       documents = [validated([attachment(%{"key" => "kept", "filename" => "a.pdf"})])]
 
@@ -210,7 +234,7 @@ defmodule Coelho.AttachmentsTest do
       # A key the storage will not touch means something is wrong with the
       # list it was given; deleting the rest of it on that footing is how a
       # cleanup job becomes an incident.
-      assert {:error, {"../escaped", :invalid_key}} =
+      assert {:error, {"../escaped", :invalid_key}, []} =
                Attachments.sweep(storage, ["../escaped", "gone"], [])
 
       assert Coelho.Storage.exists?(storage, "gone")

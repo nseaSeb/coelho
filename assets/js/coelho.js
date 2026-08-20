@@ -4,7 +4,15 @@ import { Schema, Node as PMNode } from "prosemirror-model";
 import { EditorState, Selection, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
-import { baseKeymap, toggleMark, setBlockType, wrapIn, chainCommands, exitCode } from "prosemirror-commands";
+import {
+  baseKeymap,
+  toggleMark,
+  setBlockType,
+  wrapIn,
+  lift,
+  chainCommands,
+  exitCode
+} from "prosemirror-commands";
 import { history, undo, redo } from "prosemirror-history";
 import { wrapInList, splitListItem, liftListItem, sinkListItem } from "prosemirror-schema-list";
 
@@ -167,6 +175,40 @@ export const buildSchema = (exported, { nodes = {}, marks = {} } = {}) =>
 // has moved on is a dead end; this says no while the field is still open.
 const EXECUTABLE = /^\s*(javascript|data|vbscript):/i;
 
+// What a block turns back into when its command is pressed a second time:
+// whatever the schema says belongs where this block is, which is a paragraph
+// in the schema that ships and need not be in yours.
+const plainBlock = (state) => {
+  const { $from } = state.selection;
+  const parent = $from.node(-1);
+
+  return (
+    (parent && parent.contentMatchAt($from.index(-1)).defaultType) ||
+    state.schema.nodes.paragraph
+  );
+};
+
+// Pressing a block button again must undo it. Without this the command is
+// simply not applicable once it has been applied — `setBlockType` answers
+// false for a block that is already that type — so the button disables
+// itself and there is no way back to a paragraph.
+const toggleBlock = (type, attrs) => (state, dispatch, view) => {
+  if (!blockActive(state, type, attrs)) return setBlockType(type, attrs)(state, dispatch, view);
+
+  const plain = plainBlock(state);
+  return Boolean(plain) && setBlockType(plain)(state, dispatch, view);
+};
+
+const toggleWrap = (type) => (state, dispatch, view) =>
+  blockActive(state, type)
+    ? lift(state, dispatch, view)
+    : wrapIn(type)(state, dispatch, view);
+
+const toggleList = (type, itemType) => (state, dispatch, view) =>
+  itemType && blockActive(state, type)
+    ? liftListItem(itemType)(state, dispatch, view)
+    : wrapInList(type)(state, dispatch, view);
+
 const commandFor = (name, schema, options) => {
   const { nodes, marks } = schema;
 
@@ -193,20 +235,17 @@ const commandFor = (name, schema, options) => {
         return true;
       };
     case "heading":
-      return (
-        nodes.heading &&
-        setBlockType(nodes.heading, { level: Number(options.level ?? 2) })
-      );
+      return nodes.heading && toggleBlock(nodes.heading, { level: Number(options.level ?? 2) });
     case "paragraph":
       return nodes.paragraph && setBlockType(nodes.paragraph);
     case "code_block":
-      return nodes.code_block && setBlockType(nodes.code_block);
+      return nodes.code_block && toggleBlock(nodes.code_block);
     case "blockquote":
-      return nodes.blockquote && wrapIn(nodes.blockquote);
+      return nodes.blockquote && toggleWrap(nodes.blockquote);
     case "bullet_list":
-      return nodes.bullet_list && wrapInList(nodes.bullet_list);
+      return nodes.bullet_list && toggleList(nodes.bullet_list, nodes.list_item);
     case "ordered_list":
-      return nodes.ordered_list && wrapInList(nodes.ordered_list);
+      return nodes.ordered_list && toggleList(nodes.ordered_list, nodes.list_item);
     case "horizontal_rule":
       return (
         nodes.horizontal_rule &&
@@ -606,13 +645,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // One field, whatever asked for it. What it does on Enter is decided
       // when it opens, because the selection is what says what to act on and
       // a field that took the focus would lose the answer.
-      this.openField = ({ value, label, apply }) => {
+      this.openField = ({ value, label, apply, type = "text", placeholder = "" }) => {
         if (!this._linkInput) return;
 
         this._pendingField = apply;
         this._linkZone.hidden = false;
         this._linkInput.value = value ?? "";
         this._linkInput.setAttribute("aria-label", label);
+        // The field serves more than links, so what it asks for changes with
+        // it: a caption left under `type="url"` matches `:invalid` while
+        // being perfectly good, and a phone offers a keyboard with no space
+        // key for it.
+        this._linkInput.type = type;
+        this._linkInput.placeholder = placeholder;
         this._linkInput.focus();
         this._linkInput.select();
       };
@@ -684,6 +729,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         this.openField({
           value: selected.node.attrs.caption ?? "",
           label: "Caption",
+          placeholder: "Describe this attachment",
           apply: this.applyCaption(selected.pos)
         });
       };
@@ -716,12 +762,16 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           this.openField({
             value: existing?.href ?? "",
             label: "Link address",
+            type: "url",
+            placeholder: "https://…",
             apply: this.applyLink({ from, to })
           });
         } else if (existing) {
           this.openField({
             value: existing.href,
             label: "Link address",
+            type: "url",
+            placeholder: "https://…",
             apply: this.applyLink(existing)
           });
         }
