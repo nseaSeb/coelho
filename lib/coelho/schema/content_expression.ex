@@ -233,8 +233,9 @@ defmodule Coelho.Schema.ContentExpression do
     end
   end
 
+  # No clause for an empty list: an atom is only ever parsed when `collect_seq`
+  # has already seen a name or an opening parenthesis at the head.
   defp parse_atom([token | _]), do: {:error, "unexpected #{describe(token)}"}
-  defp parse_atom([]), do: {:error, "unexpected end of expression"}
 
   defp describe(:pipe), do: "`|`"
   defp describe(:open), do: "`(`"

@@ -218,14 +218,16 @@ defmodule Coelho.HTML do
   defp match_mark(schema, tag, attrs, children, allowed_marks) do
     Enum.find_value(schema.mark_order, fn name ->
       if mark_allowed?(allowed_marks, name) do
-        spec = Schema.mark_spec(schema, name)
-
-        with {:ok, mark_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs, children) do
-          mark = %{"type" => Atom.to_string(name)}
-          if mark_attrs == %{}, do: mark, else: Map.put(mark, "attrs", mark_attrs)
-        end
+        mark_from(Schema.mark_spec(schema, name), name, tag, attrs, children)
       end
     end)
+  end
+
+  defp mark_from(spec, name, tag, attrs, children) do
+    with {:ok, mark_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs, children) do
+      mark = %{"type" => Atom.to_string(name)}
+      if mark_attrs == %{}, do: mark, else: Map.put(mark, "attrs", mark_attrs)
+    end
   end
 
   defp mark_allowed?(:all, _name), do: true

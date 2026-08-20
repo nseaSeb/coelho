@@ -34,3 +34,4 @@ coelho-*.tar
 
 # Playwright browsers are installed per machine, not per checkout.
 /demo/test-results/
+/priv/plts/

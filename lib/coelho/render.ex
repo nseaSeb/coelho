@@ -61,7 +61,7 @@ defmodule Coelho.Render do
   @doc """
   Escapes text for inclusion in HTML, attribute values included.
   """
-  @spec escape(String.t()) :: iodata()
+  @spec escape(String.t()) :: String.t()
   def escape(text) when is_binary(text) do
     text
     |> String.replace("&", "&amp;")
@@ -97,7 +97,7 @@ defmodule Coelho.Render do
   @doc """
   Builds an element from a tag, an attribute list and rendered children.
   """
-  @spec tag(String.t(), [{String.t(), term()}], iodata()) :: iodata()
+  @spec tag(String.t(), [{String.t(), term()}], iodata()) :: iolist()
   def tag(name, attrs, inner) do
     ["<", name, attributes(attrs), ">", inner, "</", name, ">"]
   end
@@ -112,7 +112,7 @@ defmodule Coelho.Render do
   @doc """
   Builds a childless element, self-closing only if HTML says it is.
   """
-  @spec void_tag(String.t(), [{String.t(), term()}]) :: iodata()
+  @spec void_tag(String.t(), [{String.t(), term()}]) :: iolist()
   def void_tag(name, attrs) when name in @html_void,
     do: ["<", name, attributes(attrs), ">"]
 

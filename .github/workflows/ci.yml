@@ -53,6 +53,35 @@ jobs:
 
       - run: mix test
 
+  quality:
+    name: Credo and Dialyzer
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.1"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            priv/plts
+          key: ${{ runner.os }}-quality-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-quality-
+
+      - run: mix deps.get
+
+      - run: mix credo --strict
+
+      # The PLT is the expensive part and is cached above; the analysis
+      # itself takes seconds.
+      - run: mix dialyzer --format github
+
   demo:
     name: Demo
     runs-on: ubuntu-latest

@@ -12,6 +12,12 @@ defmodule Coelho.MixProject do
       start_permanent: Mix.env() == :prod,
       description: "Structured rich text for Phoenix: schema, validation, storage and rendering",
       package: package(),
+      dialyzer: [
+        plt_add_apps: [:mix, :ex_unit],
+        plt_local_path: "priv/plts",
+        plt_core_path: "priv/plts",
+        flags: [:error_handling, :extra_return, :missing_return, :unknown]
+      ],
       docs: docs(),
       deps: deps()
     ]
@@ -28,7 +34,9 @@ defmodule Coelho.MixProject do
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:plug, "~> 1.14", optional: true},
       {:stream_data, "~> 1.1", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 

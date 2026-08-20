@@ -165,29 +165,29 @@ defmodule Coelho.Document do
             not MapSet.member?(known, key),
             do: error(["attrs" | rpath], "unknown attribute #{inspect(key)}")
 
-      {attrs, errors} =
-        Enum.reduce(specs, {%{}, []}, fn {name, %Attr{} = spec}, {attrs, errors} ->
-          key = Atom.to_string(name)
-          attr_rpath = [key, "attrs" | rpath]
-
-          case Map.fetch(given, key) do
-            {:ok, value} ->
-              case Attr.validate(spec.validate, value) do
-                :ok -> {Map.put(attrs, key, compact(value)), errors}
-                {:error, message} -> {attrs, [error(attr_rpath, message) | errors]}
-              end
-
-            :error when spec.required ->
-              {attrs, [error(attr_rpath, "is required") | errors]}
-
-            :error ->
-              {Map.put(attrs, key, spec.default), errors}
-          end
-        end)
+      {attrs, errors} = Enum.reduce(specs, {%{}, []}, &validate_attr(&1, &2, given, rpath))
 
       {attrs, unknown ++ Enum.reverse(errors)}
     else
       {%{}, [error(["attrs" | rpath], "expected an object")]}
+    end
+  end
+
+  defp validate_attr({name, %Attr{} = spec}, {attrs, errors}, given, rpath) do
+    key = Atom.to_string(name)
+    attr_rpath = [key, "attrs" | rpath]
+
+    case Map.fetch(given, key) do
+      {:ok, value} -> put_attr(attrs, errors, key, value, spec, attr_rpath)
+      :error when spec.required -> {attrs, [error(attr_rpath, "is required") | errors]}
+      :error -> {Map.put(attrs, key, spec.default), errors}
+    end
+  end
+
+  defp put_attr(attrs, errors, key, value, spec, attr_rpath) do
+    case Attr.validate(spec.validate, value) do
+      :ok -> {Map.put(attrs, key, compact(value)), errors}
+      {:error, message} -> {attrs, [error(attr_rpath, message) | errors]}
     end
   end
 
@@ -202,17 +202,7 @@ defmodule Coelho.Document do
 
       marks when is_list(marks) ->
         if spec.inline do
-          marks
-          |> Enum.with_index()
-          |> Enum.reduce({[], []}, fn {mark, index}, {kept, errors} ->
-            mark_rpath = [index, "marks" | rpath]
-
-            case validate_mark(mark, allowed_marks, schema, mark_rpath) do
-              {:ok, mark} -> {add_mark(kept, mark), errors}
-              {:error, mark_errors} -> {kept, [mark_errors | errors]}
-            end
-          end)
-          |> then(fn {kept, errors} -> {Enum.reverse(kept), concat_reversed(errors)} end)
+          validate_mark_list(marks, allowed_marks, schema, rpath)
         else
           {[], [error(["marks" | rpath], "marks are only allowed on inline nodes")]}
         end
@@ -220,6 +210,18 @@ defmodule Coelho.Document do
       _other ->
         {[], [error(["marks" | rpath], "expected a list")]}
     end
+  end
+
+  defp validate_mark_list(marks, allowed_marks, schema, rpath) do
+    marks
+    |> Enum.with_index()
+    |> Enum.reduce({[], []}, fn {mark, index}, {kept, errors} ->
+      case validate_mark(mark, allowed_marks, schema, [index, "marks" | rpath]) do
+        {:ok, mark} -> {add_mark(kept, mark), errors}
+        {:error, mark_errors} -> {kept, [mark_errors | errors]}
+      end
+    end)
+    |> then(fn {kept, errors} -> {Enum.reverse(kept), concat_reversed(errors)} end)
   end
 
   defp validate_mark(mark, allowed_marks, schema, rpath) when is_map(mark) do

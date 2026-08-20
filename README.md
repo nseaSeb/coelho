@@ -401,6 +401,14 @@ over [`y_ex`](https://github.com/satoren/y_ex), which is where the BEAM has
 something no other ecosystem does. The core carries no dependency on
 LiveView so that this stays possible.
 
+## Checking it
+
+```
+mix test              # 209 tests, 5 properties
+mix credo --strict
+mix dialyzer
+```
+
 ## Demo
 
 ```

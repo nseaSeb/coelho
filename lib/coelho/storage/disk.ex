@@ -41,23 +41,27 @@ defmodule Coelho.Storage.Disk do
 
   @impl true
   def read(storage, key) do
-    with {:ok, path} <- path(storage, key) do
-      File.read(path)
-    else
+    case path(storage, key) do
+      {:ok, path} -> File.read(path)
       :error -> {:error, :invalid_key}
     end
   end
 
   @impl true
   def delete(storage, key) do
-    with {:ok, path} <- path(storage, key) do
-      case File.rm(path) do
-        :ok -> :ok
-        {:error, :enoent} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
-    else
+    case path(storage, key) do
+      {:ok, path} -> remove(path)
       :error -> {:error, :invalid_key}
+    end
+  end
+
+  # Removing what is not there is not an error: a cleanup job should be able
+  # to run twice.
+  defp remove(path) do
+    case File.rm(path) do
+      :ok -> :ok
+      {:error, :enoent} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
