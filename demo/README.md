@@ -15,6 +15,12 @@ its URL carries an expiry that moves on every render, because the document
 stores a key and the URL is resolved each time. Storing rendered HTML would
 freeze that URL in place.
 
+Drop or paste a file into the editor and the whole attachment path runs:
+the bytes go up through LiveView's upload channel into
+`Coelho.Storage.Disk`, the document gets a key, and the rendered HTML on the
+right carries a signed URL that `Coelho.Plug.Attachments` serves — and that
+expires five minutes after each render.
+
 ## Running it
 
 ```

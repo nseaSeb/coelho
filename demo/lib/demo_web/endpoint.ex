@@ -46,5 +46,12 @@ defmodule DemoWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+  # Serves attachment bytes behind a signature, before the router sees them.
+  plug Coelho.Plug.Attachments,
+    at: "/attachments",
+    storage: {Demo.Uploads, :storage, []},
+    secret: {Demo.Uploads, :secret, []},
+    metadata: {Demo.Uploads, :metadata, []}
+
   plug DemoWeb.Router
 end

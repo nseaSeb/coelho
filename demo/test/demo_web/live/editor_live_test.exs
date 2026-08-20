@@ -71,4 +71,46 @@ defmodule DemoWeb.EditorLiveTest do
 
     assert html =~ "exactly what would be written"
   end
+
+  describe "attachments" do
+    @png <<137, 80, 78, 71, 13, 10, 26, 10>> <> "not really a png"
+
+    test "an upload is stored and comes back through a signed URL", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view
+      |> file_input("form", :attachment, [
+        %{name: "photo.png", content: @png, type: "image/png"}
+      ])
+      |> render_upload("photo.png")
+
+      # The node carries a key; the URL is separate, and only a preview.
+      assert_push_event(view, "coelho:attachment", %{node: node, url: url})
+      assert %{"type" => "attachment", "attrs" => %{"key" => key}} = node
+      assert node["attrs"]["filename"] == "photo.png"
+      refute Map.has_key?(node["attrs"], "url")
+
+      assert %URI{path: "/attachments/" <> ^key} = URI.parse(url)
+
+      served = get(build_conn(), url)
+
+      assert served.status == 200
+      assert served.resp_body == @png
+      assert ["nosniff"] = Plug.Conn.get_resp_header(served, "x-content-type-options")
+      assert ["inline"] = Plug.Conn.get_resp_header(served, "content-disposition")
+    end
+
+    test "the same bytes are refused without a signature", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view
+      |> file_input("form", :attachment, [%{name: "p.png", content: @png, type: "image/png"}])
+      |> render_upload("p.png")
+
+      assert_push_event(view, "coelho:attachment", %{url: url})
+      %URI{path: path} = URI.parse(url)
+
+      assert get(build_conn(), path).status == 403
+    end
+  end
 end

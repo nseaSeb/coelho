@@ -41,6 +41,70 @@ defmodule Coelho.Attachments do
   @type context :: (String.t() -> String.t() | nil) | %{optional(any()) => any()}
 
   @doc """
+  A signed, expiring URL for an attachment.
+
+  This is what the render-time resolution is *for*: the signature covers the
+  key and an expiry, so a URL that leaks stops working, and none of it is
+  ever written into the document.
+
+      Coelho.to_html(document, schema,
+        context: %{resolve: &Coelho.Attachments.signed_url("/attachments", &1, secret)}
+      )
+
+  The secret must be at least 32 bytes and must not be the application's
+  only secret if that one is also used elsewhere; derive it.
+  """
+  @spec signed_url(String.t(), String.t(), binary(), keyword()) :: String.t()
+  def signed_url(base, key, secret, opts \\ []) do
+    expires_in = Keyword.get(opts, :expires_in, 300)
+    now = Keyword.get_lazy(opts, :now, fn -> System.system_time(:second) end)
+    expires = now + expires_in
+
+    "#{base}/#{key}?expires=#{expires}&signature=#{sign(key, expires, secret)}"
+  end
+
+  @doc """
+  Checks a signature produced by `signed_url/4`.
+
+  Takes the query parameters as a plug hands them over. Comparison is
+  constant time, and an expired signature is refused even though it is
+  valid.
+  """
+  @spec verify(String.t(), %{optional(String.t()) => String.t()}, binary(), keyword()) ::
+          :ok | {:error, :invalid | :expired}
+  def verify(key, params, secret, opts \\ []) do
+    now = Keyword.get_lazy(opts, :now, fn -> System.system_time(:second) end)
+
+    with {:ok, expires} <- integer_param(params, "expires"),
+         signature when is_binary(signature) <- Map.get(params, "signature"),
+         true <- constant_time_equal?(signature, sign(key, expires, secret)) do
+      if now <= expires, do: :ok, else: {:error, :expired}
+    else
+      _ -> {:error, :invalid}
+    end
+  end
+
+  defp sign(key, expires, secret) do
+    :hmac
+    |> :crypto.mac(:sha256, secret, "#{key}:#{expires}")
+    |> Base.url_encode64(padding: false)
+  end
+
+  defp integer_param(params, name) do
+    case params |> Map.get(name, "") |> Integer.parse() do
+      {value, ""} -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  # Comparing signatures with `==` leaks their contents one byte at a time.
+  defp constant_time_equal?(left, right) when is_binary(left) and is_binary(right) do
+    byte_size(left) == byte_size(right) and :crypto.hash_equals(left, right)
+  end
+
+  defp constant_time_equal?(_left, _right), do: false
+
+  @doc """
   Every attachment key a document references, in document order.
 
   A node counts as an attachment when its schema spec declares a `:key`

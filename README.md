@@ -233,9 +233,38 @@ image. `Coelho.Attachments.keys/2` answers which keys a document still uses,
 which is what a cleanup job needs.
 
 `Coelho.Attachment` records the metadata; `mix coelho.gen.migration`
-creates its table. **Coelho does not store bytes** — it is not a storage
-layer. Where the file lives and how a key becomes a URL stay the
-application's.
+creates its table.
+
+The bytes themselves go through `Coelho.Storage`, a four-callback contract
+with a local-filesystem implementation in the box:
+
+```elixir
+storage = Coelho.Storage.Disk.new("priv/uploads")
+:ok = Coelho.Storage.put(storage, key, {:file, upload_path})
+```
+
+Serving them is a plug, and the URL that reaches it is signed and expiring:
+
+```elixir
+# endpoint.ex
+plug Coelho.Plug.Attachments,
+  at: "/attachments",
+  storage: {MyApp.Uploads, :storage, []},
+  secret: {MyApp.Uploads, :secret, []},
+  metadata: {MyApp.Uploads, :metadata, []}
+
+# the resolver the renderer is given
+Coelho.Attachments.signed_url("/attachments", key, secret, expires_in: 300)
+```
+
+Uploads served from your own origin are a standing hazard — a file the
+browser decides to render as HTML runs as your application — so the plug
+always sends `x-content-type-options: nosniff` and serves only a short list
+of image types inline. Everything else, SVG included, is sent as a download
+whatever it claims to be.
+
+Writing to object storage instead means implementing the same four
+callbacks. Coelho itself never touches the bytes.
 
 In the editor, pass an upload config and dropped or pasted files go up
 through LiveView's own upload channel:
@@ -291,6 +320,7 @@ types by position.
 | 4 | Attachments and uploads | done |
 | 5 | Demo application and documentation | done |
 | 6 | HTML import, the migration path | done |
+| 7 | Attachment storage, signed URLs, serving | done |
 
 Beyond that, and deliberately out of scope for now: real time collaboration
 over [`y_ex`](https://github.com/satoren/y_ex), which is where the BEAM has

@@ -42,3 +42,6 @@ npm-debug.log
 # Written by the schema bridge check, see README.
 /schema.json
 /document.json
+
+# Attachment bytes written by the demo.
+/priv/uploads/

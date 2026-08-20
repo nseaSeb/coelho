@@ -59,3 +59,5 @@
 .pane .field-error { color: #b91c1c; font-size: .8rem; margin: .25rem 0 0; }
 .pane button[type=submit] { margin-top: .75rem; padding: .4rem .9rem; border: 1px solid #ccc; border-radius: .375rem; background: #fff; cursor: pointer; }
 .coelho-empty .coelho-content::before { content: attr(data-placeholder); color: #999; pointer-events: none; float: left; height: 0; }
+.pane .hint { font-size: .75rem; color: #777; margin-top: .375rem; }
+.coelho-file-input { display: none; }

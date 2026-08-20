@@ -39,6 +39,13 @@ defmodule DemoWeb.EditorLive do
     {:ok,
      socket
      |> assign(:post, post)
+     |> allow_upload(:attachment,
+       accept: :any,
+       max_entries: 1,
+       max_file_size: 8_000_000,
+       auto_upload: true,
+       progress: &handle_progress/3
+     )
      |> assign_document(post.body)
      |> assign(:errors, [])
      |> assign_form(Post.changeset(post, %{}))}
@@ -73,6 +80,27 @@ defmodule DemoWeb.EditorLive do
     end
   end
 
+  # The upload channel is LiveView's; what to do with the bytes is the
+  # application's. Coelho only wants the node to insert.
+  defp handle_progress(:attachment, entry, socket) do
+    if entry.done? do
+      # consume_uploaded_entry/3 unwraps the {:ok, term} the callback returns,
+      # so what comes back here is the attachment itself.
+      attachment =
+        consume_uploaded_entry(socket, entry, fn %{path: path} ->
+          Demo.Uploads.store(path, entry.client_name, entry.client_type)
+        end)
+
+      {:noreply,
+       push_event(socket, "coelho:attachment", %{
+         node: Coelho.Attachment.to_node(attachment),
+         url: Demo.Uploads.url(attachment.key)
+       })}
+    else
+      {:noreply, socket}
+    end
+  end
+
   defp assign_form(socket, changeset), do: assign(socket, :form, to_form(changeset, as: :post))
 
   # Rendering runs on every keystroke, so it runs once per change rather than
@@ -94,10 +122,10 @@ defmodule DemoWeb.EditorLive do
     end
   end
 
-  # Attachment URLs are resolved on every render, never stored. The expiry
-  # below moves each time the page re-renders, which is exactly what storing
-  # the URL in the document would make impossible.
-  defp attachment_url(key), do: "/files/#{key}?expires=#{System.system_time(:second) + 300}"
+  # Attachment URLs are resolved on every render, never stored. The signature
+  # below expires in five minutes, which is exactly what storing the URL in
+  # the document would make impossible.
+  defp attachment_url(key), do: Demo.Uploads.url(key)
 
   defp rendered_html(nil), do: ""
 
@@ -164,7 +192,12 @@ defmodule DemoWeb.EditorLive do
           </label>
           <p :for={{message, _} <- @form[:title].errors} class="field-error">{message}</p>
 
-          <.coelho_editor field={@form[:body]} placeholder="Write something…" />
+          <.coelho_editor
+            field={@form[:body]}
+            placeholder="Write something…"
+            upload={@uploads.attachment}
+          />
+          <p class="hint">Drop or paste a file into the editor to attach it.</p>
 
           <button type="submit">Save</button>
         </.form>
