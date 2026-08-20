@@ -24,6 +24,7 @@ defmodule Coelho.MixProject do
   defp deps do
     [
       {:ecto, "~> 3.11", optional: true},
+      {:floki, "~> 0.36", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:stream_data, "~> 1.1", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}

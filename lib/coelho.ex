@@ -56,6 +56,16 @@ defmodule Coelho do
   def to_html(document, %Schema{} = schema, opts), do: Render.to_html(document, schema, opts)
 
   @doc """
+  Converts existing HTML into a validated document.
+
+  The migration path for content already stored as HTML. Requires the
+  optional `:floki` dependency; see `Coelho.HTML` for what the import does
+  with markup the schema does not know.
+  """
+  @spec from_html(String.t(), Schema.t()) :: {:ok, map()} | {:error, term()}
+  def from_html(html, schema \\ Schema.default()), do: Coelho.HTML.from_html(html, schema)
+
+  @doc """
   Extracts the plain text of a document, for full text search.
   """
   @spec to_text(map(), Schema.t()) :: String.t()

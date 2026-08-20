@@ -16,6 +16,7 @@ defmodule Coelho.Schema.NodeSpec do
     * `:render` — how the node is turned into HTML, see `Coelho.Render`
     * `:to_text` — what the node contributes to the plain text extraction,
       when that is not simply its children
+    * `:parse` — HTML this node is imported from, see `Coelho.HTML`
 
   """
 
@@ -37,7 +38,8 @@ defmodule Coelho.Schema.NodeSpec do
           text: boolean(),
           void: boolean(),
           render: render(),
-          to_text: String.t() | (map() -> iodata()) | nil
+          to_text: String.t() | (map() -> iodata()) | nil,
+          parse: [Coelho.HTML.rule()]
         }
 
   defstruct [
@@ -51,6 +53,7 @@ defmodule Coelho.Schema.NodeSpec do
     text: false,
     void: false,
     render: nil,
-    to_text: nil
+    to_text: nil,
+    parse: []
   ]
 end

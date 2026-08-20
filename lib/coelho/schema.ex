@@ -225,7 +225,8 @@ defmodule Coelho.Schema do
       text: Keyword.get(decl, :text, false),
       void: Keyword.get(decl, :void, false),
       render: Keyword.get(decl, :render),
-      to_text: Keyword.get(decl, :to_text)
+      to_text: Keyword.get(decl, :to_text),
+      parse: normalize_parse(Keyword.get(decl, :parse, []))
     }
   end
 
@@ -233,8 +234,18 @@ defmodule Coelho.Schema do
     %MarkSpec{
       name: name,
       attrs: build_attrs(Keyword.get(decl, :attrs, [])),
-      render: Keyword.get(decl, :render)
+      render: Keyword.get(decl, :render),
+      parse: normalize_parse(Keyword.get(decl, :parse, []))
     }
+  end
+
+  # A parse rule is a tag, optionally paired with the attributes to give the
+  # node — a fixed map, or a function of the element's HTML attributes.
+  defp normalize_parse(rules) do
+    Enum.map(rules, fn
+      tag when is_binary(tag) -> {tag, %{}}
+      {tag, attrs} when is_binary(tag) -> {tag, attrs}
+    end)
   end
 
   defp build_attrs(attrs) do

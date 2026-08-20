@@ -37,30 +37,38 @@ defmodule Coelho.Schema.Default do
       top_node: :doc,
       nodes: [
         doc: [content: "block+"],
-        paragraph: [content: "inline*", group: "block", render: {"p", []}],
+        paragraph: [content: "inline*", group: "block", render: {"p", []}, parse: ["p"]],
         heading: [
           content: "inline*",
           group: "block",
           attrs: [level: [default: 1, validate: {:one_of, [1, 2, 3, 4, 5, 6]}]],
-          render: &__MODULE__.render_heading/2
+          render: &__MODULE__.render_heading/2,
+          parse: Enum.map(1..6, &{"h#{&1}", %{"level" => &1}})
         ],
-        blockquote: [content: "block+", group: "block", render: {"blockquote", []}],
-        bullet_list: [content: "list_item+", group: "block", render: {"ul", []}],
+        blockquote: [
+          content: "block+",
+          group: "block",
+          render: {"blockquote", []},
+          parse: ["blockquote"]
+        ],
+        bullet_list: [content: "list_item+", group: "block", render: {"ul", []}, parse: ["ul"]],
         ordered_list: [
           content: "list_item+",
           group: "block",
           attrs: [start: [default: 1, validate: :integer]],
-          render: {"ol", &__MODULE__.ordered_list_attrs/1}
+          render: {"ol", &__MODULE__.ordered_list_attrs/1},
+          parse: [{"ol", &__MODULE__.parse_ordered_list/1}]
         ],
-        list_item: [content: "paragraph block*", render: {"li", []}],
+        list_item: [content: "paragraph block*", render: {"li", []}, parse: ["li"]],
         code_block: [
           content: "text*",
           group: "block",
           marks: :none,
           attrs: [language: [default: nil, validate: {:nullable, :string}]],
-          render: &__MODULE__.render_code_block/2
+          render: &__MODULE__.render_code_block/2,
+          parse: ["pre"]
         ],
-        horizontal_rule: [group: "block", void: true, render: {"hr", []}],
+        horizontal_rule: [group: "block", void: true, render: {"hr", []}, parse: ["hr"]],
         image: [
           group: "inline",
           inline: true,
@@ -70,7 +78,8 @@ defmodule Coelho.Schema.Default do
             alt: [default: nil, validate: {:nullable, :string}],
             title: [default: nil, validate: {:nullable, :string}]
           ],
-          render: {"img", &__MODULE__.image_attrs/1}
+          render: {"img", &__MODULE__.image_attrs/1},
+          parse: [{"img", &__MODULE__.parse_image/1}]
         ],
         attachment: [
           group: "block",
@@ -91,21 +100,23 @@ defmodule Coelho.Schema.Default do
           inline: true,
           void: true,
           render: {"br", []},
-          to_text: "\n"
+          to_text: "\n",
+          parse: ["br"]
         ],
         text: [group: "inline", inline: true, text: true]
       ],
       marks: [
-        bold: [render: {"strong", []}],
-        italic: [render: {"em", []}],
-        strike: [render: {"s", []}],
-        code: [render: {"code", []}],
+        bold: [render: {"strong", []}, parse: ~w(strong b)],
+        italic: [render: {"em", []}, parse: ~w(em i)],
+        strike: [render: {"s", []}, parse: ~w(s del strike)],
+        code: [render: {"code", []}, parse: ["code"]],
         link: [
           attrs: [
             href: [required: true, validate: :safe_url],
             title: [default: nil, validate: {:nullable, :string}]
           ],
-          render: {"a", &__MODULE__.link_attrs/1}
+          render: {"a", &__MODULE__.link_attrs/1},
+          parse: [{"a", &__MODULE__.parse_link/1}]
         ]
       ]
     )
@@ -182,6 +193,22 @@ defmodule Coelho.Schema.Default do
 
   defp escape(value) when is_binary(value), do: Coelho.Render.escape(value)
   defp escape(value), do: Coelho.Render.escape(to_string(value))
+
+  # Every term in a schema has to be escapable, so that a schema can live in a
+  # module attribute: remote captures qualify, closures do not.
+  @doc false
+  def parse_image(attrs), do: Coelho.HTML.take(attrs, ~w(src alt title))
+
+  @doc false
+  def parse_link(attrs), do: Coelho.HTML.take(attrs, ~w(href title))
+
+  @doc false
+  def parse_ordered_list(attrs) do
+    case Integer.parse(Map.get(attrs, "start", "1")) do
+      {start, ""} -> %{"start" => start}
+      _ -> %{}
+    end
+  end
 
   @doc false
   def ordered_list_attrs(node) do

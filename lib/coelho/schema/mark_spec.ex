@@ -8,8 +8,9 @@ defmodule Coelho.Schema.MarkSpec do
   @type t :: %__MODULE__{
           name: atom(),
           attrs: %{optional(atom()) => Attr.t()},
-          render: Coelho.Schema.NodeSpec.render()
+          render: Coelho.Schema.NodeSpec.render(),
+          parse: [Coelho.HTML.rule()]
         }
 
-  defstruct [:name, attrs: %{}, render: nil]
+  defstruct [:name, attrs: %{}, render: nil, parse: []]
 end

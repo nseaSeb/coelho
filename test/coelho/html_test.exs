@@ -1,0 +1,214 @@
+defmodule Coelho.HTMLTest do
+  use ExUnit.Case, async: true
+
+  alias Coelho.{Document, HTML, Schema}
+
+  defp import_html!(html, schema \\ Schema.default()) do
+    {:ok, document} = HTML.from_html(html, schema)
+    document
+  end
+
+  defp round_trip(html), do: html |> import_html!() |> Coelho.to_html()
+
+  describe "blocks and marks" do
+    test "maps the tags the schema declares" do
+      assert round_trip("<p>Hello <strong>bold</strong> and <em>italic</em>.</p>") ==
+               "<p>Hello <strong>bold</strong> and <em>italic</em>.</p>"
+    end
+
+    test "accepts the aliases people actually write" do
+      assert round_trip("<p><b>b</b><i>i</i><del>d</del></p>") ==
+               "<p><strong>b</strong><em>i</em><s>d</s></p>"
+    end
+
+    test "maps every heading level" do
+      for level <- 1..6 do
+        assert round_trip("<h#{level}>T</h#{level}>") == "<h#{level}>T</h#{level}>"
+      end
+    end
+
+    test "keeps list structure, and nesting" do
+      html = "<ul><li>one<ul><li>deep</li></ul></li></ul>"
+
+      assert round_trip(html) ==
+               "<ul><li><p>one</p><ul><li><p>deep</p></li></ul></li></ul>"
+    end
+
+    test "reads an ordered list start" do
+      assert round_trip(~s(<ol start="3"><li>a</li></ol>)) ==
+               ~s(<ol start="3"><li><p>a</p></li></ol>)
+    end
+
+    test "keeps line breaks and rules" do
+      assert round_trip("<p>a<br>b</p><hr>") == "<p>a<br>b</p><hr>"
+    end
+
+    test "decodes entities" do
+      assert round_trip("<p>a &amp; b &lt;c&gt;</p>") == "<p>a &amp; b &lt;c&gt;</p>"
+    end
+  end
+
+  describe "markup the schema does not know" do
+    test "an unknown element is transparent, its children survive" do
+      assert round_trip(~s(<div><section><p>kept</p></section></div>)) == "<p>kept</p>"
+      assert round_trip(~s(<p>a <span class="fancy">b</span></p>)) == "<p>a b</p>"
+    end
+
+    test "script and style are dropped with their content" do
+      html = "<p>before</p><script>alert(1)</script><style>p{}</style><p>after</p>"
+
+      assert round_trip(html) == "<p>before</p><p>after</p>"
+    end
+
+    test "an element whose attributes fail validation is treated as unknown" do
+      # The link text is content the reader saw; the link is not.
+      assert round_trip(~s|<p><a href="javascript:alert(1)">text</a></p>|) == "<p>text</p>"
+      assert round_trip(~s(<p><img alt="no src"></p>)) == "<p></p>"
+    end
+
+    test "an optional attribute failing validation falls back to its default" do
+      assert round_trip(~s(<ol start="not a number"><li>a</li></ol>)) ==
+               "<ol><li><p>a</p></li></ol>"
+    end
+
+    test "a valid image survives with its attributes" do
+      assert round_trip(~s(<p><img src="/a.png" alt="A" title="T"></p>)) ==
+               ~s(<p><img src="/a.png" alt="A" title="T"></p>)
+    end
+  end
+
+  describe "content that does not fit where it lands" do
+    test "bare inline content at the top level becomes a paragraph" do
+      assert round_trip("Hello") == "<p>Hello</p>"
+      assert round_trip("<strong>Hello</strong>") == "<p><strong>Hello</strong></p>"
+    end
+
+    test "a list item holding bare text gets its paragraph" do
+      assert round_trip("<ul><li>text</li></ul>") == "<ul><li><p>text</p></li></ul>"
+    end
+
+    test "a blockquote holding bare text gets its paragraph" do
+      assert round_trip("<blockquote>quoted</blockquote>") ==
+               "<blockquote><p>quoted</p></blockquote>"
+    end
+
+    test "empty input still yields a valid document" do
+      document = import_html!("")
+
+      assert {:ok, ^document} = Document.validate(document, Schema.default())
+      assert document["content"] != []
+    end
+
+    test "whitespace between blocks does not become paragraphs" do
+      assert round_trip("<p>a</p>\n\n   \n<p>b</p>") == "<p>a</p><p>b</p>"
+    end
+  end
+
+  describe "whitespace" do
+    test "is collapsed the way HTML collapses it" do
+      assert round_trip("<p>a\n   b\tc</p>") == "<p>a b c</p>"
+    end
+
+    test "is preserved inside a code block, tags and all" do
+      html = "<pre><code>def a do\n  :ok\nend</code></pre>"
+
+      assert round_trip(html) == "<pre><code>def a do\n  :ok\nend</code></pre>"
+    end
+
+    test "a space between inline elements is not lost" do
+      assert round_trip("<p><strong>a</strong> <em>b</em></p>") ==
+               "<p><strong>a</strong> <em>b</em></p>"
+    end
+
+    test "but a block does not begin or end with the source's indentation" do
+      assert round_trip("<p>\n  spaced out\n</p>") == "<p>spaced out</p>"
+    end
+  end
+
+  describe "the result is a real document" do
+    test "it is validated and normalised" do
+      document = import_html!("<h3>T</h3>")
+
+      assert {:ok, ^document} = Document.validate(document, Schema.default())
+      assert [%{"attrs" => %{"level" => 3}}] = document["content"]
+    end
+
+    test "no HTML survives anywhere in it" do
+      document = import_html!(~s(<p onclick="x" style="color:red">text</p>))
+
+      refute inspect(document) =~ "onclick"
+      refute inspect(document) =~ "color:red"
+    end
+
+    test "text is stored decoded, not escaped" do
+      document = import_html!("<p>a &amp; b</p>")
+
+      assert [%{"content" => [%{"text" => "a & b"}]}] = document["content"]
+    end
+  end
+
+  describe "a schema of your own" do
+    test "imports through the rules it declares" do
+      schema =
+        Schema.new(
+          nodes: [
+            doc: [content: "line+"],
+            line: [content: "inline*", group: "block", render: {"p", []}, parse: ~w(p div)]
+          ],
+          marks: [highlight: [render: {"mark", []}, parse: ["mark"]]]
+        )
+
+      document = import_html!("<div>a <mark>b</mark></div><p>c</p>", schema)
+
+      assert Coelho.to_html(document, schema) == "<p>a <mark>b</mark></p><p>c</p>"
+    end
+
+    test "reports what still does not fit rather than guessing" do
+      # A top node that admits only images has nowhere to put text, and no
+      # block to wrap it in.
+      schema =
+        Schema.new(
+          nodes: [
+            doc: [content: "image+"],
+            image: [
+              group: "inline",
+              inline: true,
+              void: true,
+              attrs: [src: [required: true, validate: :safe_url]],
+              parse: [{"img", &Coelho.HTML.take(&1, ["src"])}]
+            ]
+          ]
+        )
+
+      assert {:error, [_ | _]} = HTML.from_html("<p>text</p>", schema)
+    end
+  end
+
+  describe "whitespace the parser would have eaten" do
+    test "a separator between two inline elements survives" do
+      # Floki's default parser drops data nodes made only of whitespace, so
+      # this pair would otherwise import as "ab".
+      assert round_trip("<p><b>a</b> <i>b</i></p>") == "<p><strong>a</strong> <em>b</em></p>"
+      assert round_trip("<p><b>a</b>\n<i>b</i></p>") == "<p><strong>a</strong> <em>b</em></p>"
+    end
+
+    test "the same whitespace between two blocks is still dropped" do
+      assert round_trip("<p>a</p>   <p>b</p>") == "<p>a</p><p>b</p>"
+    end
+
+    test "the carrier character never reaches the document" do
+      document = import_html!("<p><b>a</b> <i>b</i></p>")
+
+      refute inspect(document) =~ "e000"
+      refute document |> Coelho.to_text() |> String.contains?("\u{E000}")
+    end
+
+    test "a carrier character present in the source is stripped, not honoured" do
+      assert round_trip("<p>a\u{E000}b</p>") == "<p>ab</p>"
+    end
+
+    test "code block whitespace is left to the parser untouched" do
+      assert round_trip("<pre><code>a\n\n  b</code></pre>") == "<pre><code>a\n\n  b</code></pre>"
+    end
+  end
+end

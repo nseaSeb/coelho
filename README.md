@@ -176,6 +176,39 @@ const Coelho = createCoelhoHook({
 })
 ```
 
+## Migrating existing HTML
+
+Content already stored as HTML has to become a document before any of the
+above applies to it:
+
+```elixir
+{:ok, document} = Coelho.from_html(post.body_html)
+
+post |> Ecto.Changeset.change(%{body: document}) |> Repo.update()
+```
+
+Importing foreign markup is not validation, and failing on the first
+surprise would make it useless, so the rules are lenient and explicit: an
+element the schema has no rule for is transparent — it disappears and its
+children take its place, so a `<div>` wrapper costs you nothing;
+`<script>`, `<style>` and friends are dropped with their content; an element
+whose attributes fail the schema's validators — an `<img>` with no `src`, an
+`<a href="javascript:…">` — is treated as unknown, so the link text survives
+while the link does not; and inline content where the schema wants blocks is
+wrapped in a paragraph. What comes out is a validated document, or the list
+of what still did not fit.
+
+Nodes and marks declare the tags they come from, next to everything else
+about them:
+
+```elixir
+paragraph: [content: "inline*", group: "block", parse: ["p"]]
+heading: [content: "inline*", group: "block", parse: [{"h1", %{"level" => 1}}]]
+```
+
+Requires the optional [`floki`](https://hex.pm/packages/floki) dependency —
+the parser is only needed on this path.
+
 ## Attaching files
 
 An attachment node stores an opaque **key**, never a URL:
@@ -257,6 +290,7 @@ types by position.
 | 3 | LiveView component and ProseMirror hook | done |
 | 4 | Attachments and uploads | done |
 | 5 | Demo application and documentation | done |
+| 6 | HTML import, the migration path | done |
 
 Beyond that, and deliberately out of scope for now: real time collaboration
 over [`y_ex`](https://github.com/satoren/y_ex), which is where the BEAM has
