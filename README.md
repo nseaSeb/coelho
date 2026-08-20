@@ -4,18 +4,18 @@
 
 Structured rich text for Phoenix.
 
-Coelho is to Phoenix what Action Text is to Rails: the layer between a rich
-text editor in the browser and a column in the database. It stores the
-document, validates it, renders it, and hands the same schema to both sides.
+Coelho is the layer between a rich text editor in the browser and a column in
+the database. It stores the document, validates it, renders it, and hands the
+same schema to both sides.
 
-Unlike Action Text, it does not store HTML.
+It does not store HTML.
 
 ## Why not HTML
 
-Action Text stores the editor's HTML output and filters it with a tag
-allow list on the way in. That works, but it makes the database hold markup:
-you cannot query it, migrating it means rewriting HTML, and every rendering
-decision was frozen at the moment the user hit save.
+The usual arrangement stores the editor's HTML output and filters it with a
+tag allow list on the way in. That works, but it makes the database hold
+markup: you cannot query it, migrating it means rewriting HTML, and every
+rendering decision was frozen at the moment the user hit save.
 
 Coelho stores the document as a tree — the shape ProseMirror's `toJSON()`
 produces — in a `jsonb` column, and validates it against a schema:
@@ -91,8 +91,8 @@ Coelho.to_html(document, Coelho.Schema.default(),
 ## Storing it
 
 The document lives in a `:map` (`jsonb`) column on the table that owns it.
-There is no side table and no join — Action Text needs one because its rich
-text records are polymorphic, Coelho does not.
+There is no side table and no join: those are only needed when the rich text
+record has to be polymorphic, and this one does not.
 
 ```elixir
 defmodule MyApp.Post do
@@ -191,18 +191,18 @@ The URL is produced at render time, from the context:
 Coelho.to_html(document, schema, context: %{resolve: &MyApp.Uploads.url/1})
 ```
 
-That indirection is the point. Action Text bakes the URL into the stored
-HTML, so signed and expiring URLs cannot work — the link is as old as the
-document. Here every render asks again: a five minute signed URL is fine,
+That indirection is the point. Storing rendered HTML bakes the URL into it,
+so signed and expiring URLs cannot work — the link is as old as the document.
+Here every render asks again: a five minute signed URL is fine,
 moving a bucket is a resolver change instead of a data migration, and a key
 that no longer resolves degrades to its filename rather than to a broken
 image. `Coelho.Attachments.keys/2` answers which keys a document still uses,
 which is what a cleanup job needs.
 
 `Coelho.Attachment` records the metadata; `mix coelho.gen.migration`
-creates its table. **Coelho does not store bytes** — there is no equivalent
-of ActiveStorage here. Where the file lives and how a key becomes a URL stay
-the application's.
+creates its table. **Coelho does not store bytes** — it is not a storage
+layer. Where the file lives and how a key becomes a URL stay the
+application's.
 
 In the editor, pass an upload config and dropped or pasted files go up
 through LiveView's own upload channel:

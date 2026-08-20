@@ -296,4 +296,45 @@ defmodule Coelho.DocumentTest do
       assert Document.to_text(document, schema) == "lead\nbody"
     end
   end
+
+  describe "memory" do
+    test "a validated document does not pin the payload it was parsed from" do
+      # Binaries over 64 bytes live off the process heap, and a sub-binary of
+      # one keeps the whole parent alive. Every string in a freshly decoded
+      # document is such a sub-binary, and the document outlives the payload:
+      # it goes into socket assigns, a changeset, a row.
+      long = String.duplicate("a", 500)
+
+      payload =
+        JSON.encode!(
+          doc([
+            paragraph([text(String.duplicate("x", 400_000))]),
+            paragraph([
+              text(long, [%{"type" => "link", "attrs" => %{"href" => "/" <> long}}])
+            ])
+          ])
+        )
+
+      {:ok, document} = payload |> JSON.decode!() |> Document.validate(schema())
+
+      [_, %{"content" => [%{"text" => kept, "marks" => [%{"attrs" => %{"href" => href}}]}]}] =
+        document["content"]
+
+      assert byte_size(kept) == 500
+      assert :binary.referenced_byte_size(kept) == byte_size(kept)
+      assert :binary.referenced_byte_size(href) == byte_size(href)
+    end
+
+    test "a string that is already whole is not copied" do
+      # Copying every large string would be its own waste, so only sub-binaries
+      # are copied.
+      whole = String.duplicate("a", 500)
+      document = doc([paragraph([text(whole)])])
+
+      {:ok, validated} = Document.validate(document, schema())
+      [%{"content" => [%{"text" => kept}]}] = validated["content"]
+
+      assert :erts_debug.same(kept, whole)
+    end
+  end
 end

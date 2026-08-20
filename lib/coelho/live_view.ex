@@ -19,6 +19,18 @@ if Code.ensure_loaded?(Phoenix.Component) do
     its ProseMirror schema from the same declaration that validates the
     document server side.
 
+    ## Styling
+
+    The component ships no styles. It gives CSS two things to work with: the
+    root carries `coelho-empty` while the document has no text, and the
+    content element carries `data-placeholder`, so an empty editor shows its
+    placeholder with
+
+        .coelho-empty .coelho-content::before { content: attr(data-placeholder); }
+
+    A placeholder node would have to be a node, and would end up validated,
+    stored and rendered; this stays out of the document entirely.
+
     ## Attachments
 
     Pass an upload config and the editor accepts dropped and pasted files,

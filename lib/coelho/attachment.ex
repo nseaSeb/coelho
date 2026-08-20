@@ -25,8 +25,8 @@ if Code.ensure_loaded?(Ecto.Schema) do
 
     Nothing here is tied to an owner. A document references attachments by
     key, and `Coelho.Attachments.keys/2` answers which keys a document still
-    uses — which is what a cleanup job needs, and is why the row does not
-    carry a polymorphic association the way Action Text's does.
+    uses — which is what a cleanup job needs, and is why the row carries no
+    polymorphic association.
     """
 
     use Ecto.Schema

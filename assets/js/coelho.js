@@ -319,6 +319,13 @@ export const createCoelhoHook = (dom = {}) =>
 
       el.addEventListener("mousedown", this._onToolbar);
 
+      // Placeholder text is exposed for CSS rather than inserted into the
+      // document: a placeholder node would be a node, and would end up
+      // validated, stored and rendered.
+      if (el.dataset.coelhoPlaceholder) {
+        content.dataset.placeholder = el.dataset.coelhoPlaceholder;
+      }
+
       this.insertAttachment = (nodeJSON, url) => {
         setPreviewUrl(nodeJSON.attrs?.key, url);
         const node = PMNode.fromJSON(this._schema, nodeJSON);

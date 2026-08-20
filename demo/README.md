@@ -12,8 +12,8 @@ the stored tree, on every keystroke:
 
 The attachment in the sample document shows the other half of the argument:
 its URL carries an expiry that moves on every render, because the document
-stores a key and the URL is resolved each time. Action Text bakes the URL
-into the stored HTML, so it cannot do that.
+stores a key and the URL is resolved each time. Storing rendered HTML would
+freeze that URL in place.
 
 ## Running it
 

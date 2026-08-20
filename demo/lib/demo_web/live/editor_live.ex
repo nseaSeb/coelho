@@ -164,7 +164,7 @@ defmodule DemoWeb.EditorLive do
           </label>
           <p :for={{message, _} <- @form[:title].errors} class="field-error">{message}</p>
 
-          <.coelho_editor field={@form[:body]} />
+          <.coelho_editor field={@form[:body]} placeholder="Write something…" />
 
           <button type="submit">Save</button>
         </.form>

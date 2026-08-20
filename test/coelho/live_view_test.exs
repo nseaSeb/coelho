@@ -67,6 +67,12 @@ defmodule Coelho.LiveViewTest do
       refute html =~ ~s(data-coelho-command="italic")
     end
 
+    test "the placeholder is exposed to CSS rather than put in the document" do
+      html = render(%{field: form(nil)[:body], placeholder: "Write something"})
+
+      assert html =~ ~s(data-coelho-placeholder="Write something")
+    end
+
     test "an empty toolbar list hides the toolbar entirely" do
       html = render(%{field: form(nil)[:body], toolbar: []})
 

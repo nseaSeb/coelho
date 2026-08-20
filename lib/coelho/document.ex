@@ -25,9 +25,8 @@ defmodule Coelho.Document do
   `validate/2` is strict on purpose: an unknown node type, an unknown mark,
   an unknown attribute or an attribute failing its validator all reject the
   document. Nothing outside the schema reaches the database, so rendering
-  never has to escape its way out of untrusted markup. This is the point
-  where Coelho departs from Action Text, which stores HTML and filters tags
-  on the way in.
+  never has to escape its way out of untrusted markup. This is what storing
+  the document buys over storing HTML and filtering tags on the way in.
 
   Validation also normalises: missing optional attributes are filled with
   their schema default, so stored documents are canonical.
@@ -49,6 +48,17 @@ defmodule Coelho.Document do
 
   @node_keys ~w(type attrs content marks text)
   @mark_keys ~w(type attrs)
+
+  # The VM keeps binaries over 64 bytes off the process heap and hands out
+  # sub-binaries that keep their *whole parent* alive. A decoded document is
+  # made of exactly those: every string in it points into the payload it was
+  # parsed from. Measured, a 500 byte text node out of a 401 KB payload
+  # reports `:binary.referenced_byte_size/1` of 401 KB.
+  #
+  # A validated document is the value that outlives its source — it sits in
+  # socket assigns, in a changeset, in the row — so validation copies the
+  # strings it keeps and lets the payload go.
+  @refc_threshold 64
 
   @doc """
   Validates and normalises a document against a schema.
@@ -163,7 +173,7 @@ defmodule Coelho.Document do
           case Map.fetch(given, key) do
             {:ok, value} ->
               case Attr.validate(spec.validate, value) do
-                :ok -> {Map.put(attrs, key, value), errors}
+                :ok -> {Map.put(attrs, key, compact(value)), errors}
                 {:error, message} -> {attrs, [error(attr_rpath, message) | errors]}
               end
 
@@ -240,7 +250,7 @@ defmodule Coelho.Document do
 
   defp validate_text(node, %NodeSpec{text: true}, rpath) do
     case Map.fetch(node, "text") do
-      {:ok, text} when is_binary(text) and text != "" -> {text, []}
+      {:ok, text} when is_binary(text) and text != "" -> {compact(text), []}
       {:ok, ""} -> {nil, [error(["text" | rpath], "must not be empty")]}
       {:ok, _} -> {nil, [error(["text" | rpath], "must be a string")]}
       :error -> {nil, [error(["text" | rpath], "is required")]}
@@ -320,6 +330,19 @@ defmodule Coelho.Document do
   defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
 
   defp error(rpath, message), do: %Error{path: Enum.reverse(rpath), message: message}
+
+  # `:binary.referenced_byte_size/1` exceeds the value's own size only for a
+  # sub-binary, so this copies exactly the strings that would pin something
+  # larger, and leaves every other term alone.
+  defp compact(value) when is_binary(value) and byte_size(value) > @refc_threshold do
+    if :binary.referenced_byte_size(value) > byte_size(value) do
+      :binary.copy(value)
+    else
+      value
+    end
+  end
+
+  defp compact(value), do: value
 
   # -- Plain text -----------------------------------------------------------
 

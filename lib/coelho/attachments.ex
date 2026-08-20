@@ -15,19 +15,19 @@ defmodule Coelho.Attachments do
 
       Coelho.to_html(document, schema, context: %{resolve: &MyApp.Uploads.url/1})
 
-  That indirection is the whole point. Action Text bakes the URL into the
-  stored HTML, so signed and expiring URLs cannot work — the link is as old
-  as the document. Here every render asks again, so a five minute signed URL
-  is fine, moving a bucket is a resolver change rather than a data migration,
-  and an attachment whose key no longer resolves degrades to its filename
-  instead of a broken image.
+  That indirection is the whole point. Storing rendered HTML bakes the URL
+  into it, so signed and expiring URLs cannot work — the link is as old as the
+  document. Here every render asks again, so a five minute signed URL is fine,
+  moving a bucket is a resolver change rather than a data migration, and an
+  attachment whose key no longer resolves degrades to its filename instead of
+  a broken image.
 
   ## What Coelho does not do
 
-  It does not store bytes. There is no equivalent of ActiveStorage here:
-  where the file lives — disk, S3, anything else — and how a key becomes a
-  URL are the application's, and `Coelho.Attachment` only records the
-  metadata that the editor and the renderer need.
+  It does not store bytes and is not a storage layer: where the file lives —
+  disk, object storage, anything else — and how a key becomes a URL are the
+  application's. `Coelho.Attachment` only records the metadata that the editor
+  and the renderer need.
   """
 
   alias Coelho.{Render, Schema}

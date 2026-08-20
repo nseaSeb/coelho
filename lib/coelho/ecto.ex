@@ -4,10 +4,9 @@ if Code.ensure_loaded?(Ecto.Schema) do
     Declaring a rich text field on an Ecto schema.
 
     Coelho stores the document inline, in a `:map` (`jsonb`) column on the
-    table that owns it, rather than in a side table the way Action Text
-    does. Nothing here is polymorphic, so nothing needs a join: a post's body
-    lives on the post, and `Ecto.Changeset.cast/3` validates it like any
-    other field.
+    table that owns it, rather than in a side table. Nothing here is
+    polymorphic, so nothing needs a join: a post's body lives on the post, and
+    `Ecto.Changeset.cast/3` validates it like any other field.
 
         defmodule MyApp.Post do
           use Ecto.Schema
