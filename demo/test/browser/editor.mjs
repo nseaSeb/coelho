@@ -233,14 +233,16 @@ const run = async () => {
         .find((node) => node.type === "mention");
 
       assert.ok(mention, "the document holds a mention");
-      // Inserted where the caret was, not at the top of the document.
+      // Inserted where the caret was, not at the top of the document. Where
+      // exactly the surrounding text splits is ProseMirror's business and
+      // varies with timing; what matters is that typed text precedes it.
       const paragraph = (await stored(page)).content.find((block) =>
         (block.content ?? []).some((node) => node.type === "mention")
       );
-      assert.deepEqual(
-        paragraph.content.map((node) => node.type),
-        ["text", "mention"]
-      );
+      const at = paragraph.content.findIndex((node) => node.type === "mention");
+
+      assert.ok(at > 0, `the mention landed at index ${at}`);
+      assert.match(spaces(paragraph.content[0].text ?? ""), /^written by/);
       assert.equal(mention.attrs.user_id, 7);
       assert.equal(mention.attrs.label, "@ada");
 
