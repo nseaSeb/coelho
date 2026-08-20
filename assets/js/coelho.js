@@ -561,37 +561,39 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         if (!command) return;
 
         command(this._view.state, this._view.dispatch, this._view);
-        this._view.focus();
+
+        // Unless the command opened the field, which has just taken the focus
+        // on purpose. Taking it back leaves the field on screen with the
+        // caret still in the document, so what the writer types goes into
+        // their text and Enter never reaches the field.
+        if (!this._pendingField) this._view.focus();
       };
 
       // A mouse press runs the command *here*, at `mousedown`, because this
       // is the last moment the selection is still the writer's: preventing
       // the default keeps focus, but the browser moves the caret on mouseup
       // anyway, and a command reading the selection after that acts on the
-      // wrong place.
+      // wrong place. Only the primary button: a right-click opens a menu.
       this._onToolbarDown = (event) => {
         const button = buttonIn(event);
-        if (!button) return;
+        if (!button || event.button !== 0) return;
 
         event.preventDefault();
-        this._pressed = button;
         this.runCommand(button);
       };
 
-      // A keyboard press produces a `click` with no `mousedown` before it, so
-      // this is what makes the toolbar reachable without a mouse — and it
-      // skips the press the mouse has already dealt with.
+      // A keyboard press produces a `click` and no `mousedown`, which is what
+      // makes the toolbar reachable without a mouse. `detail` is the click
+      // count — zero when no pointer was involved — so the browser says which
+      // it was, and no flag has to be kept in step. Anything that leaves a
+      // flag behind would swallow the next keyboard press of the same button:
+      // releasing off the button, a right-click, or a command that disables
+      // the button it was on, none of which produce a `click` at all.
       this._onToolbar = (event) => {
         const button = buttonIn(event);
-        if (!button) return;
+        if (!button || event.detail !== 0) return;
 
         event.preventDefault();
-
-        if (this._pressed === button) {
-          this._pressed = null;
-          return;
-        }
-
         this.runCommand(button);
       };
 

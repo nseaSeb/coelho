@@ -640,6 +640,34 @@ const run = async () => {
       assert.ok(described, "every command is named, and says whether it is in force");
     });
 
+    await test("a link can be made without touching the mouse at all", async () => {
+      // Not `page.fill`, which focuses the field itself and would hide the
+      // defect this covers: the command used to hand focus back to the
+      // document the moment the field opened, so the field was on screen and
+      // everything typed went into the text.
+      await typeInEditor(page, "keyboard link");
+      await page.click(EDITOR);
+      await selectAll(page);
+
+      await page.focus('[data-coelho-command="link"]');
+      await page.keyboard.press("Enter");
+      await settle(page);
+
+      assert.ok(await page.isVisible(LINK_INPUT), "the field opens");
+
+      const focused = await page.evaluate(
+        () => document.activeElement === document.querySelector("[data-coelho-link-input]")
+      );
+
+      assert.ok(focused, "and keeps the focus it just took");
+
+      await page.keyboard.type("https://keyboard.example/x");
+      await page.keyboard.press("Enter");
+
+      await documentEventually(page, "the link was not applied", HAS_LINK);
+      assert.equal(await hrefsIn(page), "https://keyboard.example/x");
+    });
+
     await test("it works under a finger, on a phone-sized screen", async () => {
       // The checks above run in a desktop viewport with a mouse. Nothing here
       // had ever been touched.

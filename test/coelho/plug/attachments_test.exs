@@ -32,7 +32,9 @@ defmodule Coelho.Plug.AttachmentsTest do
 
     @impl true
     def redirect_url(_storage, key, opts) do
-      {:ok, "https://bucket.example/#{key}?X-Expires=#{Keyword.fetch!(opts, :expires_in)}"}
+      {:ok,
+       "https://bucket.example/#{key}?X-Expires=#{Keyword.fetch!(opts, :expires_in)}" <>
+         "&type=#{Keyword.fetch!(opts, :content_type)}"}
     end
   end
 
@@ -286,6 +288,54 @@ defmodule Coelho.Plug.AttachmentsTest do
     test "an expired signature leaves nothing to redirect to", %{options: options} do
       conn = get(signed("image", expires_in: 60, now: 1000), options)
 
+      assert get_resp_header(conn, "location") == []
+    end
+  end
+
+  describe "what a redirect would give up" do
+    setup do
+      %{
+        options:
+          Plugged.init(
+            at: "/attachments",
+            storage: %Presigned{},
+            secret: {__MODULE__, :secret, []},
+            metadata: {__MODULE__, :metadata, []}
+          )
+      }
+    end
+
+    test "anything but a safe image goes through the application instead", %{options: options} do
+      # The promise that an SVG arrives as a download is made by headers a
+      # redirect does not carry, and a script running on the bucket's origin
+      # is often a script running on a subdomain of the application's.
+      conn = get(signed("svg"), options)
+
+      assert conn.status != 302
+      assert get_resp_header(conn, "location") == []
+    end
+
+    test "a file with no recorded type is not redirected to either", %{options: options} do
+      conn = get(signed(Coelho.Attachment.generate_key()), options)
+
+      assert conn.status != 302
+    end
+
+    test "the storage is told what the file is, so it can presign it", %{options: options} do
+      assert [location] = get_resp_header(get(signed("image"), options), "location")
+
+      assert location =~ "type=image/png"
+    end
+
+    test "a signature with seconds left is served rather than presigned", %{options: options} do
+      # Verification accepts `now <= expires`, so a request can arrive in the
+      # signature's last second; presigning for that long gives a URL the
+      # bucket refuses, and a request that used to work would start failing.
+      now = System.system_time(:second)
+
+      conn = get(signed("image", expires_in: 2, now: now), options)
+
+      assert conn.status != 302
       assert get_resp_header(conn, "location") == []
     end
   end

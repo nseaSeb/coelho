@@ -297,7 +297,10 @@ whatever it claims to be.
 Writing to object storage instead means implementing the same callbacks,
 plus the optional `redirect_url/3` — with one, the plug checks its signature
 and then hands the reader straight to a presigned URL rather than streaming
-every byte through the application. Coelho itself never touches the bytes.
+every byte through the application. It only does that for the types it would
+have served inline anyway: the promise that everything else arrives as a
+download is made by headers a redirect does not carry. Coelho itself never
+touches the bytes.
 
 In the editor, pass an upload config and dropped or pasted files go up
 through LiveView's own upload channel — and so do **images pasted from other

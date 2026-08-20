@@ -87,7 +87,11 @@ defmodule Coelho.Storage do
   """
   @spec redirect_url(t(), key(), keyword()) :: {:ok, String.t()} | :error
   def redirect_url(%module{} = storage, key, opts \\ []) do
-    if function_exported?(module, :redirect_url, 3) do
+    # `function_exported?/3` answers false for a module that has not been
+    # loaded yet, which is ordinary under interactive code loading — and the
+    # answer would be to stream every byte through the application, silently,
+    # since the fallback works.
+    if Code.ensure_loaded?(module) and function_exported?(module, :redirect_url, 3) do
       module.redirect_url(storage, key, opts)
     else
       :error

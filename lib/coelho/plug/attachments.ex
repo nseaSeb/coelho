@@ -27,6 +27,12 @@ if Code.ensure_loaded?(Plug) do
 
     ## Serving other people's files
 
+    A storage that hands out a URL of its own is redirected to — but only for
+    the types that would have been served inline anyway. Everything else goes
+    through the application, because the promise below is made by headers a
+    redirect does not carry.
+
+
     Uploads served from the application's own origin are a standing hazard:
     a file the browser decides to render as HTML runs as the application.
     So the response always carries `x-content-type-options: nosniff`, and
@@ -43,6 +49,12 @@ if Code.ensure_loaded?(Plug) do
 
     # Types a browser renders without being able to run anything.
     @inline_types ~w(image/png image/jpeg image/gif image/webp image/avif)
+
+    # A signature is good up to and including its expiry, so a request can
+    # arrive with a second left on it. Presigning for that long produces a URL
+    # the bucket refuses; below this the bytes go through the application,
+    # which always works.
+    @shortest_redirect 5
 
     @impl true
     def init(opts) do
@@ -82,13 +94,39 @@ if Code.ensure_loaded?(Plug) do
     defp serve_bytes(conn, key, options) do
       storage = resolve(options.storage)
 
-      # Object storage can hand out a URL of its own, and redirecting to it
-      # is what stops every byte travelling through the application. The
-      # signature is checked first either way, so this trades the transfer
-      # and not the check. The redirect is given only what is left of that
-      # signature's life: a URL outliving it would widen the window it was
-      # there to narrow.
-      case Storage.redirect_url(storage, key, expires_in: seconds_left(conn)) do
+      metadata = metadata(options.metadata, key)
+      remaining = seconds_left(conn)
+
+      # Object storage can hand out a URL of its own, and redirecting to it is
+      # what stops every byte travelling through the application. The
+      # signature is checked first either way, so this trades the transfer and
+      # not the check.
+      #
+      # It is only offered for the types that would have been served inline
+      # anyway. Everything else — SVG, anything the bucket recorded as HTML —
+      # goes through the application, because the promise that it arrives as a
+      # download is made by headers this response would not carry, and a
+      # script running on the bucket's origin is often a script running on a
+      # subdomain of the application's.
+      if inline?(metadata) and remaining >= @shortest_redirect do
+        redirect(conn, storage, key, metadata, remaining, options)
+      else
+        send_bytes(conn, storage, key, options)
+      end
+    end
+
+    defp redirect(conn, storage, key, metadata, remaining, options) do
+      # The URL is given only what is left of the signature that got the
+      # reader this far: one outliving it would widen the window the signature
+      # was there to narrow. The metadata goes too, so an adapter that can
+      # presign a content type or a filename does.
+      opts = [
+        expires_in: remaining,
+        content_type: content_type(metadata),
+        filename: Map.get(metadata || %{}, :filename)
+      ]
+
+      case Storage.redirect_url(storage, key, opts) do
         {:ok, url} ->
           conn
           |> put_resp_header("cache-control", options.cache_control)
@@ -107,6 +145,8 @@ if Code.ensure_loaded?(Plug) do
         _ -> 0
       end
     end
+
+    defp inline?(metadata), do: content_type(metadata) in @inline_types
 
     defp send_bytes(conn, storage, key, options) do
       # A storage with no local path — object storage — answers `:error` and
@@ -156,7 +196,7 @@ if Code.ensure_loaded?(Plug) do
     defp disposition(metadata) do
       filename = Map.get(metadata || %{}, :filename)
 
-      if content_type(metadata) in @inline_types do
+      if inline?(metadata) do
         "inline"
       else
         # The filename is quoted and stripped of quotes and control
