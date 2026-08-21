@@ -429,6 +429,39 @@ defmodule Coelho.Plug.AttachmentsTest do
       assert %{status: 410} = get(signed(key, expires_in: -1), options)
     end
 
+    test "fails closed when it raises, rather than falling open", %{
+      storage: storage,
+      options: options
+    } do
+      # Nothing rescues, on purpose. A callback that cannot reach its database
+      # has to stop the request, not guess at it — the alternative is a broken
+      # check that serves everybody.
+      key = store(storage, "image", "png bytes")
+      options = with_authorize(options, fn _conn, _key -> raise "the database is gone" end)
+
+      assert_raise RuntimeError, "the database is gone", fn -> get(signed(key), options) end
+    end
+
+    test "runs before the metadata is looked up, and before a URL is minted" do
+      # A refusal costs one callback and no query — and object storage is
+      # never asked to presign a file for a caller who is not allowed it.
+      options =
+        Plugged.init(
+          at: "/attachments",
+          storage: %Presigned{},
+          secret: {__MODULE__, :secret, []},
+          metadata: {__MODULE__, :explode, []},
+          authorize: {__MODULE__, :refuse, []}
+        )
+
+      conn = get(signed("image"), options)
+
+      assert conn.status == 403
+      assert get_resp_header(conn, "location") == []
+    end
+
+    def explode(_key), do: raise("metadata should not be looked up for a refused request")
+
     test "without it the signature is the only check, which is deliberate", %{
       storage: storage,
       options: options
