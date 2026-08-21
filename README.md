@@ -98,6 +98,26 @@ Coelho.to_html(document, Coelho.Schema.default(),
 )
 ```
 
+## Installing it
+
+```
+mix coelho.install
+```
+
+Four things stand between adding the dependency and typing in an editor: the
+browser packages the hook imports, the hook in `assets/js/app.js`, the
+stylesheet in `assets/css/app.css`, and the attachments migration. Every one
+is small and none is guessable, which is a poor trade for the first ten
+minutes of trying a library.
+
+It changes nothing it does not have to — run it twice and the second run says
+everything is already there — and it says what to do rather than guessing when
+your `app.js` is not shaped the way it expects. `--dry-run` reports without
+writing.
+
+The npm packages come from Coelho's own `peerDependencies`, so the list cannot
+drift from what the hook actually imports.
+
 ## Storing it
 
 The document lives in a `:map` (`jsonb`) column on the table that owns it.
@@ -193,6 +213,28 @@ in the direction that loses content: a document holding one image, or one
 attachment, has no text and is very much not blank. `blank?/2` asks the
 schema instead — a node it declares `void: true` renders an element of its
 own and counts.
+
+### Inside a paragraph, or a span
+
+A `<p>` inside a `<p>` is not nested by the browser, it is **closed** by it.
+Put `to_html/3` in a news banner, a map bubble or a card excerpt and the
+enclosing paragraph ends where the document's first one begins, every class on
+it stops applying, an empty paragraph appears, and the words of two paragraphs
+run together where the tags that separated them used to be.
+
+```heex
+<p class="banner">{Coelho.to_safe_inline_html(@page.news_doc, separator: :br)}</p>
+```
+
+The guarantee is one sentence: **the output holds nothing that is illegal in
+an inline context.** Marks stay, `<img>` and `<br>` stay, every block is
+unwrapped to its children — a heading contributes its words, a code block its
+text — and a node with no inline form at all, a horizontal rule, contributes
+nothing.
+
+The separator is yours because only you know whether your container can take a
+line break: `:space` by default, `:br` for a bubble. A separator of your own
+is escaped unless you pass `{:safe, iodata}`.
 
 ## Serving what is stored
 
@@ -392,9 +434,20 @@ up as buttons quietly doing nothing. The browser compares the two and refuses
 the mismatch out loud.
 
 Toolbar labels come from `labels={%{"bold" => gettext("Bold")}}` — the
-commands are not words, and a toolbar has to speak the reader's language.
-Changing them redraws the toolbar, so a language switched mid-session is
-picked up.
+commands are not words, and a toolbar has to speak the reader's language. What
+the link and caption field says comes from `field_labels`, which is separate
+because a command is not a sentence:
+
+```heex
+field_labels={%{
+  "link_placeholder" => gettext("https://… then Enter"),
+  "link_hint" => gettext("Empty the field to remove the link.")
+}}
+```
+
+The hint is shown under the field while it is open, and there is none unless
+you give one. Changing either redraws the toolbar, so a language switched
+mid-session reaches both.
 
 ### Styling it
 

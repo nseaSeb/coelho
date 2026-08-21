@@ -22,6 +22,7 @@ defmodule Coelho.EditorOptionsTest do
         schema_id: nil,
         toolbar: ~w(bold link),
         labels: %{},
+        field_labels: %{},
         maxlength: nil,
         flush_event: nil,
         flush_token: nil,
@@ -127,6 +128,46 @@ defmodule Coelho.EditorOptionsTest do
       assert html =~ "Gras"
       # Untranslated commands keep their name rather than disappearing.
       assert html =~ ~s(aria-label="link")
+    end
+  end
+
+  describe "what the field says" do
+    test "is nothing at all until the application says something" do
+      refute editor(%{name: "a[b]"}) =~ "data-coelho-field-labels"
+    end
+
+    test "travels as one attribute rather than six" do
+      html =
+        editor(%{
+          name: "a[b]",
+          field_labels: %{
+            "link_label" => "Adresse du lien",
+            "link_hint" => "Videz le champ pour retirer le lien."
+          }
+        })
+
+      assert html =~ "data-coelho-field-labels="
+      assert html =~ "Adresse du lien"
+      assert html =~ "Videz le champ pour retirer le lien."
+    end
+
+    test "renders the place the hint goes, empty and hidden" do
+      html = editor(%{name: "a[b]", toolbar: ~w(link)})
+
+      # With an id, so the input can point aria-describedby at it while the
+      # hint is shown — drawn is not said.
+      assert html =~
+               ~r/<span id="[^"]*-hint" class="coelho-link-hint" data-coelho-link-hint hidden>/
+    end
+
+    test "changing it redraws the toolbar, so a language switch reaches the field" do
+      english = editor(%{name: "a[b]", field_labels: %{"link_label" => "Link address"}})
+      french = editor(%{name: "a[b]", field_labels: %{"link_label" => "Adresse du lien"}})
+
+      assert toolbar_version(english) != toolbar_version(french)
+      # And not the schema's, which would rebuild the editor and cost the
+      # writer their undo history over a word.
+      assert version(english) == version(french)
     end
   end
 

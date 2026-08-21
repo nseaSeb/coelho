@@ -83,6 +83,7 @@
 .coelho-link {
   display: inline-flex;
   flex: 1 1 12rem;
+  flex-wrap: wrap;
 }
 
 .coelho-link[hidden] {
@@ -101,6 +102,19 @@
 
 .coelho-link-input:invalid {
   border-color: var(--coelho-danger);
+}
+
+/* Written by the hook while the field is open, and only when the application
+ * gave it something to say. */
+.coelho-link-hint {
+  color: var(--coelho-muted);
+  font-size: 0.8125em;
+  flex-basis: 100%;
+  padding-block-start: 2px;
+}
+
+.coelho-link-hint[hidden] {
+  display: none;
 }
 
 /* -- Counter ------------------------------------------------------------- */

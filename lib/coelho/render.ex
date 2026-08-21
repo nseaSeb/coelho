@@ -94,6 +94,166 @@ defmodule Coelho.Render do
   end
 
   @doc """
+  Renders a document where only inline elements are legal.
+
+  ## Why this exists
+
+  A `<p>` inside a `<p>` is not nested by the browser, it is **closed** by
+  it. Put `to_html/3` inside a paragraph or a span — a news banner, the
+  detail panel of a map marker, a truncated card excerpt — and four things
+  happen, none of them reported:
+
+    * the enclosing paragraph ends where the document's first one begins, so
+      every class on it stops applying from there
+    * an empty paragraph appears where the enclosing one was reopened
+    * a block element inside a `<span>` breaks the line, whatever the span's
+      layout was for
+    * and the words of two paragraphs run together, because the tags that
+      separated them are gone
+
+  The last is the one nobody sees, because it looks like text.
+
+  ## What it guarantees
+
+  **The output holds nothing that is illegal in an inline context.** That is
+  the whole contract, and everything else follows from it without a judgement
+  call:
+
+    * marks stay — `<strong>`, `<em>`, `<code>`, `<a>` are inline
+    * `<img>` and `<br>` stay
+    * every block is unwrapped to its children: a heading contributes its
+      words, a list its items, a code block its text. A block that had a tag
+      loses the tag, which is what "inline" means
+    * a node whose inline form is not simply its children says so, with
+      `:render_inline` in its spec — an attachment renders its image and its
+      caption's text rather than the `<figure>` it is on a page of its own
+    * a node with no inline equivalent at all contributes nothing. A
+      horizontal rule is the example, and it is mechanical rather than a
+      policy
+
+  Empty contributions are dropped rather than separated, which is not a mode:
+  it is what joining correctly means.
+
+  ## The separator is yours
+
+  Only the caller knows whether its container can take a line break. A map
+  bubble wants `:br`; a fixed-height banner wants `:space`, and so does a
+  truncated excerpt.
+
+      Coelho.Render.to_inline_html(document, schema, separator: :br)
+
+  `:space` is the default because the two mistakes do not cost the same. A
+  space where a break was wanted puts two sentences on one line, which reads.
+  A break where a space was wanted grows the caller's box and breaks their
+  layout.
+
+  A separator of your own is escaped, because a value that reached this from
+  data would otherwise be markup. Pass `{:safe, iodata}` to say it is not.
+
+  It governs the boundaries between blocks and nothing else. A hard break the
+  writer typed is content, and still renders as `<br>` under `:space` — it is
+  not a seam this put there, and dropping it would be dropping something
+  someone wrote.
+  """
+  @spec to_inline_html(map(), Schema.t(), opts()) :: String.t()
+  def to_inline_html(document, %Schema{} = schema, opts \\ []),
+    do: document |> to_inline_iodata(schema, opts) |> IO.iodata_to_binary()
+
+  @doc """
+  `to_inline_html/3` in the shape a template will not escape again.
+
+  The same reasoning as `to_safe_html/3`: having removed the need to remember
+  `raw/1` in one place, this does not reintroduce it in the other.
+  """
+  @spec to_safe_inline_html(map(), Schema.t(), opts()) :: {:safe, iodata()}
+  def to_safe_inline_html(document, %Schema{} = schema, opts \\ []),
+    do: {:safe, to_inline_iodata(document, schema, opts)}
+
+  @doc """
+  `to_inline_html/3` as iodata.
+  """
+  @spec to_inline_iodata(map(), Schema.t(), opts()) :: iodata()
+  def to_inline_iodata(document, %Schema{} = schema, opts \\ []) do
+    state = %{
+      nodes: Keyword.get(opts, :nodes, %{}),
+      marks: Keyword.get(opts, :marks, %{}),
+      context: Keyword.get(opts, :context, %{}),
+      separator: separator(Keyword.get(opts, :separator, :space))
+    }
+
+    document |> inline_node(schema, state) |> elem(1)
+  end
+
+  defp separator(:space), do: " "
+  defp separator(:br), do: "<br>"
+  defp separator({:safe, iodata}), do: iodata
+  defp separator(other) when is_binary(other), do: escape(other)
+
+  defp separator(other) do
+    raise ArgumentError,
+          "separator must be :space, :br, a string, or {:safe, iodata}, got #{inspect(other)}"
+  end
+
+  # Answers `{block?, iodata}`: whether this node was a block, which is what
+  # decides where a separator goes, and what it contributed.
+  defp inline_node(nil, _schema, _state), do: {false, []}
+
+  defp inline_node(%{"type" => type} = node, schema, state) when is_binary(type) do
+    spec = fetch_node_spec!(schema, type)
+
+    cond do
+      # Text has no inline form of its own, and going through `render_node/3`
+      # is what honours a caller's override of it — which the block renderer
+      # goes out of its way not to short circuit for exactly this reason.
+      spec.text ->
+        {false, render_node(node, schema, state)}
+
+      # The caller's override, then `:render_inline`, then unwrapping: the
+      # same order of who decides as the block renderer. It applies to an
+      # inline node too, which is where `:render_inline` would otherwise be
+      # unreachable — an inline-grouped node whose ordinary render is a
+      # block-ish wrapper has nowhere else to say what it is inline.
+      render = Map.get(state.nodes, spec.name) || spec.render_inline ->
+        body =
+          render_with(node, spec, render, inline_children(node, schema, state), state.context)
+
+        {not spec.inline, if(spec.inline, do: apply_marks(body, node, schema, state), else: body)}
+
+      spec.inline ->
+        {false, render_node(node, schema, state)}
+
+      true ->
+        {true, inline_children(node, schema, state)}
+    end
+  end
+
+  defp inline_node(node, _schema, _state) do
+    raise ArgumentError, "cannot render #{inspect(node)}: expected a node with a string type"
+  end
+
+  # A separator sits between two contributions when either side came from a
+  # block, and nowhere else: `<p>a</p><p>b</p>` needs one, `a<img>b` does not.
+  # Empty contributions are dropped first, so a node that renders to nothing —
+  # a horizontal rule — leaves no separator behind it.
+  defp inline_children(node, schema, state) do
+    node
+    |> Map.get("content", [])
+    |> Enum.map(&inline_node(&1, schema, state))
+    |> Enum.reject(fn {_block?, iodata} -> IO.iodata_length(iodata) == 0 end)
+    |> join(state.separator)
+  end
+
+  defp join([], _separator), do: []
+  defp join([{_block?, iodata}], _separator), do: iodata
+
+  defp join([{block?, iodata} | rest], separator) do
+    [{next_block?, _} | _] = rest
+    tail = join(rest, separator)
+
+    if block? or next_block?, do: [iodata, separator, tail], else: [iodata, tail]
+  end
+
+  @doc """
   Renders a validated document as `{:safe, iodata}`.
 
   What `to_html/3` renders, in the shape a template will not escape again.
