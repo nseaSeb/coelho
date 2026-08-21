@@ -33,7 +33,7 @@ defmodule DemoWeb.EditorLiveTest do
 
     html =
       view
-      |> element("form")
+      |> element("#post-form")
       |> render_change(%{"post" => %{"title" => "t", "body" => JSON.encode!(document)}})
 
     assert html =~ "typed by hand"
@@ -47,7 +47,7 @@ defmodule DemoWeb.EditorLiveTest do
 
     html =
       view
-      |> element("form")
+      |> element("#post-form")
       |> render_change(%{"post" => %{"title" => "t", "body" => hostile}})
 
     assert html =~ "unknown node type"
@@ -56,7 +56,7 @@ defmodule DemoWeb.EditorLiveTest do
   test "a missing title is reported too", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/")
 
-    html = view |> element("form") |> render_change(%{"post" => %{"title" => ""}})
+    html = view |> element("#post-form") |> render_change(%{"post" => %{"title" => ""}})
 
     assert html =~ "can&#39;t be blank"
   end
@@ -67,7 +67,9 @@ defmodule DemoWeb.EditorLiveTest do
     document = JSON.encode!(Coelho.empty())
 
     html =
-      view |> element("form") |> render_submit(%{"post" => %{"title" => "t", "body" => document}})
+      view
+      |> element("#post-form")
+      |> render_submit(%{"post" => %{"title" => "t", "body" => document}})
 
     assert html =~ "exactly what would be written"
   end
@@ -79,7 +81,7 @@ defmodule DemoWeb.EditorLiveTest do
       {:ok, view, _html} = live(conn, "/")
 
       view
-      |> file_input("form", :attachment, [
+      |> file_input("#post-form", :attachment, [
         %{name: "photo.png", content: @png, type: "image/png"}
       ])
       |> render_upload("photo.png")
@@ -104,7 +106,9 @@ defmodule DemoWeb.EditorLiveTest do
       {:ok, view, _html} = live(conn, "/")
 
       view
-      |> file_input("form", :attachment, [%{name: "p.png", content: @png, type: "image/png"}])
+      |> file_input("#post-form", :attachment, [
+        %{name: "p.png", content: @png, type: "image/png"}
+      ])
       |> render_upload("p.png")
 
       assert_push_event(view, "coelho:insert", %{preview: url})

@@ -48,6 +48,9 @@ defmodule DemoWeb.EditorLive do
      )
      |> assign_document(post.body)
      |> assign(:errors, [])
+     |> assign(:note, note_document("note"))
+     |> assign(:note_open, true)
+     |> assign(:note_generation, 1)
      |> assign_form(Post.changeset(post, %{}))}
   end
 
@@ -60,6 +63,38 @@ defmodule DemoWeb.EditorLive do
      |> assign_document(Ecto.Changeset.get_field(changeset, :body))
      |> assign(:errors, document_errors(changeset))
      |> assign_form(changeset)}
+  end
+
+  # The second editor, which has no changeset behind it: a name, a value, a
+  # counter, and a flush on the way out. It is here because the last of those
+  # cannot be tested anywhere but in a browser, and because nothing else on
+  # this page sends its content — what reaches the server is what the flush
+  # carried, which is the only way to prove the flush carried it.
+  def handle_event("note_toggle", _params, socket) do
+    # Closing is not discarding: the generation stays where it is, so the
+    # flush the editor pushes on its way out is accepted.
+    {:noreply, update(socket, :note_open, &(not &1))}
+  end
+
+  def handle_event("note_discard", _params, socket) do
+    # This is what the token is for. Discarding closes the editor, so the
+    # editor being torn down pushes what was in it — the very content that
+    # was just thrown away. Moving the generation is how this refuses it.
+    {:noreply,
+     socket
+     |> assign(:note, Coelho.empty(Demo.RichText.schema()))
+     |> assign(:note_open, false)
+     |> update(:note_generation, &(&1 + 1))}
+  end
+
+  def handle_event("note_flush", %{"token" => token, "document" => document}, socket) do
+    # The token an editor carries out is the one it mounted with, and it comes
+    # back as a string because it travelled as a DOM attribute.
+    if token == to_string(socket.assigns.note_generation) do
+      {:noreply, assign(socket, :note, Coelho.sanitize(document, Demo.RichText.schema()))}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("mention", _params, socket) do
@@ -120,6 +155,15 @@ defmodule DemoWeb.EditorLive do
   end
 
   defp assign_form(socket, changeset), do: assign(socket, :form, to_form(changeset, as: :post))
+
+  defp note_document(text) do
+    %{
+      "type" => "doc",
+      "content" => [
+        %{"type" => "paragraph", "content" => [%{"type" => "text", "text" => text}]}
+      ]
+    }
+  end
 
   # Rendering runs on every keystroke, so it runs once per change rather than
   # once per place the template shows it.
@@ -204,7 +248,7 @@ defmodule DemoWeb.EditorLive do
       </header>
 
       <div class="panes">
-        <.form for={@form} phx-change="validate" phx-submit="save" class="pane">
+        <.form for={@form} id="post-form" phx-change="validate" phx-submit="save" class="pane">
           <label>
             Title <input type="text" name={@form[:title].name} value={@form[:title].value} />
           </label>
@@ -225,6 +269,43 @@ defmodule DemoWeb.EditorLive do
 
           <button type="submit">Save</button>
         </.form>
+
+        <section class="pane" id="note">
+          <h2>Draft note</h2>
+          <p class="hint">
+            A second editor with no changeset behind it: a name and a value, a
+            counter, and a flush that carries the document when the editor
+            leaves the page. Type, then hide it — the text arrives. Type, then
+            discard it, and the flush from the editor being torn down is
+            refused, because it carries a generation this page has moved past.
+          </p>
+
+          <button type="button" id="note-toggle" phx-click="note_toggle">
+            {if @note_open, do: "Hide", else: "Show"}
+          </button>
+          <button type="button" id="note-discard" phx-click="note_discard">Discard</button>
+
+          <%!-- No phx-change at all: this editor reports on the way out and
+                at no other time, which is the shape a debounced form takes
+                at the moment the element is removed — the timer goes with
+                it and nothing is ever sent. Here it is the only path, so
+                what arrives is what the flush carried. --%>
+          <div :if={@note_open} id="note-form">
+            <.coelho_editor
+              name="note[body]"
+              value={@note}
+              document_schema={Demo.RichText.schema()}
+              toolbar={~w(bold italic link)}
+              labels={%{"bold" => "Gras", "italic" => "Italique"}}
+              maxlength={200}
+              flush_event="note_flush"
+              flush_token={@note_generation}
+              placeholder="Reported when this closes…"
+            />
+          </div>
+
+          <p id="note-text" class="hint">{Coelho.to_text(@note, Demo.RichText.schema())}</p>
+        </section>
 
         <div class="pane">
           <section :if={@errors != []} class="errors">

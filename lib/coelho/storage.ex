@@ -14,10 +14,110 @@ defmodule Coelho.Storage do
       :ok = Coelho.Storage.put(storage, key, {:file, upload_path})
       {:ok, path} = Coelho.Storage.path(storage, key)
 
-  Keys come from `Coelho.Attachment.generate_key/0`. They are opaque and URL
+  Keys come from `Coelho.Attachment.generate_key/1`. They are opaque and URL
   safe, and a storage must treat them as untrusted: `Coelho.Storage.Disk`
   refuses a key that is not what it hands out, so a key cannot walk out of
   the directory it belongs to.
+
+  ## Writing one for object storage
+
+  Coelho ships `Coelho.Storage.Disk` and nothing else, deliberately: an S3
+  adapter means an HTTP client and a signing library, and a package whose
+  document core has no dependencies at all should not acquire two so that
+  applications not using object storage can carry them. Here is the whole
+  thing, against [ExAws](https://hex.pm/packages/ex_aws_s3), to copy into an
+  application and adjust:
+
+      defmodule MyApp.Uploads.S3 do
+        @behaviour Coelho.Storage
+
+        defstruct [:bucket]
+
+        def new(bucket), do: %__MODULE__{bucket: bucket}
+
+        @impl true
+        def put(%{bucket: bucket}, key, {:binary, binary}) do
+          bucket |> ExAws.S3.put_object(key, binary) |> request()
+        end
+
+        def put(%{bucket: bucket}, key, {:file, path}) do
+          path
+          |> ExAws.S3.Upload.stream_file()
+          |> ExAws.S3.upload(bucket, key)
+          |> request()
+        end
+
+        @impl true
+        def read(%{bucket: bucket}, key) do
+          case bucket |> ExAws.S3.get_object(key) |> ExAws.request() do
+            {:ok, %{body: body}} -> {:ok, body}
+            {:error, {:http_error, 404, _response}} -> {:error, :enoent}
+            {:error, reason} -> {:error, reason}
+          end
+        end
+
+        # No local path: the plug falls back to read/2, or to the redirect
+        # below, which is the one worth having.
+        @impl true
+        def path(_storage, _key), do: :error
+
+        @impl true
+        def delete(%{bucket: bucket}, key) do
+          bucket |> ExAws.S3.delete_object(key) |> request()
+        end
+
+        @impl true
+        def exists?(%{bucket: bucket}, key) do
+          match?({:ok, _response}, bucket |> ExAws.S3.head_object(key) |> ExAws.request())
+        end
+
+        @impl true
+        def redirect_url(%{bucket: bucket}, key, opts) do
+          filename = Keyword.get(opts, :filename)
+
+          ExAws.Config.new(:s3)
+          |> ExAws.S3.presigned_url(:get, bucket, key,
+            expires_in: Keyword.fetch!(opts, :expires_in),
+            query_params:
+              [{"response-content-type", Keyword.fetch!(opts, :content_type)}] ++
+                if(filename,
+                  do: [{"response-content-disposition", ~s(inline; filename="\#{filename}")}],
+                  else: []
+                )
+          )
+        end
+
+        defp request(operation) do
+          case ExAws.request(operation) do
+            {:ok, _response} -> :ok
+            {:error, reason} -> {:error, reason}
+          end
+        end
+      end
+
+  Two things to know before it goes to production.
+
+  **`put/3` must stream a file, not read it.** The `{:file, path}` clause
+  above uses `ExAws.S3.Upload`, which does a multipart upload; the obvious
+  shortcut, `File.read!(path)` into `put_object`, holds the whole upload in
+  memory per request.
+
+  **ExAws over HTTP/2 fails above about a megabyte**, with
+  `{:error, :send_buffer_full}` — the request outgrows the connection's send
+  buffer and nothing retries it. A naive adapter meets it the first time
+  someone attaches a real PDF, and it looks like a Coelho problem rather than
+  a transport one. Pin the client to HTTP/1.1, or raise the buffer:
+
+      config :ex_aws, :hackney_opts, protocols: [:http1]
+
+  **`redirect_url/3` is the difference between a proxy and a redirect.**
+  Without it, `Coelho.Plug.Attachments` falls back to `read/2` and every byte
+  of every attachment travels through the application. With it, the plug
+  checks its signature and then gets out of the way — and the presigned URL
+  has to pin the `:content_type` it is given, because the headers the plug
+  would have set do not survive a redirect. That is not decoration: it is
+  what stops a file that lies about what it is from being rendered as
+  whatever the bucket decides.
   """
 
   @type t :: struct()

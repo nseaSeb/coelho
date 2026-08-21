@@ -24,6 +24,51 @@ if Code.ensure_loaded?(Plug) do
       * `:metadata` — an `{m, f, a}` called with the key, returning
         `%{content_type: …, filename: …}` or `nil`. Coelho does not hold a
         repo, so this is how the row reaches the response
+      * `:authorize` — an `{m, f, a}` or a `fun/2`, called with the
+        connection and the key once the signature has checked out. Return
+        `:ok` or `true` to serve, anything else to refuse. See below
+
+    ## A signature says the URL is genuine, not that it is yours
+
+    A signed URL is a bearer token: whoever holds it, holds the file. That is
+    the right answer for a single-tenant application and the wrong one the
+    moment there is more than one tenant, because the signature is checked
+    against the secret and the secret is the *application's*. A URL minted
+    for one organisation, forwarded or logged or pasted, is served to anyone
+    who replays it.
+
+    Mounting this behind the application's authentication pipeline does not
+    close it. That answers "may this person use the application", never "is
+    this file theirs": a signed URL belonging to organisation A, replayed by
+    a signed-in member of organisation B, passes the pipeline *and* the
+    signature. Do mount it behind authentication — this needs a connection
+    that already knows who is asking — but do not mistake it for the check.
+
+    `:authorize` is the check:
+
+        plug Coelho.Plug.Attachments,
+          at: "/attachments",
+          storage: {MyApp.Uploads, :storage, []},
+          secret: {MyApp.Uploads, :secret, []},
+          authorize: {MyApp.Uploads, :authorize, []}
+
+        def authorize(conn, key) do
+          case conn.assigns[:current_organisation] do
+            nil -> :error
+            organisation -> MyApp.Uploads.owned_by?(key, organisation)
+          end
+        end
+
+    The organisation comes from the connection, and never from the key. The
+    key arrives in the URL, which is to say from whoever sent the request, so
+    deriving the tenant from it is asking the attacker which tenant they are
+    in — see `Coelho.Attachment.generate_key/1` on why a key prefix is an
+    inventory aid and not this.
+
+    Without `:authorize`, the signature is the only thing between a request
+    and the bytes. That is deliberate, and it is documented rather than
+    defaulted, because a default here would either break every single-tenant
+    application or quietly do nothing.
 
     ## Serving other people's files
 
@@ -63,6 +108,7 @@ if Code.ensure_loaded?(Plug) do
         storage: Keyword.fetch!(opts, :storage),
         secret: Keyword.fetch!(opts, :secret),
         metadata: Keyword.get(opts, :metadata),
+        authorize: Keyword.get(opts, :authorize),
         cache_control: Keyword.get(opts, :cache_control, "private, no-store")
       }
     end
@@ -84,12 +130,38 @@ if Code.ensure_loaded?(Plug) do
     defp serve(conn, key, options) do
       conn = fetch_query_params(conn)
 
+      # The signature is checked first because it is cheap and refuses the
+      # bulk of what a scanner sends, and because `:authorize` is free to
+      # reach for a database that a request with a forged signature has no
+      # business touching.
       case Attachments.verify(key, conn.query_params, resolve(options.secret)) do
-        :ok -> serve_bytes(conn, key, options)
+        :ok -> authorize(conn, key, options)
         {:error, :expired} -> halt_with(conn, 410, "expired")
         {:error, :invalid} -> halt_with(conn, 403, "forbidden")
       end
     end
+
+    defp authorize(conn, key, %{authorize: nil} = options), do: serve_bytes(conn, key, options)
+
+    defp authorize(conn, key, options) do
+      # The same answer as a bad signature, deliberately: telling a caller
+      # apart "this file does not exist" from "this file is not yours" is
+      # telling them the file exists.
+      if allowed?(options.authorize, conn, key) do
+        serve_bytes(conn, key, options)
+      else
+        halt_with(conn, 403, "forbidden")
+      end
+    end
+
+    defp allowed?({module, function, args}, conn, key),
+      do: allowed?(apply(module, function, [conn, key | args]))
+
+    defp allowed?(fun, conn, key) when is_function(fun, 2), do: allowed?(fun.(conn, key))
+
+    defp allowed?(:ok), do: true
+    defp allowed?(true), do: true
+    defp allowed?(_other), do: false
 
     defp serve_bytes(conn, key, options) do
       storage = resolve(options.storage)

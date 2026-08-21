@@ -30,7 +30,10 @@ if Code.ensure_loaded?(Ecto.ParameterizedType) do
 
         {:error, changeset} = MyApp.Posts.create(%{body: hostile})
         changeset.errors
-        #=> [body: {"is invalid rich text", [validation: :coelho, errors: ["content[0]: unknown node type \\"script\\""]]}]
+        #=> [body: {"is invalid rich text",
+        #=>   [validation: :coelho,
+        #=>    human: "block 1: unknown node type \\"script\\"",
+        #=>    errors: ["content[0]: unknown node type \\"script\\""]]}]
 
     ## Loading
 
@@ -97,10 +100,15 @@ if Code.ensure_loaded?(Ecto.ParameterizedType) do
         {:ok, document} ->
           {:ok, document}
 
-        {:error, errors} ->
+        {:error, [first | _rest] = errors} ->
+          # Both spellings, because they answer different questions: `:errors`
+          # is what a developer reads in a log, `:human` is the one a form can
+          # put in front of the person who typed it. Neither is a translation
+          # — see `Coelho.Document.Error.describe/1` for that.
           {:error,
            message: "is invalid rich text",
            validation: :coelho,
+           human: Error.humanize(first),
            errors: Enum.map(errors, &Error.format/1)}
       end
     end

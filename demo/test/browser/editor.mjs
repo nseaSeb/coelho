@@ -11,7 +11,12 @@ const BASE = process.env.BASE_URL ?? "http://localhost:4321";
 // contenteditable and selection are where browsers disagree, which is
 // exactly where every bug this file has found so far was hiding.
 const BROWSER = process.env.BROWSER ?? "chromium";
-const EDITOR = ".coelho-content .ProseMirror";
+// Scoped to the post editor: the page carries a second one, the draft note,
+// and an unscoped selector would have every gesture land on whichever came
+// first in the document.
+const EDITOR = "#post_body-editor .coelho-content .ProseMirror";
+const NOTE = "#note_body-editor .coelho-content .ProseMirror";
+const NOTE_COUNT = "#note_body-editor [data-coelho-count]";
 
 let passed = 0;
 let watched = [];
@@ -741,6 +746,97 @@ const run = async () => {
       } finally {
         await mobile.close();
       }
+    });
+
+    await test("the toolbar speaks the language it was given", async () => {
+      // The commands are not words. An application with readers who do not
+      // speak English has to be able to say so, without rebuilding the
+      // toolbar itself.
+      const label = await page.textContent('#note_body-editor [data-coelho-command="bold"]');
+
+      assert.equal(label.trim(), "Gras");
+      assert.equal(
+        await page.getAttribute('#note_body-editor [data-coelho-command="bold"]', "aria-label"),
+        "Gras"
+      );
+    });
+
+    await test("the counter is right before the hook has started, and after", async () => {
+      // The server rendered the first number. Read it before touching
+      // anything: a counter that starts at zero on an existing document is
+      // read and believed long before the JavaScript has caught up.
+      assert.equal((await page.textContent(NOTE_COUNT)).trim(), "4");
+
+      await page.click(NOTE);
+      await page.keyboard.press("End");
+      await page.keyboard.type("!!");
+
+      await page.waitForFunction(
+        (selector) => document.querySelector(selector)?.textContent.trim() === "6",
+        NOTE_COUNT,
+        { timeout: 5000 }
+      );
+    });
+
+    await test("the last keystrokes survive the editor leaving the page", async () => {
+      // The one defect that cannot be found anywhere but here. A debounce
+      // still holding the last edit when the element is removed loses it:
+      // LiveView cancels the timer along with the element and nothing is
+      // ever sent. The note editor has no phx-change at all, so the flush is
+      // the only path its content can take — racing a real debounce would
+      // make this pass or fail on how fast the engine types.
+      await page.click(NOTE);
+      await selectAll(page);
+      await page.keyboard.press("Backspace");
+      await page.keyboard.type("flux");
+
+      const before = await page.textContent("#note-text");
+      assert.ok(
+        !before.includes("flux"),
+        `something other than the flush sent it; #note-text held ${JSON.stringify(before)}`
+      );
+
+      await page.click("#note-toggle");
+
+      await page.waitForFunction(
+        () => document.querySelector("#note-text")?.textContent?.includes("flux"),
+        null,
+        { timeout: 5000 }
+      );
+
+      // Put the page back the way it was found.
+      await page.click("#note-toggle");
+      await page.waitForSelector(NOTE, { timeout: 5000 });
+    });
+
+    await test("and a flush from before a discard is refused", async () => {
+      // The other half of the same mechanism. Discarding closes the editor,
+      // so the editor being torn down pushes what was just thrown away; the
+      // generation moved, so the token no longer matches and the push is
+      // ignored. Without that, discarding puts the text straight back.
+      await page.click(NOTE);
+      await selectAll(page);
+      await page.keyboard.press("Backspace");
+      await page.keyboard.type("perdu");
+
+      await page.click("#note-discard");
+      await page.waitForFunction(
+        () => !document.querySelector("#note-form"),
+        null,
+        { timeout: 5000 }
+      );
+
+      // Give a flush that was going to be accepted every chance to arrive.
+      await page.waitForTimeout(500);
+
+      const text = await page.textContent("#note-text");
+      assert.ok(
+        !text.includes("perdu"),
+        `the discarded text came back; #note-text held ${JSON.stringify(text)}`
+      );
+
+      await page.click("#note-toggle");
+      await page.waitForSelector(NOTE, { timeout: 5000 });
     });
 
     await test("nothing threw along the way", () => {
