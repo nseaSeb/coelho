@@ -10,6 +10,14 @@ same schema to both sides.
 
 It does not store HTML.
 
+![The demo: an editor, and under it the HTML it renders to, that HTML as source, the JSON actually stored, and the plain text a search index would hold.](https://raw.githubusercontent.com/nseaSeb/coelho/master/demo/demo.png)
+
+Everything under the editor is recomputed from the stored tree on every
+render: the HTML, its source, and the plain text a search index would hold.
+What the column actually holds is the JSON — and the attachment's URL, with
+its expiry and its signature, exists only in the rendered output. It is never
+in the document.
+
 ## Why not HTML
 
 The usual arrangement stores the editor's HTML output and filters it with a
