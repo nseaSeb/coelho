@@ -167,18 +167,22 @@ defmodule Coelho.InstallTest do
   end
 
   describe "the stylesheet" do
-    test "is imported after the last at-rule, because CSS refuses a late @import", %{
+    test "is imported right after the last @import, because CSS refuses a late one", %{
       tmp_dir: tmp_dir
     } do
+      # After the imports and nothing else: CSS allows an `@import` only
+      # after `@charset`, `@layer` statements and other imports. Tailwind's
+      # at-rules are not part of that preamble, so anchoring on them wrote
+      # the import after a `@custom-variant` two hundred lines into a real
+      # Phoenix 1.8 stylesheet — past rules, where CSS drops it.
       app(tmp_dir)
       install(tmp_dir)
 
       lines = tmp_dir |> read("assets/css/app.css") |> String.split("\n")
       coelho = Enum.find_index(lines, &(&1 =~ "coelho.css"))
-      rule = Enum.find_index(lines, &(&1 =~ ".my-app"))
 
-      assert coelho < rule
-      assert Enum.at(lines, coelho - 1) =~ "@custom-variant"
+      assert Enum.at(lines, coelho - 1) =~ ~s(@import "tailwindcss")
+      assert Enum.at(lines, coelho + 1) =~ "@source"
     end
 
     test "is left alone on a second run", %{tmp_dir: tmp_dir} do
@@ -190,10 +194,10 @@ defmodule Coelho.InstallTest do
       assert read(tmp_dir, "assets/css/app.css") == once
     end
 
-    test "goes after an at-rule's block, not inside it", %{tmp_dir: tmp_dir} do
-      # `@plugin "…" { … }` spans lines, and a Phoenix stylesheet is full of
-      # them. The last line *matching* an at-rule is the block's opening one,
-      # and an @import written there is invalid CSS and a failed build.
+    test "stays out of a `@plugin` block and before it", %{tmp_dir: tmp_dir} do
+      # `@plugin "…" { … }` spans lines. An @import written into the block
+      # is invalid CSS; one written after it is dropped just the same,
+      # because the block ends the import-allowing preamble.
       app(tmp_dir)
 
       File.write!(Path.join(tmp_dir, "assets/css/app.css"), """
@@ -207,9 +211,11 @@ defmodule Coelho.InstallTest do
       install(tmp_dir)
       lines = tmp_dir |> read("assets/css/app.css") |> String.split("\n")
       coelho = Enum.find_index(lines, &(&1 =~ "coelho.css"))
+      plugin = Enum.find_index(lines, &(&1 =~ "@plugin"))
 
-      assert Enum.at(lines, coelho - 1) == "}"
       assert Enum.at(lines, coelho) == @style_import
+      assert Enum.at(lines, coelho - 1) =~ ~s(@import "tailwindcss")
+      assert coelho < plugin
     end
 
     test "goes to the top of a stylesheet with no at-rules at all", %{tmp_dir: tmp_dir} do
@@ -219,6 +225,120 @@ defmodule Coelho.InstallTest do
       install(tmp_dir)
 
       assert tmp_dir |> read("assets/css/app.css") |> String.starts_with?("@import")
+    end
+  end
+
+  describe "esbuild" do
+    # esbuild resolves coelho.js's bare imports from deps/coelho/, which
+    # never reaches assets/node_modules on its own. The task diagnoses the
+    # config rather than editing it — the profile name is the application's
+    # own — and says nothing when there is nothing to say.
+    setup do
+      on_exit(fn ->
+        for {key, _} <- Application.get_all_env(:esbuild),
+            do: Application.delete_env(:esbuild, key)
+      end)
+    end
+
+    test "says nothing when the application does not use esbuild", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+
+      refute install(tmp_dir) =~ "config/config.exs"
+    end
+
+    test "keeps a profile whose NODE_PATH list covers assets/node_modules", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :version, "0.25.4")
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        cd: Path.join(tmp_dir, "assets"),
+        env: %{
+          "NODE_PATH" => [Path.join(tmp_dir, "assets/node_modules"), Path.join(tmp_dir, "deps")]
+        }
+      )
+
+      assert install(tmp_dir) =~ "esbuild can find the browser packages"
+    end
+
+    test "accepts the string form too, joined with the OS separator", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        env: %{
+          "NODE_PATH" =>
+            Path.join(tmp_dir, "deps") <> ":" <> Path.join(tmp_dir, "assets/node_modules")
+        }
+      )
+
+      assert install(tmp_dir) =~ "esbuild can find the browser packages"
+    end
+
+    test "says what to add when no profile reaches the packages", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        env: %{"NODE_PATH" => [Path.join(tmp_dir, "deps")]}
+      )
+
+      out = install(tmp_dir)
+
+      assert out =~ "config/config.exs"
+      assert out =~ ~s[Path.expand("../assets/node_modules", __DIR__)]
+      assert out =~ ":my_app"
+    end
+
+    test "names every profile that is short, rather than clearing the lot", %{tmp_dir: tmp_dir} do
+      # Which profile bundles app.js is not something to guess at, and
+      # "some other profile covers it" is the all-clear that hides the very
+      # failure this step exists to diagnose.
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        env: %{"NODE_PATH" => [Path.join(tmp_dir, "deps")]}
+      )
+
+      Application.put_env(:esbuild, :ssr,
+        args: ~w(js/ssr.js --bundle),
+        env: %{"NODE_PATH" => [Path.join(tmp_dir, "assets/node_modules")]}
+      )
+
+      out = install(tmp_dir)
+
+      assert out =~ ":my_app"
+      refute out =~ "esbuild can find the browser packages"
+    end
+
+    test "reads an `env` given as a keyword list, which esbuild accepts too", %{tmp_dir: tmp_dir} do
+      # The esbuild package runs `Map.new/1` over `env`, so a keyword list
+      # is valid config; reading only the map form printed the consigne at
+      # an application whose config was already right, on every run.
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        env: [{"NODE_PATH", Path.join(tmp_dir, "assets/node_modules")}]
+      )
+
+      assert install(tmp_dir) =~ "esbuild can find the browser packages"
+    end
+
+    test "resolves a relative NODE_PATH from the profile's cd, as esbuild does", %{
+      tmp_dir: tmp_dir
+    } do
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        cd: Path.join(tmp_dir, "assets"),
+        env: %{"NODE_PATH" => "node_modules"}
+      )
+
+      assert install(tmp_dir) =~ "esbuild can find the browser packages"
     end
   end
 

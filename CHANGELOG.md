@@ -1,5 +1,86 @@
 # Changelog
 
+## Unreleased
+
+The third layer. A formatting exists end to end when the schema can carry
+it, the renderer can show it, and a toolbar button can set it — and the
+third was closed over a hard-coded list. Reported by an application whose
+own marks were stored, validated, rendered, and invisible.
+
+### Any mark of the schema is a button
+
+- The toolbar's mark list (`bold italic strike code link`) is gone from both
+  halves. A mark always toggles the same way, so a mark added with
+  `Schema.extend/2` — a highlight, an effect — gets its button without the
+  application writing a line of JavaScript. `link` keeps its own case, which
+  opens the field.
+- Node commands stay a closed list, deliberately: each kind of node takes
+  its own verb in the hook — toggle a block, wrap, list — and a node added
+  to a schema gets no verb with it. The server now filters against that
+  list, so a custom node's button is dropped rather than rendered inert.
+- A button the hook has no command for is greyed out. `Boolean(command) &&
+  !command(…)` read as "enabled" precisely when there was no command — the
+  one case the guard was for.
+- `aria-pressed` is *removed* when a command has no state to report, rather
+  than left as it was. A button that stays in the toolbar while its answer
+  turns to "no state" — an alignment button once the selection leaves every
+  alignable block — went on announcing pressed to a screen reader about a
+  block that was no longer there.
+
+### Alignment has commands
+
+- `align_left`, `align_center`, `align_right`, `align_justify`. The `align`
+  attribute was declared, rendered and read back since 0.2, but nothing
+  could set it: it existed only where an import had carried it in. Not in
+  the default toolbar — name them to show them.
+- The toggle is decided once for the whole selection, like a mark button:
+  everything already carries the value, the click removes it everywhere;
+  otherwise it applies it everywhere. Per-node would center some blocks and
+  uncenter others in the same click.
+- Only the outermost alignable block takes the attribute — a `list_item`
+  and its `paragraph` both declare it, and writing both would nest two
+  `text-align`s and put a redundant attribute into the canonical
+  serialization, so into `Coelho.hash/2`.
+- Aligning left clears the attribute rather than writing `"left"`. The two
+  look the same, and a hash used as proof of acceptance must not tell apart
+  documents that differ only in which buttons the writer happened to click.
+  An explicit `"left"`, which only import produces, is read as the same
+  alignment as none throughout: `align_left` on such a block reads pressed
+  *and* offers nothing to do, instead of a click that would change only the
+  hash. A command that finds nothing to change dispatches nothing at all —
+  an empty transaction still rewrites the hidden input with ProseMirror's
+  serialization, which is not the server's canonical form, and WebKit lost
+  the race with the server's echo where Chromium happened to win it.
+- The server keeps an `align_*` button by asking the attribute's own
+  validator, so a schema that narrows the alignments filters its buttons by
+  itself — for the four standard values only, which are the four the hook
+  has a command for. Matching the prefix alone took names from the marks:
+  `align_terms` would have been dropped though the hook would toggle it,
+  and a node declaring `align` with no validator (`Attr.validate(nil, _)`
+  is `:ok`) would have rendered `align_middle` as a button with no command.
+
+### The installer, twice
+
+- The stylesheet's `@import` goes right after the last `@import`, as the
+  doc always said — not after the last at-rule of a preamble that counted
+  Tailwind's. In a Phoenix 1.8 `app.css` the last `@custom-variant` sits two
+  hundred lines in, past `@plugin` blocks and rules, where CSS drops a late
+  `@import` silently.
+- `mix coelho.install` now diagnoses the esbuild config: bare
+  `prosemirror-*` imports resolve from `deps/coelho/`, which never reaches
+  `assets/node_modules` on its own, and the first build failed with
+  `Could not resolve "prosemirror-keymap"` and no pointer to the cause. The
+  task never edits `config/config.exs` — the profile is the application's
+  own — it says which path to add to `NODE_PATH`, as a list entry, keeping
+  `Mix.Project.build_path()` and the rest of what is there.
+  It names every profile that is short rather than clearing the lot on the
+  first one that is covered — which profile bundles `app.js` is not
+  something to guess at, and "another profile has it" is the all-clear that
+  hides the failure the step exists for. It reads `env` as a map or as a
+  keyword list, both of which esbuild accepts, and resolves a relative
+  `NODE_PATH` entry from the profile's `cd:`, as esbuild does.
+
+
 ## 0.5.0 — 2026-08-21
 
 The three things left after 0.4.0, all of them.

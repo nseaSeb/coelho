@@ -43,6 +43,27 @@ defmodule Coelho.SchemaDriftTest do
     assert Enum.sort(keys_of("defaultMarkDOM")) == declared
   end
 
+  test "the node commands the server keeps are the ones the hook has a verb for" do
+    # Each kind of node takes its own verb — toggle a block, wrap, list —
+    # so `commandFor` names them one by one and `Coelho.LiveView` mirrors
+    # that list to filter the toolbar. Two hand-kept lists in two
+    # languages: a verb added to the hook and forgotten here would have its
+    # button silently dropped by the server, with nothing to point at.
+    source = File.read!(@source)
+
+    [_, body] =
+      Regex.run(~r/const commandFor = .*?\n  switch \(name\) \{(.*?)\n  \}/s, source) ||
+        flunk("commandFor not found in #{@source}")
+
+    labels = ~r/^    case "([a-z_]+)":/m |> Regex.scan(body) |> Enum.map(fn [_, n] -> n end)
+    nodes = Schema.default().node_order |> Enum.map(&Atom.to_string/1)
+
+    # `link` is a mark with a case of its own, `caption` an attribute, and
+    # `undo`/`redo` belong to no vocabulary at all.
+    assert Enum.sort(Enum.filter(labels, &(&1 in nodes))) ==
+             Enum.sort(Coelho.LiveView.node_commands())
+  end
+
   test "the hook builds its schema from the exported ordering, not from an object" do
     source = File.read!(@source)
 

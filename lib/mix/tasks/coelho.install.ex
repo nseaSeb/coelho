@@ -26,6 +26,10 @@ defmodule Mix.Tasks.Coelho.Install do
       lines are printed for you to place
     * `assets/css/app.css` — the stylesheet, imported after the last `@import`
       already there, because CSS refuses one that follows a rule
+    * `config/config.exs` — checked, never edited: esbuild resolves
+      `coelho.js`'s bare imports from `deps/coelho/`, which never reaches
+      `assets/node_modules` on its own. When no profile's `NODE_PATH` covers
+      it, the task prints the path to add
     * `priv/repo/migrations` — `mix coelho.gen.migration`, which is the only
       part an application without attachments does not need
 
@@ -63,6 +67,7 @@ defmodule Mix.Tasks.Coelho.Install do
     packages(opts)
     hook(opts)
     styles(opts)
+    esbuild()
     migration(opts)
 
     Mix.shell().info("")
@@ -245,12 +250,17 @@ defmodule Mix.Tasks.Coelho.Install do
     end
   end
 
-  @at_rule ~r/^\s*@(import|charset|layer|source|plugin|custom-variant|tailwind)\b/
+  # Only what may precede an `@import`: CSS allows one after `@charset`,
+  # `@layer` statements and other imports, and nothing else — a `@layer`
+  # statement always precedes the imports, so anchoring on the imports
+  # themselves covers it. Anchoring on Tailwind's at-rules instead put the
+  # import after a `@custom-variant` two hundred lines into a Phoenix 1.8
+  # stylesheet, which CSS refuses.
+  @at_rule ~r/^\s*@(import|charset)\b/
 
   # Brace depth, because an at-rule ends where its block closes and not where
-  # its name appears. A line-based "last match" writes the import inside
-  # `@plugin "…" {`, which is invalid CSS and a build that fails on the first
-  # run.
+  # its name appears. A line-based "last match" would write the import into
+  # the middle of one that spans lines.
   defp after_last_at_rule(source) do
     source
     |> String.split("\n")
@@ -272,6 +282,79 @@ defmodule Mix.Tasks.Coelho.Install do
   end
 
   defp count(line, character), do: line |> String.graphemes() |> Enum.count(&(&1 == character))
+
+  # -- esbuild --------------------------------------------------------------
+
+  # `coelho.js` imports its ProseMirror packages by bare specifier, and
+  # esbuild resolves those from the *importing* file — which lives under
+  # `deps/coelho/`, from where walking up never reaches the
+  # `assets/node_modules` the npm step just filled. The fix is one path in
+  # the profile's NODE_PATH; but the config is the application's own keyword
+  # tree, under a profile name of its choosing, so as with an unfamiliar
+  # `app.js` the task says what to add rather than editing it. It stays
+  # quiet both when no profile needs it and when the application does not
+  # use esbuild at all — a consigne printed on every run is one the reader
+  # learns to ignore.
+  defp esbuild do
+    profiles =
+      for {name, value} <- Application.get_all_env(:esbuild),
+          Keyword.keyword?(value),
+          do: {name, value}
+
+    case Enum.reject(profiles, &finds_browser_packages?/1) do
+      _none when profiles == [] ->
+        :ok
+
+      [] ->
+        say(:kept, "config/config.exs", "esbuild can find the browser packages")
+
+      missing ->
+        # Named, and every one of them: which profile bundles `app.js` is
+        # not something to guess at, and "some other profile covers it" is
+        # the all-clear that hides the very failure this step exists for.
+        say(
+          :todo,
+          "config/config.exs",
+          "add `Path.expand(\"../assets/node_modules\", __DIR__)` to the NODE_PATH " <>
+            "list of #{profile_names(missing)} (a list — esbuild joins it with the " <>
+            "OS separator; and keep what is already there, `Mix.Project.build_path()` " <>
+            "is what resolves colocated hooks)"
+        )
+    end
+  end
+
+  defp profile_names(profiles) do
+    Enum.map_join(profiles, ", ", fn {name, _profile} -> inspect(name) end)
+  end
+
+  # A relative entry is esbuild's to resolve, and it resolves it from the
+  # profile's `cd:` — so that is what it is expanded against here. An
+  # absolute one is unaffected by the base.
+  defp finds_browser_packages?({_name, profile}) do
+    target = Path.expand("assets/node_modules")
+    base = Keyword.get(profile, :cd, File.cwd!())
+
+    profile
+    |> Keyword.get(:env, %{})
+    |> node_path()
+    |> Enum.any?(&(Path.expand(&1, base) == target))
+  end
+
+  # A NODE_PATH may be a list of paths or a string joined with the OS
+  # separator. The `env` around it may be a map or a keyword list: the
+  # esbuild package runs `Map.new/1` over it, so both are valid config and
+  # reading only the map would print the consigne at an application whose
+  # config is already right.
+  defp node_path(env) when is_map(env) or is_list(env) do
+    separator = if match?({:win32, _}, :os.type()), do: ";", else: ":"
+
+    env
+    |> Enum.find_value(fn {name, value} -> to_string(name) == "NODE_PATH" && value end)
+    |> List.wrap()
+    |> Enum.flat_map(&String.split(&1, separator))
+  end
+
+  defp node_path(_env), do: []
 
   # -- The migration --------------------------------------------------------
 

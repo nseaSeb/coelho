@@ -284,6 +284,9 @@ defmodule DemoWeb.EditorLive do
             document_schema={Demo.RichText.schema()}
             placeholder="Write something…"
             field_labels={note_field_labels(@note_locale)}
+            toolbar={
+              ~w(bold italic strike code link heading bullet_list ordered_list blockquote caption align_left align_center)
+            }
             upload={@uploads.attachment}
           />
 
