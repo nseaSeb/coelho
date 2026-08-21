@@ -51,6 +51,7 @@ defmodule DemoWeb.EditorLive do
      |> assign(:note, note_document("note"))
      |> assign(:note_open, true)
      |> assign(:note_generation, 1)
+     |> assign(:note_locale, :fr)
      |> assign_form(Post.changeset(post, %{}))}
   end
 
@@ -70,6 +71,13 @@ defmodule DemoWeb.EditorLive do
   # cannot be tested anywhere but in a browser, and because nothing else on
   # this page sends its content — what reaches the server is what the flush
   # carried, which is the only way to prove the flush carried it.
+  # A language switched while someone is writing. The words change; the undo
+  # history and the caret must not — which is the whole reason the editor
+  # carries two fingerprints rather than one.
+  def handle_event("note_locale", _params, socket) do
+    {:noreply, update(socket, :note_locale, &if(&1 == :fr, do: :en, else: :fr))}
+  end
+
   def handle_event("note_toggle", _params, socket) do
     # Closing is not discarding: the generation stays where it is, so the
     # flush the editor pushes on its way out is accepted.
@@ -155,6 +163,23 @@ defmodule DemoWeb.EditorLive do
   end
 
   defp assign_form(socket, changeset), do: assign(socket, :form, to_form(changeset, as: :post))
+
+  defp note_labels(:fr), do: %{"bold" => "Gras", "italic" => "Italique"}
+  defp note_labels(:en), do: %{"bold" => "Bold", "italic" => "Italic"}
+
+  # `link_placeholder` is deliberately absent from both: what an application
+  # does not say keeps its English, and a partial translation should be a
+  # partial translation rather than a blank label.
+  defp note_field_labels(:fr) do
+    %{
+      "link_label" => "Adresse du lien",
+      "link_hint" => "Videz le champ pour retirer le lien."
+    }
+  end
+
+  defp note_field_labels(:en) do
+    %{"link_label" => "Link address", "link_hint" => "Empty the field to remove the link."}
+  end
 
   defp note_document(text) do
     %{
@@ -258,6 +283,7 @@ defmodule DemoWeb.EditorLive do
             field={@form[:body]}
             document_schema={Demo.RichText.schema()}
             placeholder="Write something…"
+            field_labels={note_field_labels(@note_locale)}
             upload={@uploads.attachment}
           />
 
@@ -284,6 +310,9 @@ defmodule DemoWeb.EditorLive do
             {if @note_open, do: "Hide", else: "Show"}
           </button>
           <button type="button" id="note-discard" phx-click="note_discard">Discard</button>
+          <button type="button" id="note-locale" phx-click="note_locale">
+            {if @note_locale == :fr, do: "English", else: "Français"}
+          </button>
 
           <%!-- No phx-change at all: this editor reports on the way out and
                 at no other time, which is the shape a debounced form takes
@@ -296,7 +325,8 @@ defmodule DemoWeb.EditorLive do
               value={@note}
               document_schema={Demo.RichText.schema()}
               toolbar={~w(bold italic link)}
-              labels={%{"bold" => "Gras", "italic" => "Italique"}}
+              labels={note_labels(@note_locale)}
+              field_labels={note_field_labels(@note_locale)}
               maxlength={200}
               flush_event="note_flush"
               flush_token={@note_generation}

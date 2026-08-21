@@ -6,74 +6,10 @@ defmodule Coelho.PropertyTest do
 
   defp schema, do: Schema.default()
 
-  # -- Generators -----------------------------------------------------------
-
-  # Not `uniq_list_of`: it gives up after ten consecutive duplicates, and
-  # there are only five marks to draw from, so the run failed on the seeds
-  # that happened to repeat — intermittently, and never where it was looked
-  # for. Drawing a list and taking it apart cannot run out of tries.
-  defp text_node do
-    gen all(
-          text <- string(:printable, min_length: 1),
-          drawn <- list_of(mark(), max_length: 3)
-        ) do
-      marks = Enum.uniq_by(drawn, & &1["type"])
-
-      case marks do
-        [] -> %{"type" => "text", "text" => text}
-        marks -> %{"type" => "text", "text" => text, "marks" => marks}
-      end
-    end
-  end
-
-  defp plain_text_node do
-    gen all(text <- string(:printable, min_length: 1)) do
-      %{"type" => "text", "text" => text}
-    end
-  end
-
-  defp mark do
-    one_of([
-      constant(%{"type" => "bold"}),
-      constant(%{"type" => "italic"}),
-      constant(%{"type" => "strike"}),
-      constant(%{"type" => "code"}),
-      gen all(path <- string(:alphanumeric, min_length: 1)) do
-        %{"type" => "link", "attrs" => %{"href" => "/" <> path}}
-      end
-    ])
-  end
-
-  defp inline do
-    one_of([
-      text_node(),
-      constant(%{"type" => "hard_break"}),
-      gen all(src <- string(:alphanumeric, min_length: 1)) do
-        %{"type" => "image", "attrs" => %{"src" => "/" <> src <> ".png"}}
-      end
-    ])
-  end
-
-  defp block do
-    one_of([
-      gen all(content <- list_of(inline(), max_length: 4)) do
-        %{"type" => "paragraph", "content" => content}
-      end,
-      gen all(level <- integer(1..6), content <- list_of(text_node(), max_length: 3)) do
-        %{"type" => "heading", "attrs" => %{"level" => level}, "content" => content}
-      end,
-      gen all(content <- list_of(plain_text_node(), max_length: 3)) do
-        %{"type" => "code_block", "content" => content}
-      end,
-      constant(%{"type" => "horizontal_rule"})
-    ])
-  end
-
-  defp document do
-    gen all(content <- list_of(block(), min_length: 1, max_length: 5)) do
-      %{"type" => "doc", "content" => content}
-    end
-  end
+  # The generators live in `Coelho.Test.Documents`, shared with the inline
+  # rendering property: two properties asking different questions of the same
+  # shapes should be asking them of the same shapes.
+  import Coelho.Test.Documents
 
   # -- Properties -----------------------------------------------------------
 
@@ -106,7 +42,12 @@ defmodule Coelho.PropertyTest do
   end
 
   property "plain text extraction only ever yields text the document holds" do
-    check all(document <- document()) do
+    # Without the attachment, whose spec carries a `:to_text` — the one
+    # mechanism by which a node contributes something the document does not
+    # hold as a text node, which is what that field exists for. Sharing the
+    # generator with the inline property is what surfaced this: the premise
+    # had always been narrower than the name.
+    check all(document <- document([:attachment])) do
       {:ok, document} = Document.validate(document, schema())
 
       for line <- document |> Document.to_text(schema()) |> String.split("\n"),

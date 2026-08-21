@@ -189,6 +189,46 @@ defmodule Coelho do
     do: Render.to_safe_html(document, schema, opts)
 
   @doc """
+  Renders a document where only inline elements are legal.
+
+  For a banner, a map bubble, a card excerpt — anywhere the document goes
+  inside a `<p>` or a `<span>` and `to_html/3` would have the browser close
+  the enclosing paragraph out from under it. See
+  `Coelho.Render.to_inline_html/3`, which carries the whole reason.
+  """
+  @spec to_inline_html(map()) :: String.t()
+  def to_inline_html(document), do: Render.to_inline_html(document, Schema.default(), [])
+
+  @spec to_inline_html(map(), Schema.t() | Render.opts()) :: String.t()
+  def to_inline_html(document, opts) when is_list(opts),
+    do: Render.to_inline_html(document, Schema.default(), opts)
+
+  def to_inline_html(document, %Schema{} = schema),
+    do: Render.to_inline_html(document, schema, [])
+
+  @spec to_inline_html(map(), Schema.t(), Render.opts()) :: String.t()
+  def to_inline_html(document, %Schema{} = schema, opts),
+    do: Render.to_inline_html(document, schema, opts)
+
+  @doc """
+  `to_inline_html/3` in the shape a template will not escape again.
+  """
+  @spec to_safe_inline_html(map()) :: {:safe, iodata()}
+  def to_safe_inline_html(document),
+    do: Render.to_safe_inline_html(document, Schema.default(), [])
+
+  @spec to_safe_inline_html(map(), Schema.t() | Render.opts()) :: {:safe, iodata()}
+  def to_safe_inline_html(document, opts) when is_list(opts),
+    do: Render.to_safe_inline_html(document, Schema.default(), opts)
+
+  def to_safe_inline_html(document, %Schema{} = schema),
+    do: Render.to_safe_inline_html(document, schema, [])
+
+  @spec to_safe_inline_html(map(), Schema.t(), Render.opts()) :: {:safe, iodata()}
+  def to_safe_inline_html(document, %Schema{} = schema, opts),
+    do: Render.to_safe_inline_html(document, schema, opts)
+
+  @doc """
   Whether a document would put anything on the page.
 
   What to ask before rendering a block at all. See

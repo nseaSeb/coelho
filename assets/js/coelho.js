@@ -698,6 +698,24 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // being torn down would otherwise push back the content the cancel
       // threw away. An editor that read the *new* token on its way out would
       // have its stale content accepted, which is the bug the token is for.
+      // What the field says, when the application has said. Anything left
+      // out keeps its English, so a partial translation is a partial
+      // translation rather than a blank label.
+      // Re-read whenever the toolbar is redrawn, because that is what a
+      // language switched mid-session looks like from here — read once at
+      // mount and the buttons change while the field keeps the words it was
+      // born with.
+      this.readFieldLabels = () => {
+        this._fieldLabels = JSON.parse(el.dataset.coelhoFieldLabels ?? "{}");
+      };
+
+      this.readFieldLabels();
+
+      // `in` and not `||`: an application that passes "" means "say nothing
+      // here", and falling back on it would answer with the English.
+      this.says = (key, fallback) =>
+        key in this._fieldLabels ? this._fieldLabels[key] : fallback;
+
       this._flushEvent = el.dataset.coelhoFlushEvent;
       this._flushToken = el.dataset.coelhoFlushToken ?? null;
       this._name = input?.name ?? null;
@@ -819,6 +837,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           })
         );
 
+        this.readFieldLabels();
         this.findLinkField();
         this.refreshToolbar();
         // The input still holds the document as it was written under the old
@@ -887,6 +906,10 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
         this._linkZone = el.querySelector("[data-coelho-link-zone]");
         this._linkInput = el.querySelector("[data-coelho-link-input]");
+        this._linkHint = el.querySelector("[data-coelho-link-hint]");
+
+        // The new input describes nothing until the field is opened again.
+        this._linkInput?.removeAttribute("aria-describedby");
 
         if (this._linkInput && this._onLinkKey) {
           this._linkInput.addEventListener("keydown", this._onLinkKey);
@@ -895,15 +918,34 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
       this._linkZone = el.querySelector("[data-coelho-link-zone]");
       this._linkInput = el.querySelector("[data-coelho-link-input]");
+      this._linkHint = el.querySelector("[data-coelho-link-hint]");
 
       // One field, whatever asked for it. What it does on Enter is decided
       // when it opens, because the selection is what says what to act on and
       // a field that took the focus would lose the answer.
-      this.openField = ({ value, label, apply, type = "text", placeholder = "" }) => {
+      this.openField = ({ value, label, apply, hint = "", type = "text", placeholder = "" }) => {
         if (!this._linkInput) return;
 
         this._pendingField = apply;
         this._linkZone.hidden = false;
+
+        // No hint unless there is one to give: an empty line under the field
+        // reserves space for nothing.
+        if (this._linkHint) {
+          this._linkHint.textContent = hint;
+          this._linkHint.hidden = !hint;
+
+          // Drawn is not said. The field is focused a few lines below, and a
+          // screen reader announces the label and whatever aria-describedby
+          // points at — which is the whole audience for a hint describing a
+          // gesture nobody was told about.
+          if (hint && this._linkHint.id) {
+            this._linkInput.setAttribute("aria-describedby", this._linkHint.id);
+          } else {
+            this._linkInput.removeAttribute("aria-describedby");
+          }
+        }
+
         this._linkInput.value = value ?? "";
         this._linkInput.setAttribute("aria-label", label);
         // The field serves more than links, so what it asks for changes with
@@ -921,6 +963,8 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
         if (this._linkZone) this._linkZone.hidden = true;
         if (this._linkInput) this._linkInput.value = "";
+        if (this._linkHint) this._linkHint.hidden = true;
+        if (this._linkInput) this._linkInput.removeAttribute("aria-describedby");
         if (focus) this._view.focus();
       };
 
@@ -982,8 +1026,9 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
         this.openField({
           value: selected.node.attrs.caption ?? "",
-          label: "Caption",
-          placeholder: "Describe this attachment",
+          label: this.says("caption_label", "Caption"),
+          placeholder: this.says("caption_placeholder", "Describe this attachment"),
+          hint: this.says("caption_hint", ""),
           apply: this.applyCaption(selected.pos)
         });
       };
@@ -1015,17 +1060,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           const { from, to } = state.selection;
           this.openField({
             value: existing?.href ?? "",
-            label: "Link address",
+            label: this.says("link_label", "Link address"),
             type: "url",
-            placeholder: "https://…",
+            placeholder: this.says("link_placeholder", "https://…"),
+            hint: this.says("link_hint", ""),
             apply: this.applyLink({ from, to })
           });
         } else if (existing) {
           this.openField({
             value: existing.href,
-            label: "Link address",
+            label: this.says("link_label", "Link address"),
             type: "url",
-            placeholder: "https://…",
+            placeholder: this.says("link_placeholder", "https://…"),
+            hint: this.says("link_hint", ""),
             apply: this.applyLink(existing)
           });
         }
@@ -1187,6 +1234,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // undo history and move the caret to change a word.
       if (ctx.el.dataset.coelhoToolbarVersion !== this._toolbarVersion) {
         this._toolbarVersion = ctx.el.dataset.coelhoToolbarVersion;
+        this.readFieldLabels();
         this.findLinkField();
         this.refreshToolbar();
       }

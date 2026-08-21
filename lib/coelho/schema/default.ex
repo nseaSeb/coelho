@@ -144,6 +144,7 @@ defmodule Coelho.Schema.Default do
             caption: [default: nil, validate: {:nullable, :string}]
           ],
           render: &__MODULE__.render_attachment/3,
+          render_inline: &__MODULE__.inline_attachment/3,
           to_text: &__MODULE__.attachment_text/1
         ],
         hard_break: [
@@ -278,6 +279,57 @@ defmodule Coelho.Schema.Default do
       end
 
     Coelho.Render.tag("figure", [{"class", "coelho-attachment"}], [body, caption])
+  end
+
+  @doc false
+  def inline_attachment(node, _inner, context) do
+    # A `<figure>` is not legal where only inline elements are, and an
+    # attachment has no children to unwrap towards — it is `void: true`, and
+    # everything it shows comes out of the render function above. So it says
+    # here what it is inline: the image if there is one, otherwise its name,
+    # and the caption's words after it.
+    #
+    # Contributing nothing would be worse than wrong: `Coelho.blank?/2`
+    # counts an attachment as content, and a document answering "yes there is
+    # something" and then rendering nothing is two functions of the same
+    # library contradicting each other.
+    url = Coelho.Attachments.url(context, node)
+
+    # The same three shapes the page renders: `<img>` and `<a>` are both legal
+    # inline, and dropping the href would lose the download link a card
+    # excerpt is there to offer. And always an element, never bare text that
+    # can be empty — `filename` accepts `""` and so does `key`, and a
+    # contribution of nothing is dropped when the blocks are joined, so the
+    # attachment would vanish from a document `Coelho.blank?/2` calls
+    # non-blank.
+    cond do
+      url && image?(attr(node, "content_type", nil)) ->
+        Coelho.Render.void_tag("img", [{"src", url}, {"alt", attr(node, "alt", nil)}])
+
+      url ->
+        Coelho.Render.tag("a", [{"href", url}], escape(label(node)))
+
+      true ->
+        Coelho.Render.tag("span", [{"class", "coelho-attachment-missing"}], escape(label(node)))
+    end
+    |> then(&with_caption(&1, node))
+  end
+
+  defp label(node) do
+    case attr(node, "filename", nil) do
+      name when is_binary(name) and name != "" -> name
+      _other -> attr(node, "key", "")
+    end
+  end
+
+  # `""` is a caption the schema accepts, and appending it leaves a trailing
+  # space that the join then puts a separator after — two spaces, or a space
+  # and a `<br>`.
+  defp with_caption(body, node) do
+    case attr(node, "caption", nil) do
+      caption when is_binary(caption) and caption != "" -> [body, " ", escape(caption)]
+      _other -> body
+    end
   end
 
   @doc false

@@ -850,6 +850,112 @@ const run = async () => {
       await page.waitForSelector(NOTE, { timeout: 5000 });
     });
 
+    await test("the field speaks the language it was given, and English for the rest", async () => {
+      // The note editor names the label and the hint and says nothing about
+      // the placeholder, so this proves both halves at once: what the
+      // application supplied, and what it left to fall back.
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.click('#note_body-editor [data-coelho-command="link"]');
+      await page.waitForSelector("#note_body-editor [data-coelho-link-input]", { state: "visible" });
+
+      const input = "#note_body-editor [data-coelho-link-input]";
+
+      assert.equal(await page.getAttribute(input, "aria-label"), "Adresse du lien");
+      assert.equal(await page.getAttribute(input, "placeholder"), "https://…");
+
+      await page.keyboard.press("Escape");
+      await settle(page);
+    });
+
+    await test("the hint is there while the field is open, and gone with it", async () => {
+      // The gesture it describes — emptying the field to remove the link —
+      // is otherwise something a writer has to be told or discover.
+      const hint = "#note_body-editor [data-coelho-link-hint]";
+
+      assert.equal(await page.isVisible(hint), false, "the hint shows before the field does");
+
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.click('#note_body-editor [data-coelho-command="link"]');
+      await page.waitForSelector(hint, { state: "visible" });
+
+      assert.equal(await page.textContent(hint), "Videz le champ pour retirer le lien.");
+
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(hint, { state: "hidden" });
+    });
+
+    await test("a language switched mid-session reaches the field, and costs no undo", async () => {
+      // The point of the editor carrying two fingerprints rather than one.
+      // The toolbar's moves and the buttons and the field are redrawn; the
+      // schema's does not, so the view is never rebuilt and the writer keeps
+      // their history and their caret.
+      const label = () =>
+        page.getAttribute("#note_body-editor [data-coelho-link-input]", "aria-label");
+
+      // The history half is asked of the post editor, which syncs on every
+      // keystroke. The note editor has no phx-change at all — that is what
+      // makes its flush test honest — so any re-render pushes the server's
+      // older copy back into it, and an undo there would be measuring that
+      // instead.
+      await typeInEditor(page, "avant");
+      // ProseMirror groups keystrokes into one history event within half a
+      // second, so without this pause both words are a single undo and the
+      // step back lands on the empty document — which proves nothing about
+      // the history having survived.
+      await page.waitForTimeout(700);
+      await page.keyboard.type(" après");
+      await settle(page);
+
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.click('#note_body-editor [data-coelho-command="link"]');
+      await page.waitForSelector("#note_body-editor [data-coelho-link-input]", { state: "visible" });
+      assert.equal(await label(), "Adresse du lien");
+      await page.keyboard.press("Escape");
+      await settle(page);
+
+      await page.click("#note-locale");
+      await settle(page);
+
+      // The buttons.
+      assert.equal(
+        (await page.textContent('#note_body-editor [data-coelho-command="bold"]')).trim(),
+        "Bold"
+      );
+
+      // And the field, which is the half that was read once at mount and
+      // kept the words it was born with.
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.click('#note_body-editor [data-coelho-command="link"]');
+      await page.waitForSelector("#note_body-editor [data-coelho-link-input]", { state: "visible" });
+      assert.equal(await label(), "Link address");
+      assert.equal(
+        await page.textContent("#note_body-editor [data-coelho-link-hint]"),
+        "Empty the field to remove the link."
+      );
+      await page.keyboard.press("Escape");
+      await settle(page);
+
+      // The history survived the switch: undo takes back the second word and
+      // not the whole document, which a rebuild would have thrown away.
+      await focusEditor(page);
+      await page.keyboard.press("ControlOrMeta+z");
+      await settle(page);
+
+      const text = spaces(await page.textContent(EDITOR));
+
+      assert.ok(
+        text.includes("avant") && !text.includes("après"),
+        `undo did not step back one group; the editor held ${JSON.stringify(text)}`
+      );
+
+      await page.click("#note-locale");
+      await settle(page);
+    });
+
     await test("nothing threw along the way", () => {
       assert.deepEqual(errors, []);
     });

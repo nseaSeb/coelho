@@ -18,6 +18,10 @@ defmodule Coelho.Schema.NodeSpec do
     * `:editor_attrs` — extra DOM attributes for the editor only, exported
       with the schema and never emitted server side
     * `:render` — how the node is turned into HTML, see `Coelho.Render`
+    * `:render_inline` — how it is turned into HTML where only inline
+      elements are legal. A block is unwrapped to its children by default,
+      which is right for a paragraph and useless for a node whose block-ness
+      lives inside a render function — see `Coelho.Render.to_inline_html/3`
     * `:to_text` — what the node contributes to the plain text extraction,
       when that is not simply its children
     * `:parse` — HTML this node is imported from, see `Coelho.HTML`
@@ -44,6 +48,7 @@ defmodule Coelho.Schema.NodeSpec do
           class: String.t() | nil,
           editor_attrs: %{optional(String.t()) => String.t()},
           render: render(),
+          render_inline: render(),
           to_text: String.t() | (map() -> iodata()) | nil,
           parse: [Coelho.HTML.rule()]
         }
@@ -61,6 +66,7 @@ defmodule Coelho.Schema.NodeSpec do
     class: nil,
     editor_attrs: %{},
     render: nil,
+    render_inline: nil,
     to_text: nil,
     parse: []
   ]

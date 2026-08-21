@@ -335,6 +335,33 @@ if Code.ensure_loaded?(Phoenix.Component) do
     application bumps when it cancels, the flush puts back exactly what was
     just thrown away.
 
+    ## What the field says
+
+    The link and caption field carries three strings, and they are English
+    until an application says otherwise:
+
+        <.coelho_editor
+          field={@form[:body]}
+          labels={%{"link" => gettext("Link")}}
+          field_labels={%{
+            "link_label" => gettext("Link address"),
+            "link_placeholder" => gettext("https://… then Enter"),
+            "link_hint" => gettext("Empty the field to remove the link."),
+            "caption_label" => gettext("Caption"),
+            "caption_placeholder" => gettext("Describe this attachment")
+          }}
+        />
+
+    `:labels` names the toolbar's buttons and `:field_labels` what the field
+    beside them says; they are separate because the first is a command and
+    the second is a sentence. The hint is shown under the field while it is
+    open, and there is no hint at all unless one is given — the gesture it
+    describes, emptying the field to remove the link, is otherwise something
+    a writer has to be told or discover.
+
+    Changing either redraws the toolbar, so a language switched mid-session
+    reaches both.
+
     ## Counting characters
 
     `:maxlength` renders a counter beside the toolbar and keeps it in step.
@@ -393,6 +420,16 @@ if Code.ensure_loaded?(Phoenix.Component) do
           "Changing them on a mounted editor redraws the toolbar"
     )
 
+    attr(:field_labels, :map,
+      default: %{},
+      doc: """
+      what the link and caption field says, for an application with a
+      translator. Keys: `"link_label"`, `"link_placeholder"`, `"link_hint"`,
+      `"caption_label"`, `"caption_placeholder"`, `"caption_hint"`. Anything
+      left out keeps its English
+      """
+    )
+
     attr(:maxlength, :integer, default: nil, doc: "shows a character counter; does not enforce")
 
     attr(:flush_event, :string,
@@ -428,11 +465,15 @@ if Code.ensure_loaded?(Phoenix.Component) do
         |> assign(:input_id, input_id)
         |> assign(:schema_json, assigns.schema_id || JSON.encode!(Schema.to_json(schema)))
         |> assign(:version, fingerprint(schema.fingerprint))
+        |> assign(:field_labels_json, field_labels(assigns.field_labels))
         |> assign(
           :toolbar_version,
           # Absent along with the toolbar, so an editor without one carries
-          # no attribute about it.
-          toolbar != [] && fingerprint({schema.fingerprint, toolbar, assigns.labels})
+          # no attribute about it. The field's words are in it because the
+          # field lives inside the toolbar, and a language switched
+          # mid-session has to reach them too.
+          toolbar != [] &&
+            fingerprint({schema.fingerprint, toolbar, assigns.labels, assigns.field_labels})
         )
         |> assign(:value_json, value_json(value, schema))
         |> assign(:count, initial_count(value))
@@ -450,6 +491,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
         data-coelho-input={@input_id}
         data-coelho-upload={@upload && @upload.name}
         data-coelho-maxlength={@maxlength}
+        data-coelho-field-labels={@field_labels_json}
         data-coelho-flush-event={@flush_event}
         data-coelho-flush-token={@flush_token && to_string(@flush_token)}
         {@rest}
@@ -481,6 +523,13 @@ if Code.ensure_loaded?(Phoenix.Component) do
                   the field serves links and captions, and asking for a URL
                   when it wants a caption marks a good one as invalid. --%>
             <input type="text" class="coelho-link-input" data-coelho-link-input />
+            <%!-- Written by the hook, from :field_labels, because what the
+                  hint says depends on which of the two the field is
+                  serving. Empty and hidden until then, and pointed at by the
+                  input's aria-describedby while it is shown — a hint exists
+                  for the writer who has not been told the gesture, which is
+                  first of all the writer who cannot see it. --%>
+            <span id={@id <> "-hint"} class="coelho-link-hint" data-coelho-link-hint hidden></span>
           </span>
         </div>
         <%!-- The count is written by the hook, so it lives inside an ignored
@@ -536,6 +585,16 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # only has to find the link field again and repaint the pressed states.
     # A language switched mid-session moves this and not the other: the
     # writer gets new words, and keeps their undo history and their caret.
+    # One attribute rather than six: the field has three strings and serves
+    # two things, and an editor carrying `data-coelho-link-placeholder` beside
+    # five siblings reads worse than it works. Nothing is emitted when the
+    # application has said nothing.
+    defp field_labels(labels) when map_size(labels) == 0, do: nil
+
+    defp field_labels(labels) do
+      JSON.encode!(Map.new(labels, fn {key, value} -> {to_string(key), value} end))
+    end
+
     defp fingerprint(term) do
       term |> :erlang.phash2() |> Integer.to_string(36) |> String.downcase()
     end

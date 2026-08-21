@@ -1,5 +1,135 @@
 # Changelog
 
+## 0.5.0 — 2026-08-21
+
+The three things left after 0.4.0, all of them.
+
+### Rendering inside a paragraph
+
+- `Coelho.to_inline_html/3`, `to_safe_inline_html/3` and `to_inline_iodata/3`.
+  A `<p>` inside a `<p>` is not nested by the browser, it is closed by it —
+  so a document rendered into a banner, a map bubble or a card excerpt ended
+  the enclosing paragraph where its own first one began, stopped every class
+  on it from applying, left an empty paragraph behind, and ran the words of
+  two paragraphs together where the tags that separated them had been. The
+  last is the one nobody sees, because it looks like text.
+
+  It was doable with render overrides and nobody would have got it right:
+  overriding `paragraph` to render nothing gives `un grasdeux` — two words
+  fused — and still emits the `<h2>` and the `<ul>`.
+
+  The guarantee is one sentence, which is also what makes it testable in one
+  assertion rather than thirty cases: **the output holds nothing that is
+  illegal in an inline context.** Everything else follows without a judgement
+  call — marks stay, `<img>` and `<br>` stay, every block is unwrapped to its
+  children, and a node with no inline form contributes nothing.
+
+- `:render_inline` on a node spec, for a node whose block-ness lives inside a
+  render function rather than in the tree. The attachment is the case: it is
+  `void: true`, so unwrapping it towards its children gives nothing, and
+  contributing nothing would have `blank?/2` answer "there is something here"
+  about a document that then rendered as empty — two functions of the same
+  library contradicting each other about the same document.
+
+- The separator belongs to the caller, because only the caller knows whether
+  its container can take a line break. `:space` by default: a space where a
+  break was wanted puts two sentences on one line, which reads, while a break
+  where a space was wanted grows the caller's box and breaks their layout. A
+  separator of your own is escaped unless it is `{:safe, iodata}`, since a
+  value that reached it from data would otherwise be markup.
+
+### Installing it
+
+- `mix coelho.install`, the last of the three things left after 0.4.0 and the
+  one that decides whether anyone tries the library on a Sunday. It installs
+  the browser packages, imports the hook into `assets/js/app.js` and adds it
+  to the LiveSocket, imports the stylesheet into `assets/css/app.css`, and
+  runs the attachments migration.
+
+  It is idempotent, it asks before running `npm`, `--dry-run` reports without
+  writing, and it says what to do rather than guessing when an `app.js` is
+  not shaped the way it expects — an application's `app.js` is its own, and
+  an unfamiliar LiveSocket is not a reason to rewrite it badly.
+
+  The package list comes from Coelho's own `peerDependencies`, read when the
+  task compiles, so it cannot drift from what the hook imports.
+
+### What the field says
+
+- `:field_labels` on `coelho_editor/1`. `"Link address"`, `"https://…"`,
+  `"Caption"` and `"Describe this attachment"` were hard-coded English in the
+  JavaScript, and `:labels` covers only the toolbar's commands. And there was
+  no hint under the field at all — the gesture that removes a link, emptying
+  the field, was something a writer had to be told or discover.
+- Both are in the toolbar's fingerprint and not the schema's, so a language
+  switched mid-session redraws the words without costing the writer their
+  undo history.
+
+### Fixed
+
+- A language switched mid-session reaches the field, which is what the whole
+  arrangement was for. The hook read `:field_labels` once at mount and never
+  again, so the buttons changed and the link field kept the words it was born
+  with until a full remount — and every line of documentation saying
+  otherwise was wrong. Re-read when the toolbar's fingerprint moves, and when
+  the editor is rebuilt.
+- The hint is announced, not only drawn. It carries an id and the input
+  points `aria-describedby` at it while it is shown: a hint exists for the
+  writer who has not been told the gesture, which is first of all the writer
+  who cannot see it.
+- `""` is an answer. An application passing an empty string for one of the
+  field's words meant "say nothing here", and fell back to the English
+  instead.
+- Inline rendering honours a caller's `:nodes` override, including for the
+  `text` node — the block renderer goes out of its way not to short circuit
+  there so that no node is the one nobody can reach, and the inline one
+  advertised the same options while quietly ignoring them.
+- `:render_inline` is reached for an inline node too. It was checked after
+  `:inline`, so the one escape hatch for an inline-grouped node whose
+  ordinary render is a block-ish wrapper did nothing at all.
+- An attachment with no filename no longer vanishes from an inline render.
+  `filename` accepts `""` and so does `key`, and a contribution of nothing is
+  dropped when blocks are joined — out of a document `blank?/2` calls
+  non-blank, which is the contradiction `:render_inline` exists to avoid. It
+  always renders an element now, with the classes the page and the editor
+  already use.
+- `mix coelho.install` finds where a statement *ends* rather than where a
+  line matches, in both files it edits. `import {\n  LiveSocket\n} from "…"`
+  has `import {` as its last line matching `import`, so the hook went into
+  the middle of it — a syntax error in the file the whole bundle is built
+  from. `@plugin "…" { … }` spans lines the same way, so the stylesheet went
+  inside the block — invalid CSS. Both on the first run of the command that
+  exists to make the first ten minutes work, and neither shape is exotic:
+  `coelho.js` itself uses multi-line imports.
+- Inline rendering honours a caller's `:nodes` override for a block too, not
+  only for text and inline nodes. Overriding `attachment` is the natural
+  thing for an application resolving its own URLs, and it was being ignored.
+- An attachment that resolves keeps its link inline. `<a>` is legal in an
+  inline context, so there was no reason to drop the href — a card excerpt
+  lost the download entirely.
+- An empty caption adds nothing rather than a trailing space, which the join
+  then followed with a separator.
+- `to_inline_iodata/3` emits the render span, so a new public render path is
+  not invisible to a handler the README tells applications to attach.
+- `mix coelho.install` checks the version a package is declared at, not only
+  its name. An application pinned to an older `prosemirror-view` was told
+  everything was there and failed inside `coelho.js`, a long way from the
+  cause.
+- `mix coelho.install` reports a failed `npm install` as a failure. The exit
+  status was discarded, so a run with no network told the reader the editor
+  would render with none of its packages present.
+- And its `--dry-run` no longer offers to generate a migration that is
+  already there.
+
+### Also
+
+- The document generators are shared between the properties rather than
+  copied into each — which immediately widened what the older ones see, and
+  showed that "plain text extraction only ever yields text the document
+  holds" had always been narrower than its name: a node with a `:to_text` in
+  its spec contributes something the document does not hold as a text node,
+  which is exactly what that field is for.
+
 ## 0.4.0 — 2026-08-21
 
 A third adoption report, on 0.3.1, and the theme this time is the distance

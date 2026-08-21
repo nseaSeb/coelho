@@ -503,6 +503,7 @@ defmodule Coelho.Schema do
       class: build_class(name, Keyword.get(decl, :class)),
       editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
       render: Keyword.get(decl, :render),
+      render_inline: Keyword.get(decl, :render_inline),
       to_text: Keyword.get(decl, :to_text),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
     }
