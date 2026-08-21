@@ -2,6 +2,8 @@
 
 A single page showing what storing the document instead of the HTML buys you.
 
+![The demo: an editor, and under it the HTML it renders to, that HTML as source, the JSON actually stored, and the plain text a search index would hold.](demo.png)
+
 Type on the left. Everything on the right is recomputed on the server, from
 the stored tree, on every keystroke:
 
