@@ -102,6 +102,15 @@ nowhere to get.
   carries the schema fingerprint, so a schema change makes LiveView replace
   it — and the field captured at mount was left detached, with the button
   appearing to do nothing at all.
+- The HTML import shortens text no longer, the other way it could. 0.2.0
+  fixed a run split across two nodes by an element the schema drops; this is
+  the same defect reached from the other side. A `<pre>` keeps its whitespace
+  to the character, which is what a code block is for — but a code block that
+  cannot sit where it landed is lifted, and its text arrives verbatim in a
+  paragraph, where nothing keeps it. Stored like that, the next import
+  collapses it. Every text node in an inline context is collapsed now, whole;
+  a node that takes its text verbatim never reaches that path at all. Found
+  by CI, on a seed 120 local seeds had not drawn.
 - The flush's failure guard catches the failure it was written for.
   `pushEvent` rejects a promise rather than throwing when the socket has
   gone, so the `try/catch` never ran and a page navigation logged an uncaught
