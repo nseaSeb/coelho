@@ -16,7 +16,16 @@ if [ ${#browsers[@]} -eq 0 ]; then
 fi
 
 echo "==> dependencies"
-mix deps.get >/dev/null
+# Hex prints "Found packages with security advisories" on stderr and the
+# advisories themselves on stdout, so sending stdout to /dev/null keeps the
+# warning and throws away the only part worth reading. Keep it all, and show
+# the advisories rather than the roll call of packages fetched.
+deps_log=$(mktemp)
+if ! mix deps.get >"$deps_log" 2>&1; then
+  cat "$deps_log"
+  exit 1
+fi
+grep -A6 "VULNERABLE" "$deps_log" || true
 npm ci --no-audit --no-fund >/dev/null
 
 echo "==> assets"
