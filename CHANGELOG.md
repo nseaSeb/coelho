@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-08-21
 
 The third layer. A formatting exists end to end when the schema can carry
 it, the renderer can show it, and a toolbar button can set it — and the
