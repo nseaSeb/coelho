@@ -171,13 +171,156 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     What `insert_node/3` needs to reach one editor rather than all of them.
     """
-    @spec editor_id(Phoenix.HTML.FormField.t()) :: String.t()
+    @spec editor_id(Phoenix.HTML.FormField.t() | String.t()) :: String.t()
     def editor_id(%Phoenix.HTML.FormField{id: id}), do: id <> "-editor"
+    def editor_id(name) when is_binary(name), do: input_id(name) <> "-editor"
+
+    # The id a form gives an input, from the name alone — `page[intro_doc]`
+    # becomes `page_intro_doc`. The editor needs one whether or not a
+    # `%FormField{}` was there to supply it.
+    defp input_id(name) do
+      name |> String.replace("]", "") |> String.replace("[", "_")
+    end
 
     @doc """
-    Renders the rich text editor for a form field.
+    Renders the schema once, for several editors to share.
+
+    Each editor otherwise carries the whole exported schema in a `data-`
+    attribute of its own — 1.3 KB for the schema that ships, which six
+    editors on a page turn into eight. Render this once and point the
+    editors at it:
+
+        <.coelho_schema id="page-schema" document_schema={MyApp.RichText.schema()} />
+
+        <.coelho_editor
+          name="page[intro_doc]"
+          value={@draft["intro_doc"]}
+          document_schema={MyApp.RichText.schema()}
+          schema_id="page-schema"
+        />
+
+    **Give the editors the same `:document_schema`.** `:schema_id` says where
+    the exported JSON lives, not which schema it is: the editor still filters
+    its toolbar and stamps its fingerprint from its own `:document_schema`,
+    and an editor working from one schema while reading another is a mismatch
+    that would show up as buttons quietly doing nothing. The fingerprints are
+    compared in the browser, so the mismatch is an error and not a mystery.
+
+    The saving is on the first render. LiveView omits an unchanged dynamic
+    from a diff, so the repetition does not cost anything again on every
+    patch — but it is still eight kilobytes of the page that opens.
     """
-    attr(:field, Phoenix.HTML.FormField, required: true)
+    attr(:id, :string, required: true)
+
+    attr(:document_schema, Schema,
+      default: nil,
+      doc: "the schema to export, `Coelho.Schema.default/0` when omitted"
+    )
+
+    def coelho_schema(assigns) do
+      schema = assigns.document_schema || Schema.default()
+
+      assigns =
+        assigns
+        |> assign(:json, JSON.encode!(Schema.to_json(schema)))
+        |> assign(:check, version(schema, nil))
+
+      # An attribute and not a `<script>`. A script's content is raw text —
+      # the parser decodes no entities inside it, so the JSON would have to be
+      # escaped at the JSON level rather than the HTML level — and marking it
+      # `phx-update="ignore"` to keep LiveView off it, which the first version
+      # of this did, freezes the very thing the editors read to notice that
+      # the schema moved. An attribute is patched like any other, and the
+      # parser decodes it correctly.
+      ~H"""
+      <div id={@id} hidden data-coelho-schema={@json} data-coelho-schema-check={@check}></div>
+      """
+    end
+
+    @doc """
+    Renders the rich text editor.
+
+    Give it a form field, or a name and a value:
+
+        <.coelho_editor field={@form[:body]} />
+        <.coelho_editor name="page[intro_doc]" value={@draft["intro_doc"]} />
+
+    The second form is for a surface that has no changeset behind it — a
+    JSONB draft whose keys are historical, a field posted straight into
+    `phx-change` — where building a `%Phoenix.HTML.FormField{}` to satisfy
+    the component would be building a fiction.
+
+    ## Losing the last keystrokes, and how not to
+
+    The editor writes into its hidden input and lets `phx-change` carry it,
+    which means a `phx-debounce` can still be holding the last edit when the
+    block leaves the DOM. Nothing arrives, and the writer loses what they
+    typed last. Cancelling a draft, switching a tab, collapsing a section:
+    each of those removes the editor, and each of those is where it bites.
+
+    `:flush_event` closes it. The hook pushes the document on the way out:
+
+        <.coelho_editor
+          name="page[intro_doc]"
+          value={@draft["intro_doc"]}
+          flush_event="flush"
+          flush_token={@generation}
+        />
+
+        def handle_event("flush", %{"token" => token, "name" => name, "document" => document}, socket) do
+          if token == to_string(socket.assigns.generation) do
+            {:noreply, put_draft(socket, name, document)}
+          else
+            {:noreply, socket}
+          end
+        end
+
+    **The token comes back as a string.** It travels as a DOM attribute, so
+    whatever it was rendered from arrives as text: comparing it to an integer
+    generation is always false, and every flush is dropped by the clause that
+    was meant to catch the stale ones — the data loss `:flush_event` exists
+    to prevent, failing silently.
+
+    The token is yours and the comparison is yours, because only the
+    application knows what a generation is. It matters: cancelling a draft
+    re-renders the editors, and the editors being torn down flush *the
+    content from before the cancellation*. Without a token that the
+    application bumps when it cancels, the flush puts back exactly what was
+    just thrown away.
+
+    ## Counting characters
+
+    `:maxlength` renders a counter beside the toolbar and keeps it in step.
+    The count is `Coelho.Document.text_length/1` — the text nodes
+    concatenated, which is what the writer typed — and the server renders the
+    first one, so an existing document does not read zero until the hook has
+    started.
+
+    The attribute does not stop anyone typing. What it does is show the
+    number and mark the counter with `coelho-over` past the limit; refusing
+    the document is the schema's job, through `limits: [max_text_length: …]`,
+    and doing it in two places would let the two disagree.
+
+    ## Following a schema change
+
+    The container carries `phx-update="ignore"`, so LiveView never patches
+    what ProseMirror owns — which used to mean that **a schema changed on a
+    mounted editor was not picked up**: the classes, the marks and the node
+    types stayed the ones read at mount, and what the writer saw stopped
+    matching what the page would render.
+
+    The hook now watches an exported-schema fingerprint on its own element
+    and rebuilds the view when it moves, keeping the document. The toolbar is
+    redrawn with it. Ids are untouched, so `editor_id/1` and `insert_node/3`
+    go on working.
+    """
+    attr(:field, Phoenix.HTML.FormField,
+      default: nil,
+      doc: "a form field; give this or `:name` and `:value`"
+    )
+
+    attr(:name, :string, default: nil, doc: "the hidden input's name, without a form field")
+    attr(:value, :any, default: nil, doc: "the document, without a form field")
     attr(:id, :string, default: nil, doc: "defaults to the field's own id, suffixed")
 
     attr(:document_schema, Schema,
@@ -185,10 +328,34 @@ if Code.ensure_loaded?(Phoenix.Component) do
       doc: "the schema to edit against, `Coelho.Schema.default/0` when omitted"
     )
 
+    attr(:schema_id, :string,
+      default: nil,
+      doc: "id of a `coelho_schema/1` to read the schema from, instead of carrying it"
+    )
+
     attr(:toolbar, :list,
       default:
         ~w(bold italic strike code link heading bullet_list ordered_list blockquote caption),
       doc: "commands to show, in order; an empty list hides the toolbar"
+    )
+
+    attr(:labels, :map,
+      default: %{},
+      doc: "command to label, for a toolbar that has to speak the reader's language"
+    )
+
+    attr(:maxlength, :integer, default: nil, doc: "shows a character counter; does not enforce")
+
+    attr(:flush_event, :string,
+      default: nil,
+      doc: "event pushed with the document when the editor leaves the DOM"
+    )
+
+    attr(:flush_token, :any,
+      default: nil,
+      doc:
+        "sent back with `:flush_event`, for the application to refuse a stale flush. " <>
+          "It travels as a DOM attribute, so it arrives back as a string"
     )
 
     attr(:upload, :any,
@@ -202,28 +369,40 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     def coelho_editor(assigns) do
       schema = assigns.document_schema || Schema.default()
-      id = assigns.id || editor_id(assigns.field)
+      {name, value, input_id} = input_for!(assigns)
+      toolbar = Enum.filter(assigns.toolbar, &supported?(schema, &1))
 
       assigns =
         assigns
-        |> assign(:id, id)
-        |> assign(:schema_json, JSON.encode!(Schema.to_json(schema)))
-        |> assign(:value_json, value_json(assigns.field.value, schema))
-        |> assign(:toolbar, Enum.filter(assigns.toolbar, &supported?(schema, &1)))
+        |> assign(:id, assigns.id || editor_id(assigns.field || name))
+        |> assign(:input_name, name)
+        |> assign(:input_id, input_id)
+        |> assign(:schema_json, assigns.schema_id || JSON.encode!(Schema.to_json(schema)))
+        |> assign(:version, version(schema, toolbar))
+        |> assign(:check, version(schema, nil))
+        |> assign(:value_json, value_json(value, schema))
+        |> assign(:count, initial_count(value))
+        |> assign(:toolbar, toolbar)
 
       ~H"""
       <div
         id={@id}
         class={["coelho", @class]}
         phx-hook="Coelho"
-        data-coelho-schema={@schema_json}
-        data-coelho-input={@field.id}
+        data-coelho-schema={is_nil(@schema_id) && @schema_json}
+        data-coelho-schema-src={@schema_id}
+        data-coelho-schema-version={@version}
+        data-coelho-schema-check={@check}
+        data-coelho-input={@input_id}
         data-coelho-upload={@upload && @upload.name}
+        data-coelho-maxlength={@maxlength}
+        data-coelho-flush-event={@flush_event}
+        data-coelho-flush-token={@flush_token && to_string(@flush_token)}
         {@rest}
       >
         <div
           :if={@toolbar != []}
-          id={@id <> "-toolbar"}
+          id={@id <> "-toolbar-" <> @version}
           class="coelho-toolbar"
           role="toolbar"
           phx-update="ignore"
@@ -233,9 +412,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
             type="button"
             class="coelho-command"
             data-coelho-command={command}
-            aria-label={command}
+            aria-label={Map.get(@labels, command, command)}
           >
-            {command}
+            {Map.get(@labels, command, command)}
           </button>
 
           <span
@@ -250,6 +429,14 @@ if Code.ensure_loaded?(Phoenix.Component) do
             <input type="text" class="coelho-link-input" data-coelho-link-input />
           </span>
         </div>
+        <%!-- The count is written by the hook, so it lives inside an ignored
+              subtree: LiveView patches an element's attributes and text even
+              when it spares an ignored element's children, and the next
+              render would put the server's first number back. --%>
+        <span :if={@maxlength} id={@id <> "-counter"} class="coelho-counter" phx-update="ignore">
+          <span data-coelho-count aria-live="polite">{@count}</span>
+          <span class="coelho-counter-max">{@maxlength}</span>
+        </span>
         <div
           id={@id <> "-content"}
           class="coelho-content"
@@ -257,10 +444,56 @@ if Code.ensure_loaded?(Phoenix.Component) do
           phx-update="ignore"
         ></div>
         <.live_file_input :if={@upload} upload={@upload} class="coelho-file-input" />
-        <input type="hidden" name={@field.name} id={@field.id} value={@value_json} />
+        <input type="hidden" name={@input_name} id={@input_id} value={@value_json} />
       </div>
       """
     end
+
+    # A form field carries its own name, value and id. Without one they have
+    # to be given, and the id is derived the way a form would derive it.
+    defp input_for!(%{field: %Phoenix.HTML.FormField{} = field}),
+      do: {field.name, field.value, field.id}
+
+    defp input_for!(%{name: name} = assigns) when is_binary(name),
+      do: {name, assigns.value, input_id(name)}
+
+    defp input_for!(_assigns) do
+      raise ArgumentError,
+            "coelho_editor needs either a :field, or a :name and a :value — " <>
+              ~s(for example name="page[intro_doc]" value={@draft["intro_doc"]})
+    end
+
+    # What the browser has to notice a change in: the schema it builds from,
+    # and the buttons drawn against it. Both sit inside `phx-update="ignore"`
+    # subtrees that LiveView will not touch, so the hook is told rather than
+    # left to find out.
+    #
+    # Two fingerprints, because they answer two questions. The editor's
+    # `-version` covers the schema *and* its toolbar, and moving it is what
+    # makes the hook rebuild and LiveView redraw the buttons. The `-check`
+    # covers the schema alone, and is the one a shared `coelho_schema/1` can
+    # be compared against — its own toolbar does not exist.
+    defp version(schema, toolbar) do
+      {Schema.to_json(schema), toolbar}
+      |> :erlang.phash2()
+      |> Integer.to_string(36)
+      |> String.downcase()
+    end
+
+    # The counter has to be right at the first paint. Rendered empty and left
+    # to the hook, it reads zero on an existing document until the JavaScript
+    # has started — which on a slow first load is long enough to be seen and
+    # believed.
+    defp initial_count(value) when is_map(value), do: Coelho.Document.text_length(value)
+
+    defp initial_count(value) when is_binary(value) do
+      case JSON.decode(value) do
+        {:ok, document} -> Coelho.Document.text_length(document)
+        {:error, _reason} -> 0
+      end
+    end
+
+    defp initial_count(_value), do: 0
 
     # When a document fails to cast, the form hands back the raw parameter —
     # the JSON the editor posted — so the writer does not lose what they were

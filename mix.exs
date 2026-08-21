@@ -1,7 +1,7 @@
 defmodule Coelho.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.3.0"
   @source_url "https://github.com/nseaSeb/coelho"
 
   def project do
@@ -92,7 +92,13 @@ defmodule Coelho.MixProject do
           Coelho.Schema.ContentExpression,
           Coelho.Schema.Default
         ],
-        Phoenix: [Coelho.Ecto, Coelho.Ecto.Type, Coelho.LiveView, Coelho.Plug.Attachments],
+        Phoenix: [
+          Coelho.Ecto,
+          Coelho.Ecto.Type,
+          Coelho.LiveView,
+          Coelho.LiveViewTest,
+          Coelho.Plug.Attachments
+        ],
         Ash: [Coelho.Ash.Type],
         Attachments: [
           Coelho.Attachment,

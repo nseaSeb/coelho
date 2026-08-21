@@ -77,4 +77,58 @@ defmodule Coelho.AttachmentTest do
       assert Code.string_to_quoted(contents) |> elem(0) == :ok
     end
   end
+
+  describe "generate_key/1 with a prefix" do
+    test "shares a shard directory with every other tenant, which is why Disk is not for it" do
+      # The sharding is on the first two characters, and a prefix makes those
+      # the same for everyone. Documented rather than worked around: the
+      # prefix is for object storage, where listing by prefix is the point.
+      {:ok, one} =
+        Coelho.Storage.path(
+          Coelho.Storage.Disk.new("/tmp"),
+          Attachment.generate_key(prefix: "org_acme")
+        )
+
+      {:ok, other} =
+        Coelho.Storage.path(
+          Coelho.Storage.Disk.new("/tmp"),
+          Attachment.generate_key(prefix: "org_beta")
+        )
+
+      assert Path.dirname(one) == Path.dirname(other)
+    end
+
+    test "keeps the key one URL-safe segment, which is what the storage needs" do
+      key = Attachment.generate_key(prefix: "org_acme")
+
+      assert String.starts_with?(key, "org_acme-")
+      assert String.match?(key, ~r/\A[A-Za-z0-9_-]+\z/)
+      assert {:ok, _path} = Coelho.Storage.path(Coelho.Storage.Disk.new("/tmp"), key)
+    end
+
+    test "is still unguessable — the prefix names the tenant, not the file" do
+      keys = for _ <- 1..50, do: Attachment.generate_key(prefix: "org_acme")
+
+      assert length(Enum.uniq(keys)) == 50
+    end
+
+    test "refuses a prefix that would break the key into two segments" do
+      for bad <- ["org/acme", "org acme", "org.acme", ".."] do
+        assert_raise ArgumentError, ~r/URL safe/, fn -> Attachment.generate_key(prefix: bad) end
+      end
+    end
+
+    test "refuses a prefix that is not a string" do
+      assert_raise ArgumentError, ~r/must be a string/, fn ->
+        Attachment.generate_key(prefix: :org_acme)
+      end
+    end
+
+    test "without one, nothing changes" do
+      key = Attachment.generate_key()
+
+      refute key =~ "-org"
+      assert String.match?(key, ~r/\A[A-Za-z0-9_-]+\z/)
+    end
+  end
 end

@@ -1,5 +1,112 @@
 # Changelog
 
+## 0.3.0 — 2026-08-21
+
+A second adoption report, on 0.2.0. Almost all of it is the editor: 0.2.0
+answered what the *document* could not do, and left the component assuming a
+shape — a form, a changeset, a field — that the application reporting had
+nowhere to get.
+
+### The editor
+
+- **`:name` and `:value`, instead of a `:field`.** The component required a
+  `%Phoenix.HTML.FormField{}`, which a surface with no changeset behind it —
+  a JSONB draft posted straight into `phx-change` — could only satisfy by
+  fabricating one. Give it a name and a value instead.
+- **`:flush_event`, for the keystrokes a debounce is still holding.** The
+  editor writes into its hidden input and lets `phx-change` carry it, so a
+  `phx-debounce` can still be holding the last edit when the element leaves
+  the DOM: LiveView cancels the timer with the element and the change is
+  lost. Cancelling a draft, switching a tab, collapsing a section — each
+  removes the editor, and each was where the writer lost their last few
+  characters. The hook now pushes the document on the way out, with a token
+  the application chose, so a flush from before a cancellation can be
+  refused rather than putting back what the cancellation threw away.
+- **`:maxlength`, and a counter that is right at the first paint.** The count
+  is `Coelho.Document.text_length/1`, the same unit the schema's
+  `max_text_length` is checked against, and the server renders the first one
+  so an existing document does not read zero until the hook has started. It
+  shows; refusing is still the schema's job.
+- **A schema changed under a mounted editor is now picked up.** The container
+  carries `phx-update="ignore"`, which meant the node types, the marks and
+  the classes they carry stayed the ones read at mount — what the writer saw
+  stopped matching what the page would render. The hook follows a
+  fingerprint on its own element and rebuilds the view, keeping the
+  document; the toolbar is redrawn with it. Ids are untouched, so
+  `editor_id/1` and `insert_node/3` are unaffected.
+- **`:labels`,** because a toolbar has to speak the reader's language and the
+  commands are not words.
+- The flush token comes back as a **string**, since it travels as a DOM
+  attribute. Comparing it to an integer generation is always false, and every
+  flush is dropped by the clause meant to catch the stale ones.
+- **`coelho_schema/1`,** so several editors share one copy of the exported
+  schema instead of carrying 1.3 KB each.
+
+### Testing it
+
+- `Coelho.LiveViewTest` — `type/4` posts a document as the hook would,
+  `document/2` reads back what an editor is holding, `params/3` builds the
+  parameters for a test that sends them its own way. The editor's container
+  is `phx-update="ignore"`, so it is invisible to `render_change/2`: every
+  test touching it was encoding JSON and nesting parameters by hand.
+
+### Serving attachments
+
+- **`:authorize` on `Coelho.Plug.Attachments`.** A signed URL is a bearer
+  token: whoever holds it, holds the file. Mounting the plug behind the
+  application's authentication pipeline does not close that — it answers
+  "may this person use the application", never "is this file theirs", so a
+  URL minted for one organisation and replayed by a member of another passes
+  both the pipeline and the signature. The callback is given the connection
+  and the key, and the tenant comes from the connection: the key arrives
+  from the URL, so deriving it from there would be asking the attacker which
+  tenant they are in.
+- **`Coelho.Attachment.generate_key/1` takes a `:prefix`,** for an
+  application that backs up or purges per organisation and has no way to
+  list one organisation's objects. It is an inventory aid and never an
+  authorization boundary, and it says so. It belongs with object storage:
+  `Coelho.Storage.Disk` shards on a key's first two characters, which a
+  shared prefix makes identical for every tenant.
+- **A reference S3 adapter, in `Coelho.Storage`'s documentation** rather than
+  in the package: an adapter means an HTTP client and a signing library, and
+  the document core has no dependencies at all. With the two things that
+  bite — `put/3` must stream rather than read, and ExAws over HTTP/2 fails
+  above about a megabyte with `:send_buffer_full`, which looks like a Coelho
+  problem and is a transport one.
+
+### Messages
+
+- `Coelho.Document.Error.describe/1` takes an error apart — position counted
+  from 1, scope, attribute name, mark index — for an application that has to
+  word it in its own language. `humanize/1` is an English default that says
+  `block 2, "href": …` instead of `content[1].marks[0].attrs.href`. Both
+  changesets carry it, under `:human`, beside the machine one.
+
+### Fixed
+
+- `coelho_schema/1`'s JSON was rendered literally as `{@json}`: HEEx leaves
+  the content of a `<script>` alone so that a JavaScript object literal
+  survives it, and the curly interpolation is not interpolation there. It is
+  a hidden element with a `data-` attribute now — patched like anything else,
+  and with none of a script's escaping rules. Marking it `phx-update="ignore"`
+  to keep LiveView off it, which the first version did, froze the one thing
+  an editor reads to notice its schema moved.
+- Rebuilding after a schema change no longer empties the document.
+  `Node.fromJSON` is all or nothing — it throws on the first node, mark or
+  attribute the new schema does not recognise — so a renamed mark used to
+  take the writer's whole document with it, while the hidden input went on
+  holding the old JSON. The document is re-interpreted through the DOM, which
+  is ProseMirror's own lenient path: what the new schema can parse it keeps,
+  what it cannot it drops.
+- The link and caption field is found again after a rebuild. The toolbar's id
+  carries the schema fingerprint, so a schema change makes LiveView replace
+  it — and the field captured at mount was left detached, with the button
+  appearing to do nothing at all.
+- The flush's failure guard catches the failure it was written for.
+  `pushEvent` rejects a promise rather than throwing when the socket has
+  gone, so the `try/catch` never ran and a page navigation logged an uncaught
+  error instead of a warning.
+
 ## 0.2.0 — 2026-08-21
 
 Everything here answers a report from an application that tried to adopt

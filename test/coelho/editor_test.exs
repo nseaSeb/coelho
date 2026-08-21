@@ -1,4 +1,4 @@
-defmodule Coelho.LiveViewTest do
+defmodule Coelho.EditorTest do
   use ExUnit.Case, async: true
 
   import Phoenix.Component, only: [to_form: 2]
@@ -60,7 +60,7 @@ defmodule Coelho.LiveViewTest do
       # Two ignored regions: the editor's DOM, and the toolbar whose
       # aria-pressed the hook keeps in step with the cursor.
       assert html |> String.split(~s(phx-update="ignore")) |> length() == 3
-      assert html =~ ~s(id="post_body-editor-toolbar")
+      assert html =~ ~r/id="post_body-editor-toolbar-[a-z0-9]+"/
     end
 
     test "hands ProseMirror its own subtree, and only that" do

@@ -259,6 +259,13 @@ Coelho.Schema.new(..., limits: [max_nodes: 500, max_depth: 6, max_text_length: 2
 </.form>
 ```
 
+Or without a form, for a surface that has no changeset behind it — a JSONB
+draft whose keys are historical, a field posted straight into `phx-change`:
+
+```heex
+<.coelho_editor name="page[intro_doc]" value={@draft["intro_doc"]} />
+```
+
 The component renders a toolbar, an empty container and a hidden input
 holding the document as JSON. Toolbar buttons carry `aria-pressed`,
 kept in step with what is in force under the cursor, and go `disabled` when
@@ -293,7 +300,87 @@ const remaining = limits.maxTextLength - textLength(view.state.doc)
 ```
 
 The bound travels with the schema, so the counter and the server's check read
-the same number from the same place.
+the same number from the same place. Or let the component do it —
+`maxlength={20_000}` renders a counter and keeps it in step, with the first
+number rendered server side so an existing document does not read zero until
+the hook has started.
+
+### Not losing the last keystrokes
+
+The editor writes into its hidden input and lets `phx-change` carry it, which
+means a `phx-debounce` can still be holding the last edit when the block
+leaves the DOM. Nothing arrives. Cancelling a draft, switching a tab,
+collapsing a section: each of those removes the editor, and each is where it
+bites.
+
+```heex
+<.coelho_editor
+  name="page[intro_doc]"
+  value={@draft["intro_doc"]}
+  flush_event="flush"
+  flush_token={@generation}
+/>
+```
+
+```elixir
+def handle_event("flush", %{"token" => token, "name" => name, "document" => document}, socket) do
+  if token == to_string(socket.assigns.generation) do
+    {:noreply, put_draft(socket, name, document)}
+  else
+    {:noreply, socket}
+  end
+end
+```
+
+The token travels as a DOM attribute, so it comes back as a **string** —
+comparing it to an integer generation is always false, and every flush is
+silently dropped.
+
+The token is yours and so is the comparison, because only the application
+knows what a generation is. It matters: cancelling a draft re-renders the
+editors, and the editors being torn down flush *the content from before the
+cancellation*. Without a token the application bumps when it cancels, the
+flush puts back exactly what was just thrown away.
+
+### Several editors on one page
+
+Each editor carries the exported schema — 1.3 KB for the one that ships — so
+six of them carry it six times. Render it once and point them at it:
+
+```heex
+<.coelho_schema id="page-schema" document_schema={MyApp.RichText.schema()} />
+
+<.coelho_editor
+  name="page[intro_doc]"
+  value={@draft["intro_doc"]}
+  document_schema={MyApp.RichText.schema()}
+  schema_id="page-schema"
+/>
+```
+
+Give the editors the same `document_schema`: `schema_id` says where the
+exported JSON lives, not which schema it is, and an editor filtering its
+toolbar against one schema while building documents from another would show
+up as buttons quietly doing nothing. The browser compares the two and refuses
+the mismatch out loud.
+
+Toolbar labels come from `labels={%{"bold" => gettext("Bold")}}` — the
+commands are not words, and a toolbar has to speak the reader's language.
+
+### Testing it
+
+The editor's container is `phx-update="ignore"`, so it is invisible to
+`render_change/2`: there is no input to fill and no text to assert on. Write
+what the hook would have written:
+
+```elixir
+import Coelho.LiveViewTest
+
+type(view, "page[intro_doc]", paragraph("bonjour"))
+assert document(view, "page[intro_doc]") == paragraph("bonjour")
+```
+
+`params/3` builds the same parameters for a test that sends them its own way.
 
 ```
 npm install @nseaprotector/acme-script prosemirror-state prosemirror-view \
@@ -460,6 +547,46 @@ end
 
 The preview is only the editor's; what is stored is the key. Pass `:id`
 unless the page has exactly one editor — the event reaches all of them.
+
+## Serving attachments to more than one tenant
+
+A signed URL is a bearer token: whoever holds it, holds the file. That is the
+right answer for a single-tenant application and the wrong one the moment
+there is more than one, and mounting the plug behind the application's
+authentication pipeline does not close it — that answers "may this person use
+the application", never "is this file theirs". A URL minted for one
+organisation, replayed by a signed-in member of another, passes both.
+
+```elixir
+plug Coelho.Plug.Attachments,
+  at: "/attachments",
+  storage: {MyApp.Uploads, :storage, []},
+  secret: {MyApp.Uploads, :secret, []},
+  authorize: {MyApp.Uploads, :authorize, []}
+```
+
+```elixir
+def authorize(conn, key) do
+  case conn.assigns[:current_organisation] do
+    nil -> :error
+    organisation -> MyApp.Uploads.owned_by?(key, organisation)
+  end
+end
+```
+
+The organisation comes from the **connection**, never from the key. The key
+arrives in the URL, which is to say from whoever sent the request, so reading
+the tenant out of it is asking the attacker which tenant they are in. That is
+also why `Coelho.Attachment.generate_key(prefix: …)` — which exists so an
+application can list its own objects per organisation — is an inventory aid
+and never a boundary. It belongs with object storage, too:
+`Coelho.Storage.Disk` shards on a key's first two characters, which a shared
+prefix makes identical for every tenant.
+
+Writing a storage for S3 or MinIO: `Coelho.Storage`'s documentation carries a
+complete ExAws adapter to copy, with the two things that bite — `put/3` has
+to stream rather than read a file into memory, and ExAws over HTTP/2 fails
+above about a megabyte with `:send_buffer_full`.
 
 ## Adding a node of your own
 

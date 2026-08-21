@@ -339,4 +339,103 @@ defmodule Coelho.Plug.AttachmentsTest do
       assert get_resp_header(conn, "location") == []
     end
   end
+
+  describe "authorize" do
+    # A signed URL is a bearer token: whoever holds it, holds the file. In a
+    # multi-tenant application that is the wrong answer, and neither the
+    # signature nor the authentication pipeline around it can give the right
+    # one — both answer questions about the request, never about whose file
+    # this is.
+    def owner(conn, key), do: if(conn.assigns[:owned] == key, do: :ok, else: :error)
+
+    def refuse(_conn, _key), do: :error
+
+    defp with_authorize(options, authorize) do
+      Plugged.init(
+        at: "/attachments",
+        storage: options.storage,
+        secret: {__MODULE__, :secret, []},
+        metadata: {__MODULE__, :metadata, []},
+        authorize: authorize
+      )
+    end
+
+    defp get_as(url, options, owned) do
+      :get |> conn(url) |> Plug.Conn.assign(:owned, owned) |> Plugged.call(options)
+    end
+
+    test "serves what the connection is allowed", %{storage: storage, options: options} do
+      key = store(storage, "image", "png bytes")
+      options = with_authorize(options, {__MODULE__, :owner, []})
+
+      conn = get_as(signed(key), options, key)
+
+      assert conn.status == 200
+      assert conn.resp_body == "png bytes"
+    end
+
+    test "refuses a genuine signature for someone else's file", %{
+      storage: storage,
+      options: options
+    } do
+      key = store(storage, "image", "png bytes")
+      options = with_authorize(options, {__MODULE__, :owner, []})
+
+      conn = get_as(signed(key), options, "another-tenants-key")
+
+      assert conn.status == 403
+      assert conn.resp_body == "forbidden"
+    end
+
+    test "refuses in the same words a bad signature does", %{storage: storage, options: options} do
+      key = store(storage, "image", "png bytes")
+
+      refused = get(signed(key), with_authorize(options, {__MODULE__, :refuse, []}))
+      unsigned = get("/attachments/" <> key, options)
+
+      # Telling "this is not yours" apart from "this does not exist" tells the
+      # caller it exists.
+      assert refused.status == unsigned.status
+      assert refused.resp_body == unsigned.resp_body
+    end
+
+    test "takes a function of the connection and the key", %{
+      storage: storage,
+      options: options
+    } do
+      key = store(storage, "image", "png bytes")
+      options = with_authorize(options, fn _conn, _key -> true end)
+
+      assert %{status: 200} = get(signed(key), options)
+    end
+
+    test "is not consulted when the signature already failed", %{
+      storage: storage,
+      options: options
+    } do
+      key = store(storage, "image", "png bytes")
+      options = with_authorize(options, fn _conn, _key -> raise "should not be reached" end)
+
+      assert %{status: 403} = get("/attachments/" <> key, options)
+    end
+
+    test "an expired signature is still expired, not forbidden", %{
+      storage: storage,
+      options: options
+    } do
+      key = store(storage, "image", "png bytes")
+      options = with_authorize(options, fn _conn, _key -> true end)
+
+      assert %{status: 410} = get(signed(key, expires_in: -1), options)
+    end
+
+    test "without it the signature is the only check, which is deliberate", %{
+      storage: storage,
+      options: options
+    } do
+      key = store(storage, "image", "png bytes")
+
+      assert %{status: 200} = get(signed(key), options)
+    end
+  end
 end

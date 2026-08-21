@@ -1,6 +1,11 @@
 import { createHook } from "@nseaprotector/acme-script";
 import OrderedMap from "orderedmap";
-import { Schema, Node as PMNode } from "prosemirror-model";
+import {
+  Schema,
+  Node as PMNode,
+  DOMParser as PMDOMParser,
+  DOMSerializer
+} from "prosemirror-model";
 import { EditorState, Selection, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
@@ -257,6 +262,40 @@ export const textLength = (document) => {
   if (!Array.isArray(node.content)) return 0;
 
   return node.content.reduce((total, child) => total + textLength(child), 0);
+};
+
+// An editor carries the exported schema itself, or points at a
+// `coelho_schema/1` rendered once for several of them to share.
+//
+// The shared one is read fresh every time, which is what lets a schema
+// change reach an editor that does not carry its own — and the fingerprints
+// have to agree, because an editor filtering its toolbar against one schema
+// while building its document from another is a mismatch that shows up as
+// buttons doing nothing rather than as an error.
+const readSchema = (el) => {
+  const src = el.dataset.coelhoSchemaSrc;
+
+  if (!src) {
+    if (!el.dataset.coelhoSchema) throw new Error("coelho: the editor carries no schema");
+    return JSON.parse(el.dataset.coelhoSchema);
+  }
+
+  const shared = window.document.getElementById(src);
+
+  if (!shared?.dataset.coelhoSchema) {
+    throw new Error(`coelho: no <.coelho_schema id="${src}"> on the page`);
+  }
+
+  // The schema alone, not the schema and the toolbar: the shared element has
+  // no toolbar of its own to fingerprint.
+  if (shared.dataset.coelhoSchemaCheck !== el.dataset.coelhoSchemaCheck) {
+    throw new Error(
+      `coelho: the editor and <.coelho_schema id="${src}"> were given different schemas; ` +
+        "pass the same document_schema to both"
+    );
+  }
+
+  return JSON.parse(shared.dataset.coelhoSchema);
 };
 
 export const buildSchema = (exported, { nodes = {}, marks = {} } = {}) =>
@@ -601,6 +640,22 @@ const parseDoc = (schema, value) => {
   }
 };
 
+// Moving a document from one schema to another. `Node.fromJSON` is all or
+// nothing — it throws on the *first* node, mark or attribute the new schema
+// does not recognise — so using it here would answer a renamed mark by
+// emptying the whole document. Going through the DOM is ProseMirror's own
+// lenient path: what the new schema can parse it keeps, what it cannot it
+// drops, and the text stays either way.
+const reinterpret = (doc, from, to) => {
+  const container = window.document.createElement("div");
+
+  container.appendChild(
+    DOMSerializer.fromSchema(from).serializeFragment(doc.content, { document: window.document })
+  );
+
+  return PMDOMParser.fromSchema(to).parse(container);
+};
+
 // -- Hook -------------------------------------------------------------------
 
 // `nodes` and `marks` say how a node *looks*; `nodeViews` say how it
@@ -611,15 +666,29 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
   createHook({
     mounted(ctx) {
       const el = ctx.el;
-      const exported = JSON.parse(el.dataset.coelhoSchema);
       const input = document.getElementById(el.dataset.coelhoInput);
       const content = el.querySelector(".coelho-content");
 
-      const schema = buildSchema(exported, dom);
+      const schema = buildSchema(readSchema(el), dom);
       this._schema = schema;
       this._input = input;
+      this._version = el.dataset.coelhoSchemaVersion;
       this._written = new Set();
       this._pending = new Map();
+
+      this._maxlength = Number(el.dataset.coelhoMaxlength) || 0;
+      this._counter = el.querySelector(".coelho-counter");
+      this._count = el.querySelector("[data-coelho-count]");
+
+      // Captured once, and deliberately not refreshed in updated(). The token
+      // exists so the application can refuse a flush from before whatever it
+      // just did — cancelling a draft re-renders the editors, and the ones
+      // being torn down would otherwise push back the content the cancel
+      // threw away. An editor that read the *new* token on its way out would
+      // have its stale content accepted, which is the bug the token is for.
+      this._flushEvent = el.dataset.coelhoFlushEvent;
+      this._flushToken = el.dataset.coelhoFlushToken ?? null;
+      this._name = input?.name ?? null;
 
       // A bounded memory of what this editor has put in the input.
       this.remember = (json) => {
@@ -680,7 +749,8 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       };
 
       this.syncInput = () => {
-        const json = JSON.stringify(this._view.state.doc.toJSON());
+        const snapshot = this._view.state.doc.toJSON();
+        const json = JSON.stringify(snapshot);
         // Remember what we wrote — and not only the last one. The server
         // echoes asynchronously, so an echo arriving now may answer a
         // keystroke from several ago; applying it would roll the writer back
@@ -696,6 +766,52 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         // spares its children, so a class set on the root or on the
         // container is undone by the next render.
         this._view.dom.classList.toggle("coelho-empty", !this._view.state.doc.textContent);
+        this.refreshCount(snapshot);
+      };
+
+      // The same unit `Coelho.Document.text_length/1` counts, so the number
+      // on screen and the number the schema's `max_text_length` is checked
+      // against are the same number. Counting the rendered text instead
+      // would refuse a document the editor still shows as under the limit,
+      // with nothing on screen to explain the gap.
+      this.refreshCount = (snapshot) => {
+        if (!this._count) return;
+
+        const length = textLength(snapshot ?? this._view.state.doc.toJSON());
+
+        this._count.textContent = String(length);
+        this._counter?.classList.toggle("coelho-over", this._maxlength > 0 && length > this._maxlength);
+      };
+
+      // A schema changed under a mounted editor used to go unnoticed: the
+      // container carries phx-update="ignore", so nothing about the new
+      // vocabulary — its node types, its marks, the classes they carry —
+      // reached the view, and the writer went on seeing the old one. The
+      // server stamps a fingerprint on the hook's own element, which is not
+      // ignored, and this follows it.
+      //
+      // The document is re-parsed against the new schema, so a node it no
+      // longer knows goes; the undo history is dropped with the old schema,
+      // because it is a history of edits the new one may have no words for.
+      this.rebuild = () => {
+        const rebuilt = buildSchema(readSchema(el), dom);
+        const doc = reinterpret(this._view.state.doc, this._schema, rebuilt);
+
+        this._schema = rebuilt;
+        this._version = el.dataset.coelhoSchemaVersion;
+        this._view.updateState(
+          EditorState.create({
+            doc,
+            plugins: [history(), keymap(buildKeymap(rebuilt)), keymap(baseKeymap)]
+          })
+        );
+
+        this.findLinkField();
+        this.refreshToolbar();
+        // The input still holds the document as it was written under the old
+        // schema. Leaving it there would show one thing and post another, and
+        // the next keystroke would post whatever the rebuild had dropped.
+        this.syncInput();
       };
 
       const buttonIn = (event) => {
@@ -746,6 +862,23 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
       el.addEventListener("mousedown", this._onToolbarDown);
       el.addEventListener("click", this._onToolbar);
+
+      // Re-found rather than captured once: the toolbar's id carries the
+      // schema fingerprint, so a schema change makes LiveView replace the
+      // whole toolbar — and with it the link field. Holding the node from
+      // mount would leave `openField` focusing something no longer in the
+      // document, with the visible field carrying no key handler and the
+      // button appearing to do nothing at all.
+      this.findLinkField = () => {
+        if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
+
+        this._linkZone = el.querySelector("[data-coelho-link-zone]");
+        this._linkInput = el.querySelector("[data-coelho-link-input]");
+
+        if (this._linkInput && this._onLinkKey) {
+          this._linkInput.addEventListener("keydown", this._onLinkKey);
+        }
+      };
 
       this._linkZone = el.querySelector("[data-coelho-link-zone]");
       this._linkInput = el.querySelector("[data-coelho-link-input]");
@@ -1024,12 +1157,21 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       document.addEventListener("selectionchange", this._onSelection);
     },
 
-    updated() {
+    updated(ctx) {
+      if (!this._view) return;
+
+      // A new vocabulary is not a new document: rebuilding reads the input
+      // itself, so the value sync below has nothing left to do.
+      if (ctx.el.dataset.coelhoSchemaVersion !== this._version) {
+        this.rebuild();
+        return;
+      }
+
       // The editor's own subtree carries phx-update="ignore", but the hidden
       // input does not: the server can legitimately replace the document, and
       // when it does the editor has to follow.
       const value = this._input?.value;
-      if (!this._view || value === undefined || this._written.has(value)) return;
+      if (value === undefined || this._written.has(value)) return;
 
       const doc = parseDoc(this._schema, value);
 
@@ -1072,7 +1214,27 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this._view.dispatch(transaction);
     },
 
-    destroyed() {
+    destroyed(ctx) {
+      // The editor writes into its hidden input and lets phx-change carry it,
+      // so a phx-debounce can still be holding the last edit when the element
+      // goes. LiveView cancels the timer with the element and the change is
+      // simply lost — the writer's last few characters, gone, with nothing to
+      // show it happened. This is the way out.
+      if (this._flushEvent && this._view) {
+        // `pushEvent` answers with a promise, and rejects it rather than
+        // throwing when the socket has gone — a full page navigation destroys
+        // every hook on the way out. A try/catch never sees that, and the
+        // rejection nobody handles is reported as an uncaught error, which is
+        // exactly what a page's error reporting is watching for.
+        Promise.resolve(
+          ctx.push(this._flushEvent, {
+            token: this._flushToken,
+            name: this._name,
+            document: this._view.state.doc.toJSON()
+          })
+        ).catch((error) => console.warn("coelho: could not flush on destroy", error));
+      }
+
       this.el.removeEventListener("mousedown", this._onToolbarDown);
       this.el.removeEventListener("click", this._onToolbar);
       if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);

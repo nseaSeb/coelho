@@ -68,6 +68,9 @@ defmodule Coelho.EctoTest do
       assert {"is invalid rich text", opts} = changeset.errors[:body]
       assert opts[:validation] == :coelho
       assert opts[:errors] == ["content[0]: unknown node type \"script\""]
+      # Beside the machine one, the sentence a form can show the person who
+      # typed it. Neither is a translation — see Error.describe/1 for that.
+      assert opts[:human] == "block 1: unknown node type \"script\""
     end
 
     test "rejects a string that is not JSON" do

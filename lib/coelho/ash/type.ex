@@ -196,6 +196,7 @@ defmodule Coelho.Ash.Type do
       message: "is not valid rich text (%{location}: %{reason})",
       location: format_path(first.path),
       reason: first.message,
+      human: Error.humanize(first),
       validation: :coelho,
       errors: Enum.map(errors, &Error.format/1)
     ]
