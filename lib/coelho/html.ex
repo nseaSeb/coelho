@@ -518,9 +518,24 @@ defmodule Coelho.HTML do
         |> Enum.flat_map(fn
           [first | _] = run ->
             cond do
-              not inline?(first, schema) -> run
-              blank?(run) -> []
-              true -> [%{"type" => Atom.to_string(block), "content" => trim_edges(run)}]
+              not inline?(first, schema) ->
+                run
+
+              blank?(run) ->
+                []
+
+              # Through `merge_runs/1` like every other inline context, and
+              # for both of its reasons: a run lifted out of a code block
+              # arrives verbatim and has to be collapsed before it is stored,
+              # and lifting can leave two same-mark text nodes side by side
+              # that belong together.
+              true ->
+                [
+                  %{
+                    "type" => Atom.to_string(block),
+                    "content" => run |> merge_runs() |> trim_edges()
+                  }
+                ]
             end
         end)
     end
