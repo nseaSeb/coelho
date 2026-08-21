@@ -70,6 +70,29 @@ if Code.ensure_loaded?(Plug) do
     defaulted, because a default here would either break every single-tenant
     application or quietly do nothing.
 
+    ### What it does, exactly
+
+    Three things worth stating, because a security check is only worth what
+    its edges are worth:
+
+      * **It runs before anything is fetched or minted.** The order is
+        signature, then `:authorize`, then the bytes — so `:metadata` is not
+        called for a request that will be refused, and
+        `c:Coelho.Storage.redirect_url/3` is never asked for a presigned URL
+        on behalf of a caller who is not allowed the file. A refusal costs
+        the application one callback and no query.
+      * **A refusal is `403`, with the same body a bad signature gets.** Not
+        `404`: the two answers are deliberately identical, because telling
+        "this is not yours" apart from "this does not exist" tells the caller
+        it exists. A `404` only ever comes from past this gate, where the
+        caller was already allowed the key.
+      * **It fails closed, by failing.** Nothing here rescues: an exception
+        out of the callback leaves the plug and becomes a `500`, and is never
+        turned into permission. A callback that cannot reach its database
+        stops the request rather than guessing at it — which is the only safe
+        way round, and the reason to let it raise rather than answer `false`
+        on an error it did not expect.
+
     ## Serving other people's files
 
 
