@@ -27,7 +27,21 @@ mix setup
 mix phx.server
 ```
 
-Then open http://localhost:4321. Set `PORT` to use another.
+Then open http://localhost:4321 — or whichever port it announces on the way
+up. If 4321 is taken, [AutoPort](https://hex.pm/packages/autoport) steps to
+the next free one and says so:
+
+```
+Port 4321 is in use, using 4322
+```
+
+Set `PORT` to decide it yourself. That wins outright, which is what
+`docker/check.sh` relies on: it sets `PORT` and then points the browser
+checks at `http://localhost:$PORT`, so a port that moved on its own would
+leave them waiting on an address nothing is listening to. AutoPort is asked
+only when nobody has said, and only in development — it checks a port and
+then binds it, and the gap between the two is a race nothing should depend on
+anywhere else.
 
 There is **no database**. Coelho stores the document in the row that owns it,
 so the demo gets away with an `embedded_schema` and a changeset — that is the

@@ -50,6 +50,11 @@ defmodule Demo.MixProject do
       {:phoenix_ecto, "~> 4.6"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
+      # Finds a free port when PORT is not set, so the demo does not fight
+      # whatever else is being worked on. Development only, by its own
+      # advice: it checks a port and then binds it, and the gap between the
+      # two is a race nothing should depend on in production.
+      {:autoport, "~> 1.0", only: :dev},
       {:phoenix_live_view, "~> 1.1.0"},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},

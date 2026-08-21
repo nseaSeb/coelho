@@ -23,7 +23,20 @@ end
 # 4321 rather than the generator's 4000, which tends to be taken by whatever
 # else is being worked on. This runs after config/dev.exs and wins, so it is
 # the one place the port is decided.
-config :demo, DemoWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4321"))]
+#
+# `PORT` still wins outright, and has to: `docker/check.sh` sets it and then
+# points the browser checks at `http://localhost:$PORT`, so a port that moved
+# on its own would leave them waiting on an address nothing is listening to.
+# It is only when nobody has said which port that AutoPort goes looking for a
+# free one — and only in development, where it is meant to be used.
+port =
+  case {System.get_env("PORT"), config_env()} do
+    {nil, :dev} -> AutoPort.find(4321)
+    {nil, _env} -> 4321
+    {port, _env} -> String.to_integer(port)
+  end
+
+config :demo, DemoWeb.Endpoint, http: [port: port]
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
