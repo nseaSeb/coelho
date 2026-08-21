@@ -143,6 +143,11 @@ jobs:
     env:
       MIX_ENV: dev
       BROWSER: ${{ matrix.browser }}
+      # Said out loud, because the steps below assert it twice — the curl
+      # that waits for the server, and BASE_URL. The demo asks AutoPort for a
+      # free port when nobody has named one, which on a fresh runner answers
+      # 4321 and on a busy one would not.
+      PORT: "4321"
 
     strategy:
       fail-fast: false
@@ -165,6 +170,24 @@ jobs:
           cache: npm
           cache-dependency-path: demo/package-lock.json
 
+      # `mix assets.setup` fetches the Tailwind and esbuild binaries from
+      # GitHub's release downloads, and this was the only job of the three
+      # not to keep them: every run asked for them again, three times over in
+      # parallel, and a 504 from GitHub failed the lot. They live in
+      # `demo/_build`.
+      #
+      # The three browsers share a key on purpose — the binaries are the same
+      # for all of them. On a cold run all three try to save it and two are
+      # told another job got there first, which is a warning and not a
+      # failure.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            demo/deps
+            demo/_build
+          key: ${{ runner.os }}-browser-${{ hashFiles('demo/mix.lock', 'mix.exs') }}
+          restore-keys: ${{ runner.os }}-browser-
+
       - name: Install dependencies
         working-directory: demo
         run: |
@@ -180,12 +203,20 @@ jobs:
       - name: Drive the editor in a real browser
         working-directory: demo
         run: |
-          mix phx.server &
+          mix phx.server > /tmp/demo.log 2>&1 &
           for _ in $(seq 1 60); do
-            curl -sf -o /dev/null http://localhost:4321/ && break
+            curl -sf -o /dev/null "http://localhost:${PORT}/" && break
             sleep 1
           done
-          BASE_URL=http://localhost:4321 npm run test:browser
+          # The loop cannot fail on its own: it runs out of tries and falls
+          # through, and the suite then fails with a connection error rather
+          # than with the reason. Say it here, the way docker/check.sh does.
+          if ! curl -sf -o /dev/null "http://localhost:${PORT}/"; then
+            echo "the demo never came up on port ${PORT}:"
+            tail -30 /tmp/demo.log
+            exit 1
+          fi
+          BASE_URL="http://localhost:${PORT}" npm run test:browser
 
   bridge:
     name: Schema bridge
