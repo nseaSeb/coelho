@@ -421,6 +421,7 @@ defmodule Coelho.Schema do
     |> put_unless_nil("group", groups_to_json(spec.group))
     |> put_unless_nil("marks", marks_to_json(spec.marks))
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
+    |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_when_true("inline", spec.inline)
     |> put_when_true("atom", spec.void)
@@ -429,6 +430,7 @@ defmodule Coelho.Schema do
   defp mark_to_json(%MarkSpec{} = spec) do
     %{}
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
+    |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
   end
 
@@ -469,6 +471,32 @@ defmodule Coelho.Schema do
       json = if attr.required, do: %{}, else: %{"default" => attr.default}
       {Atom.to_string(name), json}
     end)
+  end
+
+  # `:render_as` travels beside the attributes rather than inside them: what
+  # goes into `attrs` is handed to ProseMirror as an attribute spec, and a
+  # key it does not know is a key it is free to give a meaning to later.
+  #
+  # A `{:style, property}` carries the values it may render, read off the
+  # validator it is required to have. The browser is a renderer too, and one
+  # that trusted the stored value would show the writer something the page
+  # then refuses.
+  defp attr_render_as_to_json(attrs) do
+    rendered =
+      for {name, %Attr{render_as: render_as} = attr} <- attrs,
+          render_as != nil,
+          into: %{},
+          do: {Atom.to_string(name), render_as_to_json(render_as, attr)}
+
+    if rendered == %{}, do: nil, else: rendered
+  end
+
+  defp render_as_to_json({:style, property}, attr) do
+    %{"style" => property, "values" => Attr.render_values(attr)}
+  end
+
+  defp render_as_to_json({:class, classes}, _attr) do
+    %{"class" => Map.new(classes, fn {value, class} -> {Attr.class_json_key(value), class} end)}
   end
 
   defp put_unless_nil(map, _key, nil), do: map

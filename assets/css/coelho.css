@@ -283,9 +283,17 @@
 
 /* -- Alignment ----------------------------------------------------------- */
 
-/* The renderer emits an inline text-align, so nothing is needed for the page.
- * This is here because ProseMirror renders the same attribute the same way,
- * and a rule that fought it would make the editor disagree with the page. */
+/* The shipped schema renders alignment as an inline text-align, so nothing is
+ * needed for the page, and a rule here would only fight it — the editor
+ * renders the same attribute the same way, and the two must agree.
+ *
+ * An inline style is also what no stylesheet can answer. An application that
+ * wants alignment in CSS asks the schema for classes instead of a style, and
+ * names them itself:
+ *
+ *   Coelho.Schema.Default.build(align: {:class, %{"center" => "text-center"}})
+ *
+ * Both halves then emit that class, so these rules stay the application's. */
 
 @media (prefers-color-scheme: dark) {
   .coelho:not([data-coelho-theme="light"]) {

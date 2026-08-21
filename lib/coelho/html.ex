@@ -420,11 +420,48 @@ defmodule Coelho.HTML do
 
     Enum.find_value(rules, fn
       {^tag, extract} ->
-        specs |> resolve_attrs(extract_attrs(extract, html_attrs, children))
+        extracted = extract_attrs(extract, html_attrs, children)
+
+        # What `:render_as` wrote, read back — a mechanism that renders a
+        # value but cannot recognise it again is half a mechanism, and the
+        # markup would lose the attribute on the next import. The rule's own
+        # extraction wins where both answer: it is the one that knows the
+        # shapes an import has to tolerate beyond what Coelho itself emits.
+        specs
+        |> resolve_attrs(Map.merge(render_as_attrs(specs, html_attrs), extracted))
 
       _rule ->
         nil
     end)
+  end
+
+  defp render_as_attrs(specs, html_attrs) do
+    for {name, %Attr{render_as: render_as}} <- specs,
+        render_as != nil,
+        value = render_as_value(render_as, html_attrs),
+        into: %{},
+        do: {Atom.to_string(name), value}
+  end
+
+  # The class the element carries, looked up the other way round. A class
+  # the map does not name is not this attribute's, and a class list is
+  # whitespace separated.
+  defp render_as_value({:class, classes}, html_attrs) do
+    named = Map.new(classes, fn {value, class} -> {class, value} end)
+
+    html_attrs
+    |> Map.get("class", "")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.find_value(&Map.get(named, &1))
+  end
+
+  defp render_as_value({:style, property}, html_attrs) do
+    pattern = ~r/(?:^|;)\s*#{Regex.escape(property)}\s*:\s*([^;]+)/i
+
+    case Regex.run(pattern, Map.get(html_attrs, "style", "")) do
+      [_match, value] -> value |> String.trim() |> String.downcase()
+      nil -> nil
+    end
   end
 
   # A rule that only sees attributes cannot keep what the element said. The
