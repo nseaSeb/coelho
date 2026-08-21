@@ -32,10 +32,125 @@ defmodule Coelho do
   alias Coelho.{Document, Render, Schema}
 
   @doc """
+  A byte-for-byte stable serialisation of a validated document.
+  """
+  @spec canonical(term()) :: binary()
+  defdelegate canonical(document), to: Document
+
+  @doc """
   Validates and normalises a document against a schema.
   """
   @spec validate(term(), Schema.t()) :: {:ok, map()} | {:error, [Document.Error.t()]}
   def validate(document, schema \\ Schema.default()), do: Document.validate(document, schema)
+
+  @doc """
+  Turns any term into a document the schema accepts, without failing.
+
+  The counterpart of `validate/2` for the way out: see
+  `Coelho.Document.sanitize/2` for what it removes and why a stored document
+  needs it at all.
+  """
+  @spec sanitize(term(), Schema.t()) :: map()
+  def sanitize(document, schema \\ Schema.default()), do: Document.sanitize(document, schema)
+
+  @doc """
+  The number of characters a writer typed, counted the way the editor counts.
+  """
+  @spec text_length(term()) :: non_neg_integer()
+  def text_length(document), do: Document.text_length(document)
+
+  @doc """
+  The hex digest of a validated document, or `nil` when it holds nothing.
+  """
+  @spec hash(term(), :sha256 | :sha512 | :sha384 | :sha224 | :sha) :: String.t() | nil
+  def hash(document, algorithm \\ :sha256), do: Document.hash(document, algorithm)
+
+  @doc """
+  Moves a document from one schema version to the next.
+
+  A schema that declares a `:version` stamps it on every document it
+  validates, and refuses a document stamped with another — which is the
+  whole point: when a node is renamed or an attribute retired, there is
+  otherwise no way to tell a document written under the old vocabulary from
+  one that is simply wrong.
+
+      Coelho.migrate(document, from: 1, to: 2, with: &MyApp.RichText.v1_to_v2/1)
+
+  `:with` takes the document and returns the rewritten one. Crossing more
+  than one version at a time takes a map of the step to run *into* each
+  version:
+
+      Coelho.migrate(document, from: 1, to: 3, with: %{2 => &v1_to_v2/1, 3 => &v2_to_v3/1})
+
+  The result is stamped with `:to` and is **not** validated: run it through
+  `validate/2` with the new schema, which is where a migration that missed
+  something says so.
+  """
+  @spec migrate(map(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  def migrate(document, opts) when is_map(document) and is_list(opts) do
+    from = version!(opts, :from)
+    to = version!(opts, :to)
+    steps = Keyword.fetch!(opts, :with)
+
+    with :ok <- check_direction(from, to),
+         :ok <- check_migration_version(document, from),
+         {:ok, migrated} <- run_migration(document, from, to, steps) do
+      {:ok, Map.put(migrated, "schema_version", to)}
+    end
+  end
+
+  # A version that is not a positive integer is a call written wrong, not a
+  # document that failed: raising says so where it happened, instead of an
+  # ArithmeticError from inside the step loop.
+  defp version!(opts, key) do
+    case Keyword.fetch!(opts, key) do
+      version when is_integer(version) and version > 0 ->
+        version
+
+      other ->
+        raise ArgumentError,
+              "#{inspect(key)} must be a positive integer, got #{inspect(other)}"
+    end
+  end
+
+  defp check_direction(from, to) when to >= from, do: :ok
+
+  defp check_direction(from, to),
+    do: {:error, "cannot migrate backwards, from #{from} to #{to}"}
+
+  defp check_migration_version(document, from) do
+    case Map.get(document, "schema_version", from) do
+      ^from -> :ok
+      other -> {:error, "document is at schema version #{inspect(other)}, not #{inspect(from)}"}
+    end
+  end
+
+  defp run_migration(document, from, to, _steps) when from == to, do: {:ok, document}
+
+  defp run_migration(document, from, to, fun) when is_function(fun, 1) do
+    if to == from + 1 do
+      {:ok, fun.(document)}
+    else
+      {:error,
+       "migrating from #{from} to #{to} crosses more than one version; " <>
+         "give :with a map of the step into each version"}
+    end
+  end
+
+  defp run_migration(document, from, to, steps) when is_map(steps) do
+    Enum.reduce_while((from + 1)..to, {:ok, document}, fn version, {:ok, document} ->
+      case Map.fetch(steps, version) do
+        {:ok, fun} -> {:cont, {:ok, fun.(document)}}
+        :error -> {:halt, {:error, "no migration step into schema version #{version}"}}
+      end
+    end)
+  end
+
+  defp run_migration(_document, _from, _to, steps) do
+    raise ArgumentError,
+          ":with must be a function of the document, or a map of the step into each " <>
+            "version, got #{inspect(steps)}"
+  end
 
   @doc """
   Renders a validated document to HTML.
@@ -56,13 +171,25 @@ defmodule Coelho do
   def to_html(document, %Schema{} = schema, opts), do: Render.to_html(document, schema, opts)
 
   @doc """
-  Converts existing HTML into a validated document.
+  Folds a document into any term at all, for a target that is not HTML.
+
+  See `Coelho.Render.reduce/4`.
+  """
+  @spec reduce(map(), Schema.t(), Render.callbacks(), Render.opts()) :: term()
+  def reduce(document, schema \\ Schema.default(), callbacks, opts \\ []),
+    do: Render.reduce(document, schema, callbacks, opts)
+
+  @doc """
+  Converts existing HTML into a validated document, and says what it left
+  behind.
 
   The migration path for content already stored as HTML. Requires the
-  optional `:floki` dependency; see `Coelho.HTML` for what the import does
-  with markup the schema does not know.
+  optional `:floki` dependency; see `Coelho.HTML.from_html/2` for what the
+  import does with markup the schema does not know, and for the shape of the
+  warnings.
   """
-  @spec from_html(String.t(), Schema.t()) :: {:ok, map()} | {:error, term()}
+  @spec from_html(String.t(), Schema.t()) ::
+          {:ok, map(), [Coelho.HTML.warning()]} | {:error, term()}
   def from_html(html, schema \\ Schema.default()), do: Coelho.HTML.from_html(html, schema)
 
   @doc """

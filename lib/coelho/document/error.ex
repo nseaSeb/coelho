@@ -22,7 +22,11 @@ defmodule Coelho.Document.Error do
     end
   end
 
-  defp format_path(path) do
+  @doc """
+  Renders a path as `content[0].attrs.href`, or `""` for the document itself.
+  """
+  @spec format_path([segment()]) :: String.t()
+  def format_path(path) do
     path
     |> Enum.reduce("", fn
       segment, "" when is_binary(segment) -> segment

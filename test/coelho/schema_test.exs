@@ -70,7 +70,10 @@ defmodule Coelho.SchemaTest do
 
       assert nodes["doc"]["content"] == "block+"
       assert nodes["paragraph"]["group"] == "block"
-      assert nodes["heading"]["attrs"] == %{"level" => %{"default" => 1}}
+
+      assert nodes["heading"]["attrs"] ==
+               %{"level" => %{"default" => 1}, "align" => %{"default" => nil}}
+
       assert nodes["image"]["atom"] == true
       assert nodes["image"]["inline"] == true
       # A required attribute has no default, which is how ProseMirror spells it.

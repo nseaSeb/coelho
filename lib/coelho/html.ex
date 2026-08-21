@@ -7,7 +7,7 @@ defmodule Coelho.HTML do
   that content into the schema before any of the rest of Coelho applies to
   it:
 
-      {:ok, document} = Coelho.HTML.from_html(post.body_html)
+      {:ok, document, _warnings} = Coelho.HTML.from_html(post.body_html)
 
       post
       |> Ecto.Changeset.change(%{body: document})
@@ -86,15 +86,123 @@ defmodule Coelho.HTML do
   @fence "\u{E001}"
 
   @doc """
-  Converts HTML into a validated document.
+  Converts HTML into a validated document, and says what it left behind.
+
+  The import is lenient by design: markup the schema has no rule for is
+  dropped and the text inside it is kept, because the alternative — refusing
+  the paste — loses more. But silence about it is its own problem. Someone
+  importing terms and conditions out of a word processor gets a document
+  back with the tables gone and no way to know, and finds out from a reader.
+
+  So the third element of the result says what was removed:
+
+      {:ok, document, warnings} = Coelho.HTML.from_html(html, schema)
+      #=> warnings: [
+      #=>   %{kind: :dropped_attribute, tag: "p", attribute: "style", count: 12},
+      #=>   %{kind: :rejected_element, tag: "a", count: 1},
+      #=>   %{kind: :unknown_element, tag: "table", count: 3}
+      #=> ]
+
+    * `:unknown_element` — no node or mark in the schema parses that tag; the
+      element is gone and its text was lifted into its parent
+    * `:rejected_element` — the schema has a rule for the tag, but the
+      attributes the element carried failed their validators, so the rule did
+      not apply. `<a href="javascript:alert(1)">` is this one: the text
+      stays, the link does not
+    * `:dropped_attribute` — the element was kept, and this attribute is not
+      one its rule extracts
+
+  Warnings are counts per tag, in a stable order, and they describe the
+  *HTML*: an element the schema knows but that could not fit where it
+  appeared — a list item outside a list — is repaired by the import rather
+  than reported here. A mark refused because of where it sat, such as bold
+  inside a code block, is not reported either.
   """
-  @spec from_html(String.t(), Schema.t()) :: {:ok, map()} | {:error, term()}
+  @spec from_html(String.t(), Schema.t()) :: {:ok, map(), [warning()]} | {:error, term()}
   def from_html(html, %Schema{} = schema \\ Schema.default()) when is_binary(html) do
-    with {:ok, trees} <- html |> mark_separators() |> parse_fragment() do
-      trees
-      |> convert(schema, :all, [])
-      |> finish(schema)
+    with {:ok, trees} <- html |> mark_separators() |> parse_fragment(),
+         {:ok, document} <- trees |> convert(schema, :all, []) |> finish(schema) do
+      {:ok, document, warnings(trees, schema)}
     end
+  end
+
+  @type warning ::
+          %{kind: :unknown_element | :rejected_element, tag: String.t(), count: pos_integer()}
+          | %{
+              kind: :dropped_attribute,
+              tag: String.t(),
+              attribute: String.t(),
+              count: pos_integer()
+            }
+
+  # A second, read-only walk rather than an accumulator threaded through the
+  # conversion: the conversion lifts, wraps and merges as it goes, and
+  # carrying a warning list through all of it would put a reporting concern
+  # inside every transform that has nothing to do with reporting.
+  defp warnings(trees, schema) do
+    trees
+    |> collect_warnings(schema, [])
+    |> Enum.frequencies()
+    |> Enum.sort()
+    |> Enum.map(fn
+      {{:dropped_attribute, tag, attribute}, count} ->
+        %{kind: :dropped_attribute, tag: tag, attribute: attribute, count: count}
+
+      {{kind, tag}, count} ->
+        %{kind: kind, tag: tag, count: count}
+    end)
+  end
+
+  defp collect_warnings(trees, schema, acc) when is_list(trees),
+    do: Enum.reduce(trees, acc, &collect_warnings(&1, schema, &2))
+
+  defp collect_warnings({tag, attrs, children}, schema, acc) when is_binary(tag) do
+    acc =
+      case match(schema, tag, attrs, children) do
+        nil ->
+          if parses_tag?(schema, tag),
+            do: [{:rejected_element, tag} | acc],
+            else: [{:unknown_element, tag} | acc]
+
+        matched ->
+          dropped_attributes(schema, tag, attrs, children, matched, acc)
+      end
+
+    collect_warnings(children, schema, acc)
+  end
+
+  defp collect_warnings(_tree, _schema, acc), do: acc
+
+  defp match(schema, tag, attrs, children) do
+    match_node(schema, tag, attrs, children) || match_mark(schema, tag, attrs, children, :all)
+  end
+
+  # Told apart from an unknown element because the two call for different
+  # answers: an unknown tag means the schema does not cover this markup, a
+  # rejected one means it does, and refused what this element carried.
+  defp parses_tag?(schema, tag) do
+    specs = Map.values(schema.nodes) ++ Map.values(schema.marks)
+    Enum.any?(specs, fn spec -> Enum.any?(spec.parse, &match?({^tag, _extract}, &1)) end)
+  end
+
+  # Whether an attribute was used cannot be read off the names that came out:
+  # a rule is free to rename as it extracts, and the shipped ones do —
+  # `style` becomes `align`, `data-user-id` becomes `user_id`. Comparing the
+  # names either side reports every one of those as dropped, which on the
+  # import path that motivated `align` means a warning per paragraph.
+  #
+  # So the question is asked of the rule instead: take the attribute away,
+  # match again, and if nothing about the match changed then nothing read it.
+  defp dropped_attributes(schema, tag, attrs, children, matched, acc) do
+    Enum.reduce(attrs, acc, fn {name, _value}, acc ->
+      without = Enum.reject(attrs, fn {other, _} -> other == name end)
+
+      if match(schema, tag, without, children) == matched do
+        [{:dropped_attribute, tag, name} | acc]
+      else
+        acc
+      end
+    end)
   end
 
   @doc """
@@ -142,7 +250,37 @@ defmodule Coelho.HTML do
   # -- Conversion -----------------------------------------------------------
 
   defp convert(trees, schema, allowed_marks, marks) do
-    Enum.flat_map(trees, &convert_tree(&1, schema, allowed_marks, marks))
+    trees
+    |> Enum.flat_map(&convert_tree(&1, schema, allowed_marks, marks))
+    |> merge_runs()
+  end
+
+  # Whitespace is collapsed per text node, and an element the schema does not
+  # know is transparent — so `a&nbsp;&nbsp;&nbsp;<i>&nbsp;&nbsp;&nbsp;b</i>`
+  # arrives here as two nodes that each kept one space, and storing them side
+  # by side stores two. The document is legal and renders correctly, but
+  # importing what was rendered collapses the pair to one: the two spaces are
+  # a single run by then. A round trip through storage would go on shortening
+  # people's text, a space at a time.
+  #
+  # So a run of text is made whole before it is stored, and collapsed as the
+  # one run it is. Marks have to match — the space between bold and plain
+  # text belongs to one of them, and joining across the boundary would move
+  # it.
+  defp merge_runs(children) do
+    children
+    |> Enum.reduce([], fn
+      %{"type" => "text"} = node, [%{"type" => "text"} = previous | rest] = acc ->
+        if Map.get(node, "marks", []) == Map.get(previous, "marks", []) do
+          [%{previous | "text" => collapse(previous["text"] <> node["text"])} | rest]
+        else
+          [node | acc]
+        end
+
+      node, acc ->
+        [node | acc]
+    end)
+    |> Enum.reverse()
   end
 
   defp convert_tree(text, _schema, _allowed_marks, marks) when is_binary(text) do
@@ -226,6 +364,7 @@ defmodule Coelho.HTML do
           children
           |> convert(schema, spec.marks, if(spec.inline, do: marks, else: []))
           |> fit(spec, schema)
+          |> merge_runs()
           |> trim_edges()
 
         [Map.put(node, "content", content)]
@@ -481,7 +620,7 @@ defmodule Coelho.HTML do
 
   defp finish(children, schema) do
     spec = Schema.node_spec(schema, schema.top_node)
-    children = fit(children, spec, schema)
+    children = children |> fit(spec, schema) |> merge_runs()
 
     children =
       if children == [] and not matches?(spec.content, [], schema) do

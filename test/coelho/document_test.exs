@@ -4,6 +4,8 @@ defmodule Coelho.DocumentTest do
   alias Coelho.{Document, Schema}
   alias Coelho.Document.Error
 
+  doctest Coelho.Document
+
   defp schema, do: Schema.default()
 
   defp doc(content), do: %{"type" => "doc", "content" => content}
@@ -21,11 +23,20 @@ defmodule Coelho.DocumentTest do
       assert {:ok, ^document} = Document.validate(document, schema())
     end
 
-    test "fills optional attributes with their schema default" do
+    test "leaves out an optional attribute that is at its schema default" do
       document = doc([%{"type" => "heading", "content" => [text("Title")]}])
 
       assert {:ok, normalised} = Document.validate(document, schema())
-      assert [%{"attrs" => %{"level" => 1}}] = normalised["content"]
+      refute Map.has_key?(hd(normalised["content"]), "attrs")
+    end
+
+    test "leaves out an attribute written out at its schema default" do
+      spelled = doc([%{"type" => "heading", "attrs" => %{"level" => 1}, "content" => []}])
+      implied = doc([%{"type" => "heading", "content" => []}])
+
+      assert {:ok, normalised} = Document.validate(spelled, schema())
+      assert {:ok, ^normalised} = Document.validate(implied, schema())
+      refute Map.has_key?(hd(normalised["content"]), "attrs")
     end
 
     test "keeps an explicit attribute" do
@@ -36,6 +47,18 @@ defmodule Coelho.DocumentTest do
       assert [%{"attrs" => %{"level" => 3}}] = normalised["content"]
     end
 
+    test "rejects what is not a document at all, without raising" do
+      for value <- [nil, "", 42, [], "not a document"] do
+        assert {:error, [%Error{path: [], message: "expected an object"}]} =
+                 Document.validate(value, schema())
+      end
+    end
+
+    test "rejects the empty map for the reason it is not a document" do
+      assert {:error, [%Error{path: [], message: ~s(missing "type")}]} =
+               Document.validate(%{}, schema())
+    end
+
     test "rejects an unknown node type" do
       assert ["content[0]: unknown node type \"script\""] =
                doc([%{"type" => "script"}]) |> Document.validate(schema()) |> messages()
@@ -44,7 +67,7 @@ defmodule Coelho.DocumentTest do
     test "rejects an unknown attribute" do
       document = doc([%{"type" => "paragraph", "attrs" => %{"onclick" => "x"}, "content" => []}])
 
-      assert ["content[0].attrs: unknown attribute \"onclick\""] =
+      assert ["content[0].attrs.onclick: unknown attribute \"onclick\""] =
                document |> Document.validate(schema()) |> messages()
     end
 
@@ -267,12 +290,15 @@ defmodule Coelho.DocumentTest do
       # about 2.4 s at the size below. Linear, it measures 49 ms — so the
       # budget is wide enough to survive a cold, loaded machine and still far
       # under what quadratic would cost.
+      # The node bound would refuse this document before counting a single
+      # error, and what is under test here is the counting.
+      schema = Schema.extend(schema(), limits: [max_nodes: :infinity])
       document = doc(List.duplicate(%{"type" => "script"}, 32_000))
 
-      Document.validate(doc(List.duplicate(%{"type" => "script"}, 100)), schema())
+      Document.validate(doc(List.duplicate(%{"type" => "script"}, 100)), schema)
 
       {microseconds, {:error, errors}} =
-        :timer.tc(fn -> Document.validate(document, schema()) end)
+        :timer.tc(fn -> Document.validate(document, schema) end)
 
       assert length(errors) == 32_000
       assert microseconds < 1_000_000
