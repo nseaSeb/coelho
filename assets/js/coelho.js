@@ -35,14 +35,6 @@ const clampLevel = (level) => (Number.isInteger(level) && level >= 1 && level <=
 
 const ALIGNS = ["left", "center", "right", "justify"];
 
-// Alignment is stored as an attribute and shown as a style, on both sides:
-// the server renders the same `text-align` so what the writer sees is what
-// the public page will carry.
-const alignAttrs = (node, attrs = {}) =>
-  ALIGNS.includes(node.attrs.align)
-    ? { ...attrs, style: `text-align:${node.attrs.align}` }
-    : attrs;
-
 // The style wins, and the attribute is the fallback — but a style naming
 // something that is not an alignment falls *through* to the attribute rather
 // than ending the search, which is what Coelho.Schema.Default.align_of/1
@@ -66,11 +58,11 @@ export const setPreviewUrl = (key, url) => {
 
 export const defaultNodeDOM = {
   paragraph: {
-    toDOM: (node) => ["p", alignAttrs(node), 0],
+    toDOM: () => ["p", 0],
     parseDOM: [{ tag: "p", getAttrs: (dom) => ({ align: readAlign(dom) }) }]
   },
   heading: {
-    toDOM: (node) => ["h" + clampLevel(node.attrs.level), alignAttrs(node), 0],
+    toDOM: (node) => ["h" + clampLevel(node.attrs.level), 0],
     parseDOM: [1, 2, 3, 4, 5, 6].map((level) => ({
       tag: `h${level}`,
       getAttrs: (dom) => ({ level, align: readAlign(dom) })
@@ -89,7 +81,7 @@ export const defaultNodeDOM = {
     parseDOM: [{ tag: "ol", getAttrs: (dom) => ({ start: +(dom.getAttribute("start") || 1) }) }]
   },
   list_item: {
-    toDOM: (node) => ["li", alignAttrs(node), 0],
+    toDOM: () => ["li", 0],
     parseDOM: [{ tag: "li", getAttrs: (dom) => ({ align: readAlign(dom) }) }],
     defining: true
   },
@@ -198,9 +190,13 @@ const toOrderedMap = (pairs, dom) => {
   let map = OrderedMap.from({});
 
   for (const [name, spec] of pairs) {
-    const { editorAttrs, ...rest } = spec;
+    const { editorAttrs, attrRenderAs, ...rest } = spec;
+    // The attribute's class first, the spec's class after it — the order
+    // `Coelho.Render` puts them in, so the two halves emit the same string
+    // and not merely the same set.
+    const built = withAttrRenderAs({ ...rest, ...(dom[name] ?? {}) }, attrRenderAs);
 
-    map = map.addToEnd(name, withEditorAttrs({ ...rest, ...(dom[name] ?? {}) }, editorAttrs));
+    map = map.addToEnd(name, withEditorAttrs(built, editorAttrs));
   }
 
   return map;
@@ -222,6 +218,129 @@ const withEditorAttrs = (spec, editorAttrs) => {
   };
 };
 
+// An attribute may declare how its value reaches the DOM — a style, or a
+// class it maps to. Declared once in Elixir and applied on both sides, so
+// the editor shows what the page will carry; an application changing it
+// changes it in one place, and writes no JavaScript at all.
+//
+// A `{style}` carries the values it may render. Trusting the stored value
+// instead would let a document written under a looser schema put anything
+// into a style attribute here, and show the writer what the server, which
+// checks the same list, then refuses.
+const attrDOM = (nodeOrMark, attrRenderAs) => {
+  const attrs = {};
+
+  for (const [name, how] of Object.entries(attrRenderAs)) {
+    const value = nodeOrMark.attrs?.[name];
+
+    if (how.class) {
+      // `hasOwnProperty`, never a bare index: every object inherits
+      // `constructor` and `__proto__`, so a stored `align: "constructor"`
+      // — exactly the value written under a looser schema this map is the
+      // allow list against — would otherwise resolve truthy and put the
+      // source of `Object` in a class attribute.
+      if (Object.prototype.hasOwnProperty.call(how.class, keyOf(value))) {
+        const named = how.class[keyOf(value)];
+
+        attrs.class = attrs.class ? `${attrs.class} ${named}` : named;
+      }
+    } else if (how.style && how.values?.includes(value)) {
+      const style = `${how.style}:${value}`;
+
+      attrs.style = attrs.style ? `${attrs.style};${style}` : style;
+    }
+  }
+
+  return attrs;
+};
+
+// What the server calls the value — `Coelho.Schema.Attr.class_json_key/1`.
+// An object indexes by the string form of its key anyway; `null` is the one
+// that has to be said out loud, since it is a value an unset attribute
+// really takes.
+const keyOf = (value) => (value === null || value === undefined ? "null" : String(value));
+
+// Read back what `attrDOM` wrote. A mechanism that renders a value but
+// cannot recognise it again is half a mechanism: copying a paragraph inside
+// the editor round-trips it through toDOM and parseDOM, so in class mode the
+// alignment would be lost on paste — by the editor, on its own markup.
+const attrsFromDOM = (dom, attrRenderAs) => {
+  const attrs = {};
+
+  for (const [name, how] of Object.entries(attrRenderAs)) {
+    if (how.class) {
+      const named = new Map(Object.entries(how.class).map(([value, c]) => [c, value]));
+      const found = (dom.getAttribute("class") ?? "").split(/\s+/).find((c) => named.has(c));
+
+      // "null" is what an unset value is called on the way out, so it is
+      // what it answers to on the way back.
+      if (found !== undefined) {
+        const value = named.get(found);
+
+        attrs[name] = value === "null" ? null : value;
+      }
+    } else if (how.style) {
+      const pattern = new RegExp(`(?:^|;)\\s*${how.style}\\s*:\\s*([^;]+)`, "i");
+      const found = pattern.exec(dom.getAttribute("style") ?? "")?.[1]?.trim().toLowerCase();
+
+      if (how.values?.includes(found)) attrs[name] = found;
+    }
+  }
+
+  return attrs;
+};
+
+// A parseDOM rule is `{tag}` or `{tag, getAttrs}`, and a `getAttrs` that
+// answers `false` is refusing the element — which must survive being
+// wrapped, or the rule would start matching what it meant to decline.
+const withParsedAttrs = (rules, attrRenderAs) =>
+  rules.map((rule) => {
+    if (typeof rule !== "object" || rule === null || !rule.tag) return rule;
+
+    const getAttrs = rule.getAttrs;
+
+    return {
+      ...rule,
+      getAttrs: (dom) => {
+        const read = attrsFromDOM(dom, attrRenderAs);
+
+        if (!getAttrs) return read;
+
+        const own = getAttrs(dom);
+
+        // The rule's own extraction wins where both answer: it is the one
+        // that knows the shapes an import has to tolerate beyond what
+        // Coelho emits — a pasted `align="right"`, say.
+        return own === false || own === null || own === undefined
+          ? own
+          : { ...read, ...strip(own) };
+      }
+    };
+  });
+
+// A `getAttrs` answering `{align: null}` means "this element says nothing
+// about the alignment", not "it says there is none": spreading it over what
+// the class said would undo the read.
+const strip = (attrs) =>
+  Object.fromEntries(Object.entries(attrs).filter(([_name, value]) => value !== null));
+
+const withAttrRenderAs = (spec, attrRenderAs) => {
+  if (!attrRenderAs) return spec;
+
+  const toDOM = spec.toDOM;
+
+  return {
+    ...spec,
+    ...(toDOM && {
+      toDOM: (nodeOrMark, ...rest) =>
+        mergeAttrs(toDOM(nodeOrMark, ...rest), attrDOM(nodeOrMark, attrRenderAs))
+    }),
+    ...(Array.isArray(spec.parseDOM) && {
+      parseDOM: withParsedAttrs(spec.parseDOM, attrRenderAs)
+    })
+  };
+};
+
 // A DOMOutputSpec is `[tag]`, `[tag, attrs, ...]`, `[tag, 0]` or
 // `[tag, [childTag, ...]]`. The content hole is a number, and a nested
 // element is an array — which `typeof` also calls "object", so the array has
@@ -229,7 +348,7 @@ const withEditorAttrs = (spec, editorAttrs) => {
 // gets spread into the attributes and the `<code>` disappears. Anything that
 // is not an array of that shape (a DOM node, a plain string) is handed back
 // untouched rather than guessed at.
-const mergeAttrs = (out, editorAttrs) => {
+const mergeAttrs = (out, added) => {
   if (!Array.isArray(out) || typeof out[0] !== "string") return out;
 
   const [tag, ...rest] = out;
@@ -241,8 +360,16 @@ const mergeAttrs = (out, editorAttrs) => {
   const attrs = { ...(carriesAttrs ? rest[0] : {}) };
   const tail = carriesAttrs ? rest.slice(1) : rest;
 
-  for (const [name, value] of Object.entries(editorAttrs)) {
-    attrs[name] = name === "class" && attrs.class ? `${attrs.class} ${value}` : value;
+  // `class` and `style` accumulate rather than replace — an element may be
+  // handed one by its own toDOM, one by an attribute's render_as and one by
+  // the spec's class, and the same is true of `Coelho.Render`. Anything
+  // else is a single value and the later one wins.
+  const separators = { class: " ", style: ";" };
+
+  for (const [name, value] of Object.entries(added)) {
+    const separator = separators[name];
+
+    attrs[name] = separator && attrs[name] ? `${attrs[name]}${separator}${value}` : value;
   }
 
   return [tag, attrs, ...tail];

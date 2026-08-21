@@ -813,6 +813,35 @@ marks: [highlight: [class: "hl hl-gradient", render: {"mark", []}]]
 
 `:editor_attrs` carries DOM attributes for the editor alone.
 
+An *attribute* can say how its own value reaches the DOM, with `:render_as`
+— also applied on both sides, and also declared once:
+
+```elixir
+attrs: [
+  align: [
+    default: nil,
+    validate: {:nullable, {:one_of, ~w(left center right justify)}},
+    render_as: {:style, "text-align"}
+    # render_as: {:class, %{"center" => "text-center", "right" => "text-right"}}
+  ]
+]
+```
+
+Alignment ships as the style, because that needs no stylesheet: the HTML
+works in an email, a feed, an export. It is also what a page's own CSS
+cannot override, so an application that would rather own alignment in its
+stylesheet asks the shipped schema for classes and names them itself:
+
+```elixir
+Coelho.Schema.Default.build(align: {:class, %{"center" => "text-center"}})
+```
+
+Both forms are closed over the values they name. A stored document is never
+re-validated on the way out, so a class map is its own allow list — a value
+it does not name renders nothing — and `{:style, property}` is accepted only
+on an attribute whose validator is a `{:one_of, list}`, checked again when it
+renders.
+
 Anything the server decides on reaches the document through one call:
 
 ```elixir

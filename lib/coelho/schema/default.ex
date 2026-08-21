@@ -43,6 +43,19 @@ defmodule Coelho.Schema.Default do
   is absent from the document when unset, and re-checked against the closed
   list at render time.
 
+  *How* it renders is part of the attribute's declaration — `:render_as`,
+  see `Coelho.Schema.Attr` — rather than a render function, so the browser
+  applies the same answer and an application can change it without writing
+  any JavaScript. An inline style is what ships because it needs no
+  stylesheet: the HTML works in an email, a feed, an export. It is also what
+  a page's own CSS cannot override, so an application that would rather own
+  alignment in its stylesheet asks for a class map instead — once, for the
+  three blocks that carry the attribute:
+
+      Coelho.Schema.Default.build(
+        align: {:class, %{"center" => "text-center", "right" => "text-right"}}
+      )
+
   The schema is built once and kept in `:persistent_term`, since it is
   immutable and read on every render.
   """
@@ -67,9 +80,29 @@ defmodule Coelho.Schema.Default do
 
   @doc """
   Builds the default schema without consulting the cache.
+
+  ## Options
+
+    * `:align` — how the `align` attribute reaches the DOM, in the form
+      `Coelho.Schema.Attr` takes for `:render_as`. Defaults to
+      `{:style, "text-align"}`.
+
+  An inline style is unanswerable by a stylesheet, so an application that
+  would rather own alignment in CSS says so once, here, rather than
+  redeclaring the three blocks that carry the attribute:
+
+      Coelho.Schema.Default.build(
+        align: {:class, %{"center" => "text-center", "right" => "text-right"}}
+      )
+
+  The result is not cached — `schema/0` caches the default one. Build yours
+  once at compile time, as an application with any custom schema already
+  does.
   """
-  @spec build() :: Schema.t()
-  def build do
+  @spec build(keyword()) :: Schema.t()
+  def build(opts \\ []) do
+    align = Keyword.get(opts, :align, {:style, "text-align"})
+
     Schema.new(
       top_node: :doc,
       nodes: [
@@ -77,8 +110,8 @@ defmodule Coelho.Schema.Default do
         paragraph: [
           content: "inline*",
           group: "block",
-          attrs: [align: align_attr()],
-          render: {"p", &__MODULE__.align_attrs/1},
+          attrs: [align: align_attr(align)],
+          render: {"p", []},
           parse: [{"p", &__MODULE__.parse_align/1}]
         ],
         heading: [
@@ -86,9 +119,9 @@ defmodule Coelho.Schema.Default do
           group: "block",
           attrs: [
             level: [default: 1, validate: {:one_of, [1, 2, 3, 4, 5, 6]}],
-            align: align_attr()
+            align: align_attr(align)
           ],
-          render: &__MODULE__.render_heading/2,
+          render: {&__MODULE__.heading_tag/1, []},
           parse: Enum.map(1..6, &{"h#{&1}", Function.capture(__MODULE__, :"parse_h#{&1}", 1)})
         ],
         blockquote: [
@@ -107,8 +140,8 @@ defmodule Coelho.Schema.Default do
         ],
         list_item: [
           content: "paragraph block*",
-          attrs: [align: align_attr()],
-          render: {"li", &__MODULE__.align_attrs/1},
+          attrs: [align: align_attr(align)],
+          render: {"li", []},
           parse: [{"li", &__MODULE__.parse_align/1}]
         ],
         code_block: [
@@ -178,21 +211,20 @@ defmodule Coelho.Schema.Default do
   # it is declared once and given to each block that can carry it. Coelho has
   # no mechanism for an attribute shared across node types — this is that
   # mechanism, and it is a function returning a declaration.
+  #
+  # How the value reaches the DOM is part of that declaration rather than a
+  # render function, so the browser is handed the same answer and an
+  # application can change it by declaring its own attribute — see
+  # `Coelho.Schema.Attr`. The shipped form is the inline style, which needs
+  # no stylesheet to work anywhere the HTML travels.
   @aligns ~w(left center right justify)
 
-  defp align_attr, do: [default: nil, validate: {:nullable, {:one_of, @aligns}}]
-
-  @doc false
-  def align_attrs(node), do: [{"style", align_style(node)}]
-
-  # The value goes into a `style` attribute, so it is re-checked against the
-  # closed list here rather than trusted: validation bounded it on the way
-  # in, and a row written under a looser schema still renders through this.
-  defp align_style(node) do
-    case Coelho.Render.attr(node, "align") do
-      align when align in @aligns -> "text-align:" <> align
-      _other -> nil
-    end
+  defp align_attr(render_as) do
+    [
+      default: nil,
+      validate: {:nullable, {:one_of, @aligns}},
+      render_as: render_as
+    ]
   end
 
   @doc false
@@ -221,25 +253,25 @@ defmodule Coelho.Schema.Default do
       do: attrs |> parse_align() |> Map.put("level", unquote(level))
   end
 
+  # A heading's *tag* is what its level decides, which is why it is a
+  # function rather than a name. Written as a render function instead —
+  # building the whole element — it would reach neither the spec's `:class`
+  # nor the alignment its own attribute declares.
+  #
+  # Nothing downstream escapes a tag name. Validation already bounds `level`,
+  # but a row written under an older or looser schema still renders through
+  # today's renderer, so the clamp stays. Every renderer below follows the
+  # same rule: nothing read out of a stored document is trusted to be well
+  # typed or safe.
   @doc false
-  def render_heading(node, inner) do
-    Coelho.Render.tag(
-      "h" <> Integer.to_string(heading_level(node)),
-      align_attrs(node),
-      inner
-    )
-  end
+  def heading_tag(node) do
+    level =
+      case attr(node, "level", 1) do
+        level when is_integer(level) and level in 1..6 -> level
+        _other -> 1
+      end
 
-  # The renderer builds a tag *name* here, which nothing downstream escapes.
-  # Validation already bounds `level`, but a row written under an older or
-  # looser schema still renders through today's renderer, so the clamp stays.
-  # Every renderer below follows the same rule: nothing read out of a stored
-  # document is trusted to be well typed or safe.
-  defp heading_level(node) do
-    case attr(node, "level", 1) do
-      level when is_integer(level) and level in 1..6 -> level
-      _ -> 1
-    end
+    "h" <> Integer.to_string(level)
   end
 
   @doc false

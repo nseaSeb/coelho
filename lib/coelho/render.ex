@@ -511,10 +511,90 @@ defmodule Coelho.Render do
         fun.(node, inner, context)
 
       {tag, attrs} when spec.void ->
-        void_tag(tag, with_class(resolve_attrs(attrs, node, context), spec.class))
+        void_tag(resolve_tag(tag, node), element_attrs(attrs, node, spec, context))
 
       {tag, attrs} ->
-        tag(tag, with_class(resolve_attrs(attrs, node, context), spec.class), inner)
+        tag(resolve_tag(tag, node), element_attrs(attrs, node, spec, context), inner)
+    end
+  end
+
+  # The tag may be a function of the node, for an element whose *name* is
+  # what an attribute decides — a heading, whose level is its tag. Written as
+  # a render function instead, such a node would build its whole element and
+  # so reach neither `:class` nor an attribute's `:render_as`.
+  #
+  # Nothing downstream escapes a tag name, so a function that builds one out
+  # of an attribute owes the same bounding a `{:style, …}` attribute owes:
+  # a stored document is not re-validated on the way out.
+  defp resolve_tag(tag, node) when is_function(tag, 1), do: tag.(node)
+  defp resolve_tag(tag, _node) when is_binary(tag), do: tag
+
+  # What the element carries: what the spec's `:render` asked for, then what
+  # each attribute's `:render_as` makes of the value, then the spec's
+  # `:class`. All three merge into one `class` and one `style` rather than
+  # repeating the attribute, which the browser would resolve by keeping the
+  # first and dropping the rest.
+  defp element_attrs(attrs, node, spec, context) do
+    attrs
+    |> resolve_attrs(node, context)
+    |> merge_attrs(attr_dom(node, spec.attrs))
+    |> with_class(spec.class)
+  end
+
+  # An attribute renders itself only when it says how. The value is checked
+  # again here rather than trusted: validation bounded it on the way in, and
+  # a row written under a looser schema still renders through this.
+  defp attr_dom(node, attrs) do
+    Enum.flat_map(attrs, fn {name, attr} ->
+      # The default, not `nil`: an attribute sitting at its schema default is
+      # not stored, so reading the key and hoping would leave a `render_as`
+      # with a default of its own rendering nothing here while ProseMirror,
+      # which fills defaults in, renders it in the editor.
+      case {attr.render_as, attr(node, Atom.to_string(name), attr.default)} do
+        {nil, _value} ->
+          []
+
+        {{:class, classes}, value} ->
+          case Map.fetch(classes, value) do
+            {:ok, class} -> [{"class", class}]
+            :error -> []
+          end
+
+        {{:style, property}, value} when is_binary(value) ->
+          if value in Attr.render_values(attr),
+            do: [{"style", property <> ":" <> value}],
+            else: []
+
+        {{:style, _property}, _value} ->
+          []
+      end
+    end)
+  end
+
+  defp merge_attrs(attrs, []), do: attrs
+
+  defp merge_attrs(attrs, [{name, value} | rest]) do
+    attrs
+    |> append_attr(name, value)
+    |> merge_attrs(rest)
+  end
+
+  # `class` and `style` accumulate — two attributes may each contribute one,
+  # and a spec's `:render` may already have put one there. Anything else is
+  # a single value and the later one wins.
+  @separators %{"class" => " ", "style" => ";"}
+
+  defp append_attr(attrs, name, value) do
+    case {List.keyfind(attrs, name, 0), Map.get(@separators, name)} do
+      {nil, _separator} ->
+        attrs ++ [{name, value}]
+
+      {{_name, existing}, separator}
+      when is_binary(existing) and existing != "" and is_binary(separator) ->
+        List.keyreplace(attrs, name, 0, {name, existing <> separator <> value})
+
+      {_found, _separator} ->
+        List.keyreplace(attrs, name, 0, {name, value})
     end
   end
 
@@ -524,19 +604,7 @@ defmodule Coelho.Render do
   # declared once. A render function takes over the whole element, so it is
   # the one form this cannot reach: say so rather than half apply it.
   defp with_class(attrs, nil), do: attrs
-
-  defp with_class(attrs, class) do
-    case List.keyfind(attrs, "class", 0) do
-      {_key, existing} when is_binary(existing) and existing != "" ->
-        List.keyreplace(attrs, "class", 0, {"class", existing <> " " <> class})
-
-      nil ->
-        attrs ++ [{"class", class}]
-
-      _blank ->
-        List.keyreplace(attrs, "class", 0, {"class", class})
-    end
-  end
+  defp with_class(attrs, class), do: append_attr(attrs, "class", class)
 
   defp children(node, schema, state) do
     node
@@ -569,7 +637,11 @@ defmodule Coelho.Render do
         fun.(mark, inner, state.context)
 
       {tag, attrs} ->
-        tag(tag, with_class(resolve_attrs(attrs, mark, state.context), spec.class), inner)
+        tag(
+          resolve_tag(tag, mark),
+          element_attrs(attrs, mark, spec, state.context),
+          inner
+        )
     end
   end
 

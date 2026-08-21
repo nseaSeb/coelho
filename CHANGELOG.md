@@ -59,6 +59,38 @@ own marks were stored, validated, rendered, and invisible.
   and a node declaring `align` with no validator (`Attr.validate(nil, _)`
   is `:ok`) would have rendered `align_middle` as a button with no command.
 
+### An attribute can say how it renders
+
+- `:render_as` on an attribute spec — `{:style, property}` or
+  `{:class, %{value => class}}`. Data rather than a render function, so the
+  server applies it *and* the exported schema carries it to the browser: the
+  editor shows what the page will carry, and an application changes it in
+  one place without writing any JavaScript. It is the mechanism `:class` on
+  a node already was, for a class the *value* decides.
+- `Coelho.Schema.Default.build/1` takes `:align`, so switching the shipped
+  alignment to classes is one line rather than three redeclared blocks —
+  `Schema.extend/2` replaces a node's declaration rather than completing it,
+  and restating `paragraph`, `heading` and `list_item` to change one
+  attribute is the friction this exists to remove.
+
+      Coelho.Schema.Default.build(align: {:class, %{"center" => "text-center"}})
+
+- The default is `{:style, "text-align"}`, so nothing moves: the shipped
+  output is byte for byte what it was, which is what the parity tests
+  assert. The style is what ships because it needs no stylesheet — the HTML
+  works in an email, a feed, an export — and it is also what a page's own CSS
+  cannot answer, which is why the other form now exists.
+- Both forms are closed over the values they name, because
+  `Coelho.Ecto.Type` does not re-validate a stored document and every
+  renderer is therefore a security boundary. A class map is its own allow
+  list. `{:style, property}` has none of its own, so it is refused at schema
+  build time on an attribute whose validator is not a `{:one_of, list}`, and
+  the value is checked against that list again when it renders.
+- A node's `:render` may name its tag with a function of the node, which is
+  what `heading` now does. It was a render function — building its whole
+  element, and so reaching neither the spec's `:class` nor its attributes'
+  `:render_as` — only because its tag is what its level decides. Three
+  hand-written alignment paths go with it, one in each half.
 ### The installer, twice
 
 - The stylesheet's `@import` goes right after the last `@import`, as the
