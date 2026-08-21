@@ -255,18 +255,26 @@ defmodule Coelho.HTML do
     |> merge_runs()
   end
 
-  # Whitespace is collapsed per text node, and an element the schema does not
-  # know is transparent — so `a&nbsp;&nbsp;&nbsp;<i>&nbsp;&nbsp;&nbsp;b</i>`
-  # arrives here as two nodes that each kept one space, and storing them side
-  # by side stores two. The document is legal and renders correctly, but
-  # importing what was rendered collapses the pair to one: the two spaces are
-  # a single run by then. A round trip through storage would go on shortening
-  # people's text, a space at a time.
+  # Two ways a text node reaches storage holding whitespace that a fresh
+  # import would collapse, and this closes both.
   #
-  # So a run of text is made whole before it is stored, and collapsed as the
-  # one run it is. Marks have to match — the space between bold and plain
-  # text belongs to one of them, and joining across the boundary would move
-  # it.
+  # An element the schema does not know is transparent, so
+  # `a&nbsp;&nbsp;&nbsp;<i>&nbsp;&nbsp;&nbsp;b</i>` arrives as two nodes that
+  # each kept one space, and storing them side by side stores two. And a
+  # `<pre>` keeps its whitespace to the character — that is what a code block
+  # is — but if the code block cannot sit where it landed, `fit/3` lifts its
+  # text into the paragraph around it, and the run arrives verbatim in a
+  # place where nothing keeps it.
+  #
+  # Either way the document is legal and renders correctly, and importing
+  # what it rendered to collapses the run: a round trip through storage goes
+  # on shortening people's text, a space at a time. So every text node is
+  # collapsed here, whole — this only ever runs in an inline context, because
+  # a node that takes its text verbatim never goes through `convert/4` at
+  # all.
+  #
+  # Marks have to match to merge: the space between bold and plain text
+  # belongs to one of them, and joining across the boundary would move it.
   defp merge_runs(children) do
     children
     |> Enum.reduce([], fn
@@ -274,14 +282,20 @@ defmodule Coelho.HTML do
         if Map.get(node, "marks", []) == Map.get(previous, "marks", []) do
           [%{previous | "text" => collapse(previous["text"] <> node["text"])} | rest]
         else
-          [node | acc]
+          [collapse_text(node) | acc]
         end
+
+      %{"type" => "text"} = node, acc ->
+        [collapse_text(node) | acc]
 
       node, acc ->
         [node | acc]
     end)
     |> Enum.reverse()
   end
+
+  defp collapse_text(%{"text" => text} = node), do: %{node | "text" => collapse(text)}
+  defp collapse_text(node), do: node
 
   defp convert_tree(text, _schema, _allowed_marks, marks) when is_binary(text) do
     case collapse(text) do

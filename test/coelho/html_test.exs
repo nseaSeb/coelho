@@ -243,12 +243,33 @@ defmodule Coelho.HTMLTest do
       assert round_trip("<p>a   <em>   b</em></p>") == "<p>a <em> b</em></p>"
     end
 
+    test "a code block's whitespace is collapsed when its text is lifted out" do
+      # A `<pre>` keeps its whitespace to the character, which is what a code
+      # block is for. But `<p><pre>…</pre></p>` is not a code block anywhere
+      # the schema allows one, so the block is lifted and its text lands in a
+      # paragraph — verbatim, in a place where nothing keeps it. Stored like
+      # that, the next import collapses it, and the round trip shortens the
+      # text.
+      assert import_html!("<p><p><pre>a   b</pre></p></p>") ==
+               %{
+                 "type" => "doc",
+                 "content" => [
+                   %{
+                     "type" => "paragraph",
+                     "content" => [%{"type" => "text", "text" => "a b"}]
+                   }
+                 ]
+               }
+    end
+
     test "importing what was rendered gives the same document back" do
       for html <- [
             "<p>a   <a>   b</a></p>",
             "<p>a   <em>   b</em></p>",
             "<p>a <strong>b</strong> c</p>",
-            "<div>a   <span>   b</span>   c</div>"
+            "<div>a   <span>   b</span>   c</div>",
+            "<p><p><pre>a   b</pre></p></p>",
+            "<pre>a   b</pre>"
           ] do
         document = import_html!(html)
 
