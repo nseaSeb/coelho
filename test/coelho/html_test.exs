@@ -262,6 +262,43 @@ defmodule Coelho.HTMLTest do
                }
     end
 
+    test "and when the lifted text has to be wrapped in a block of its own" do
+      # The same defect by a third route. `fit/3` lifts a code block that
+      # cannot sit where it landed, and `wrap_inline_runs/3` then puts the
+      # loose text into a default block — a path that built the block
+      # directly, so the verbatim run reached storage uncollapsed. Needs a
+      # schema with a parent that admits blocks but not code blocks, which
+      # the shipped one has not.
+      schema =
+        Schema.new(
+          top_node: :doc,
+          nodes: [
+            doc: [content: "block+"],
+            quote: [
+              content: "paragraph+",
+              group: "block",
+              render: {"blockquote", []},
+              parse: ["blockquote"]
+            ],
+            paragraph: [content: "inline*", group: "block", render: {"p", []}, parse: ["p"]],
+            code_block: [
+              content: "text*",
+              group: "block",
+              marks: :none,
+              render: &Coelho.Schema.Default.render_code_block/2,
+              parse: ["pre"]
+            ],
+            text: [group: "inline", inline: true, text: true]
+          ],
+          marks: []
+        )
+
+      document = import_html!("<blockquote><pre>a   b</pre></blockquote>", schema)
+
+      assert Document.to_text(document, schema) == "a b"
+      assert import_html!(Coelho.to_html(document, schema), schema) == document
+    end
+
     test "importing what was rendered gives the same document back" do
       for html <- [
             "<p>a   <a>   b</a></p>",

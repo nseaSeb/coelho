@@ -111,6 +111,11 @@ nowhere to get.
   collapses it. Every text node in an inline context is collapsed now, whole;
   a node that takes its text verbatim never reaches that path at all. Found
   by CI, on a seed 120 local seeds had not drawn.
+  A third route to the same shortening was closed with it: a lifted run that
+  has to be wrapped in a block of its own went through `wrap_inline_runs/3`,
+  which built the block directly and so never collapsed or merged what it
+  wrapped. Unreachable on the shipped schema, which has no parent admitting
+  blocks but not code blocks; reachable on a schema of your own.
 - The flush's failure guard catches the failure it was written for.
   `pushEvent` rejects a promise rather than throwing when the socket has
   gone, so the `try/catch` never ran and a page navigation logged an uncaught
