@@ -1,0 +1,286 @@
+/* Coelho's editor, styled enough to use and not enough to clash.
+ *
+ * Structure, states and the things a person needs to see — focus, which
+ * buttons are in force, a counter that has gone over. No identity: every
+ * colour, radius and spacing below comes from a custom property with a
+ * neutral default, so an application overrides the properties rather than
+ * the rules.
+ *
+ * Import it, or copy it and stop treating it as ours:
+ *
+ *     @import "../../deps/coelho/assets/css/coelho.css";
+ *
+ * Everything inside .coelho-content is ProseMirror's, and the editor and the
+ * page should agree on it — see the note in the README about rendering the
+ * stored document with the same rules. */
+
+.coelho {
+  --coelho-text: #18181b;
+  --coelho-muted: #71717a;
+  --coelho-border: #d4d4d8;
+  --coelho-surface: #ffffff;
+  --coelho-raised: #f4f4f5;
+  --coelho-accent: #2563eb;
+  --coelho-danger: #dc2626;
+  --coelho-radius: 6px;
+  --coelho-gap: 8px;
+  --coelho-pad: 12px;
+
+  color: var(--coelho-text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--coelho-gap);
+}
+
+/* -- Toolbar ------------------------------------------------------------- */
+
+.coelho-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.coelho-command {
+  background: var(--coelho-surface);
+  border: 1px solid var(--coelho-border);
+  border-radius: var(--coelho-radius);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 6px 10px;
+}
+
+.coelho-command:hover:not(:disabled) {
+  background: var(--coelho-raised);
+}
+
+/* In force under the cursor. The hook keeps this in step with the selection,
+ * so it is the one state that must be visible without hovering. */
+.coelho-command[aria-pressed="true"] {
+  background: var(--coelho-accent);
+  border-color: var(--coelho-accent);
+  color: var(--coelho-surface);
+}
+
+/* A command that cannot run where the cursor is. Dimmed rather than hidden:
+ * a toolbar whose buttons come and go is a toolbar nobody learns. */
+.coelho-command:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.coelho-command:focus-visible,
+.coelho-link-input:focus-visible,
+.coelho-content .ProseMirror:focus-visible {
+  outline: 2px solid var(--coelho-accent);
+  outline-offset: 2px;
+}
+
+/* -- The link and caption field ------------------------------------------ */
+
+.coelho-link {
+  display: inline-flex;
+  flex: 1 1 12rem;
+}
+
+.coelho-link[hidden] {
+  display: none;
+}
+
+.coelho-link-input {
+  background: var(--coelho-surface);
+  border: 1px solid var(--coelho-border);
+  border-radius: var(--coelho-radius);
+  color: inherit;
+  font: inherit;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.coelho-link-input:invalid {
+  border-color: var(--coelho-danger);
+}
+
+/* -- Counter ------------------------------------------------------------- */
+
+.coelho-counter {
+  color: var(--coelho-muted);
+  font-size: 0.875em;
+  margin-inline-start: auto;
+}
+
+.coelho-counter-max::before {
+  content: "/";
+  padding-inline: 2px;
+}
+
+.coelho-counter.coelho-over {
+  color: var(--coelho-danger);
+  font-weight: 600;
+}
+
+/* -- The editor ---------------------------------------------------------- */
+
+.coelho-content .ProseMirror {
+  background: var(--coelho-surface);
+  border: 1px solid var(--coelho-border);
+  border-radius: var(--coelho-radius);
+  min-height: 8rem;
+  outline: none;
+  padding: var(--coelho-pad);
+}
+
+/* The placeholder is an attribute rather than a node: a node would be
+ * validated, stored and rendered, and this stays out of the document. */
+.coelho-content .ProseMirror.coelho-empty::before {
+  color: var(--coelho-muted);
+  content: attr(data-placeholder);
+  float: inline-start;
+  height: 0;
+  pointer-events: none;
+}
+
+.coelho-file-input {
+  color: var(--coelho-muted);
+  font-size: 0.875em;
+}
+
+/* -- What the document is made of ---------------------------------------- */
+
+.coelho-content .ProseMirror > :first-child {
+  margin-block-start: 0;
+}
+
+.coelho-content .ProseMirror > :last-child {
+  margin-block-end: 0;
+}
+
+.coelho-content p,
+.coelho-content ul,
+.coelho-content ol,
+.coelho-content blockquote,
+.coelho-content pre,
+.coelho-content figure {
+  margin-block: 0.75em;
+}
+
+.coelho-content h1,
+.coelho-content h2,
+.coelho-content h3,
+.coelho-content h4,
+.coelho-content h5,
+.coelho-content h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin-block: 1.25em 0.5em;
+}
+
+.coelho-content ul,
+.coelho-content ol {
+  padding-inline-start: 1.5em;
+}
+
+.coelho-content ul {
+  list-style: disc;
+}
+
+.coelho-content ol {
+  list-style: decimal;
+}
+
+.coelho-content li > p {
+  margin-block: 0.25em;
+}
+
+.coelho-content blockquote {
+  border-inline-start: 3px solid var(--coelho-border);
+  color: var(--coelho-muted);
+  padding-inline-start: 1em;
+}
+
+.coelho-content pre {
+  background: var(--coelho-raised);
+  border-radius: var(--coelho-radius);
+  overflow-x: auto;
+  padding: var(--coelho-pad);
+}
+
+.coelho-content pre code {
+  background: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  white-space: pre;
+}
+
+.coelho-content :not(pre) > code {
+  background: var(--coelho-raised);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  padding: 1px 4px;
+}
+
+.coelho-content a {
+  color: var(--coelho-accent);
+  text-decoration: underline;
+}
+
+.coelho-content img {
+  height: auto;
+  max-width: 100%;
+}
+
+.coelho-content hr {
+  border: 0;
+  border-block-start: 1px solid var(--coelho-border);
+}
+
+/* -- Attachments --------------------------------------------------------- */
+
+.coelho-attachment {
+  margin-block: 0.75em;
+}
+
+.coelho-attachment figcaption {
+  color: var(--coelho-muted);
+  font-size: 0.875em;
+  margin-block-start: 0.25em;
+}
+
+/* A file that is not an image, shown by name. The editor and the page use the
+ * same class for it, which is why the rule is here rather than in an
+ * application's own stylesheet. */
+.coelho-attachment-label {
+  background: var(--coelho-raised);
+  border-radius: var(--coelho-radius);
+  display: inline-block;
+  padding: 4px 8px;
+}
+
+/* A key that no longer resolves — or, in the editor, one whose preview the
+ * application has not supplied: shown as its filename rather than as a
+ * broken image. */
+.coelho-attachment-missing {
+  color: var(--coelho-muted);
+  font-style: italic;
+}
+
+/* -- Alignment ----------------------------------------------------------- */
+
+/* The renderer emits an inline text-align, so nothing is needed for the page.
+ * This is here because ProseMirror renders the same attribute the same way,
+ * and a rule that fought it would make the editor disagree with the page. */
+
+@media (prefers-color-scheme: dark) {
+  .coelho:not([data-coelho-theme="light"]) {
+    --coelho-text: #f4f4f5;
+    --coelho-muted: #a1a1aa;
+    --coelho-border: #3f3f46;
+    --coelho-surface: #18181b;
+    --coelho-raised: #27272a;
+    --coelho-accent: #60a5fa;
+    --coelho-danger: #f87171;
+  }
+}

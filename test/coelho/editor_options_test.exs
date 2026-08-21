@@ -171,13 +171,18 @@ defmodule Coelho.EditorOptionsTest do
       other = editor(%{name: "a[b]", toolbar: ~w(bold link)})
 
       assert check(one) == check(other)
-      refute version(one) == version(other)
+      refute toolbar_version(one) == toolbar_version(other)
     end
   end
 
   defp check(html) do
-    [_match, check] = Regex.run(~r/data-coelho-schema-check="([^"]+)"/, html)
+    [_match, check] = Regex.run(~r/data-coelho-schema-version="([^"]+)"/, html)
     check
+  end
+
+  defp toolbar_version(html) do
+    [_match, version] = Regex.run(~r/data-coelho-toolbar-version="([^"]+)"/, html)
+    version
   end
 
   describe "the schema fingerprint" do
@@ -193,15 +198,37 @@ defmodule Coelho.EditorOptionsTest do
       assert version(one) != version(other)
     end
 
-    test "changes when the toolbar does, so its buttons are redrawn" do
-      assert version(editor(%{name: "a[b]", toolbar: ~w(bold)})) !=
+    test "the toolbar's own fingerprint moves with the commands" do
+      assert toolbar_version(editor(%{name: "a[b]", toolbar: ~w(bold)})) !=
+               toolbar_version(editor(%{name: "a[b]", toolbar: ~w(bold link)}))
+    end
+
+    test "and with their labels, which is a language switched mid-session" do
+      english = editor(%{name: "a[b]", toolbar: ~w(bold), labels: %{"bold" => "Bold"}})
+      french = editor(%{name: "a[b]", toolbar: ~w(bold), labels: %{"bold" => "Gras"}})
+
+      assert toolbar_version(english) != toolbar_version(french)
+      assert english =~ ~s(id="a_b-editor-toolbar-#{toolbar_version(english)}")
+      assert french =~ ~s(id="a_b-editor-toolbar-#{toolbar_version(french)}")
+    end
+
+    test "but the schema's does not, so new words cost no undo history" do
+      # The schema fingerprint is what makes the hook rebuild the editor,
+      # which re-parses the document and starts a fresh history. Changing a
+      # label must not reach for that.
+      english = editor(%{name: "a[b]", toolbar: ~w(bold), labels: %{"bold" => "Bold"}})
+      french = editor(%{name: "a[b]", toolbar: ~w(bold), labels: %{"bold" => "Gras"}})
+
+      assert version(english) == version(french)
+
+      assert version(editor(%{name: "a[b]", toolbar: ~w(bold)})) ==
                version(editor(%{name: "a[b]", toolbar: ~w(bold link)}))
     end
 
-    test "is the toolbar container's id, which is what makes LiveView replace it" do
+    test "the toolbar's is its container's id, which is what makes LiveView replace it" do
       html = editor(%{name: "a[b]"})
 
-      assert html =~ ~s(id="a_b-editor-toolbar-#{version(html)}")
+      assert html =~ ~s(id="a_b-editor-toolbar-#{toolbar_version(html)}")
     end
   end
 

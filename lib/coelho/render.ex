@@ -46,6 +46,10 @@ defmodule Coelho.Render do
   right: tag names, and attribute *names*. Both come from the schema, which
   is code.
 
+  `nil` renders as nothing rather than raising: it is what a nullable column
+  holds and what both stored types cast an absent document to, so a template
+  writing `to_safe_html(@post.body)` should not have to guard it.
+
   Only validated documents should be rendered. Rendering does not re-check
   the document against the schema; it trusts `Coelho.Document.validate/2`
   to have run, and raises on anything it does not recognise. For a document
@@ -73,7 +77,12 @@ defmodule Coelho.Render do
       context: Keyword.get(opts, :context, %{})
     }
 
-    render_node(document, schema, state)
+    Coelho.Telemetry.span(
+      [:coelho, :render],
+      fn -> %{schema: Schema.fingerprint(schema)} end,
+      fn -> render_node(document, schema, state) end,
+      &%{bytes: IO.iodata_length(&1)}
+    )
   end
 
   @doc """
@@ -83,6 +92,35 @@ defmodule Coelho.Render do
   def to_html(document, %Schema{} = schema, opts \\ []) do
     document |> to_iodata(schema, opts) |> IO.iodata_to_binary()
   end
+
+  @doc """
+  Renders a validated document as `{:safe, iodata}`.
+
+  What `to_html/3` renders, in the shape a template will not escape again.
+  `to_html/3` answers a `String.t()`, which HEEx and `Phoenix.HTML` treat as
+  text — correctly, since they cannot know it is markup — so the caller has
+  to remember `raw/1`, and has two ways to get it wrong: forget it, and the
+  document is shown as its own source; reach for it somewhere else, and
+  something that should have been escaped no longer is.
+
+  For a package whose argument is that rendering is safe by construction,
+  that is the last link left to the caller. This closes it:
+
+      <div class="prose">{Coelho.to_safe_html(@post.body)}</div>
+
+  The `{:safe, iodata}` pair is what `Phoenix.HTML.Engine` unwraps directly,
+  so this costs no dependency — Coelho has none for HTML, and does not
+  acquire one here. There is no `Phoenix.HTML.Safe` implementation to go with
+  it because there is nothing to implement it *for*: a document is a bare
+  map, deliberately, and an implementation for `Map` would apply to every map
+  in the application.
+
+  It renders the same iodata `to_iodata/3` builds, so the escaping guarantees
+  above hold unchanged.
+  """
+  @spec to_safe_html(map(), Schema.t(), opts()) :: {:safe, iodata()}
+  def to_safe_html(document, %Schema{} = schema, opts \\ []),
+    do: {:safe, to_iodata(document, schema, opts)}
 
   @doc """
   Folds a document into any term at all.
@@ -275,6 +313,13 @@ defmodule Coelho.Render do
   # the spec, take the override if the caller supplied one, then wrap. Short
   # circuiting on `"type" => "text"` before consulting the schema would make
   # the text node the one node no caller can override.
+  # A nullable column holds `nil`, and `nil` is what `Coelho.Ecto.Type` and
+  # `Coelho.Ash.Type` both cast an absent document to. Rendering it as
+  # nothing is the only answer that lets `to_safe_html(@post.body)` be
+  # written straight into a template, which is the whole point of that
+  # function.
+  defp render_node(nil, _schema, _state), do: []
+
   defp render_node(%{"type" => type} = node, schema, state) do
     spec = fetch_node_spec!(schema, type)
     render = Map.get(state.nodes, spec.name, spec.render)

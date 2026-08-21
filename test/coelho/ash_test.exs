@@ -122,4 +122,56 @@ defmodule Coelho.AshTest do
       assert Exception.message(error) =~ "document"
     end
   end
+
+  describe "atomic updates" do
+    test "a document given as itself is cast the ordinary way" do
+      # `{:ok, …}` and not `{:atomic, …}`, which is what Ash's own default
+      # answers: the atomic branch puts the value into the changeset's
+      # atomics, past the allow_nil? and required-attribute checks.
+      assert {:ok, document} =
+               Type.cast_atomic(doc([paragraph([text("hello")])]), constraints())
+
+      assert Coelho.to_html(document, RichText.schema()) == "<p>hello</p>"
+    end
+
+    test "and Ash answers the same thing without going through us at all" do
+      # Ash short-circuits a literal straight to cast_input unless the type
+      # defines handle_change/3 or prepare_change/3, so the two paths have to
+      # agree — otherwise adding handle_change/3 later changes what a cast
+      # returns.
+      document = doc([paragraph([text("hello")])])
+
+      assert Ash.Type.cast_atomic(Type, document, constraints()) ==
+               Type.cast_atomic(document, constraints())
+    end
+
+    test "nil stays nil, and stays on the checked path" do
+      assert Type.cast_atomic(nil, constraints()) == {:ok, nil}
+    end
+
+    test "and one that fails validation is an error, not an atomic anything" do
+      hostile = doc([%{"type" => "heading", "content" => [text("T")]}])
+
+      assert {:error, error} = Type.cast_atomic(hostile, constraints())
+      assert error[:validation] == :coelho
+    end
+
+    test "an expression is refused, with the reason spelled out" do
+      # Validating a document means walking its tree in Elixir. No database
+      # expression can do that, so this is not a gap to close later — the
+      # message says why, because `require_atomic? true` refuses with it.
+      ref = %Ash.Query.Ref{attribute: :body, relationship_path: []}
+
+      assert {:not_atomic, reason} = Type.cast_atomic(ref, constraints())
+      assert reason =~ "walking its tree in Elixir"
+      assert reason =~ "require_atomic? false"
+    end
+
+    test "the reason is Coelho's own, not Ash's default" do
+      # Ash's default says only that the type does not support it. Ours says
+      # what to do instead, which is the difference between a shrug and an
+      # answer.
+      refute Coelho.Ash.Type.not_atomic_reason() =~ "does not support atomic updates"
+    end
+  end
 end

@@ -106,7 +106,8 @@ defmodule Coelho.EditorTest do
     test "an empty toolbar list hides the toolbar entirely" do
       html = render(%{field: form(nil)[:body], toolbar: []})
 
-      refute html =~ "coelho-toolbar"
+      refute html =~ ~s(class="coelho-toolbar")
+      refute html =~ "data-coelho-toolbar-version"
     end
 
     test "a custom schema is the one exported" do

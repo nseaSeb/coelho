@@ -171,6 +171,34 @@ defmodule Coelho do
   def to_html(document, %Schema{} = schema, opts), do: Render.to_html(document, schema, opts)
 
   @doc """
+  Renders a validated document as `{:safe, iodata}`, for a template.
+
+  The form that needs no `raw/1` — see `Coelho.Render.to_safe_html/3`.
+  """
+  @spec to_safe_html(map()) :: {:safe, iodata()}
+  def to_safe_html(document), do: Render.to_safe_html(document, Schema.default(), [])
+
+  @spec to_safe_html(map(), Schema.t() | Render.opts()) :: {:safe, iodata()}
+  def to_safe_html(document, opts) when is_list(opts),
+    do: Render.to_safe_html(document, Schema.default(), opts)
+
+  def to_safe_html(document, %Schema{} = schema), do: Render.to_safe_html(document, schema, [])
+
+  @spec to_safe_html(map(), Schema.t(), Render.opts()) :: {:safe, iodata()}
+  def to_safe_html(document, %Schema{} = schema, opts),
+    do: Render.to_safe_html(document, schema, opts)
+
+  @doc """
+  Whether a document would put anything on the page.
+
+  What to ask before rendering a block at all. See
+  `Coelho.Document.blank?/2` — in particular for why
+  `text_length(document) == 0` is not the same question.
+  """
+  @spec blank?(term(), Schema.t()) :: boolean()
+  def blank?(document, schema \\ Schema.default()), do: Document.blank?(document, schema)
+
+  @doc """
   Folds a document into any term at all, for a target that is not HTML.
 
   See `Coelho.Render.reduce/4`.

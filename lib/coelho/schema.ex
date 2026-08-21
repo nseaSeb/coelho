@@ -75,6 +75,7 @@ defmodule Coelho.Schema do
 
   @type t :: %__MODULE__{
           top_node: atom(),
+          fingerprint: non_neg_integer(),
           version: pos_integer() | nil,
           limits: limits(),
           nodes: %{optional(atom()) => NodeSpec.t()},
@@ -94,6 +95,7 @@ defmodule Coelho.Schema do
   @default_limits %{max_nodes: 10_000, max_depth: 100, max_text_length: 1_000_000}
 
   defstruct top_node: :doc,
+            fingerprint: 0,
             version: nil,
             limits: @default_limits,
             nodes: %{},
@@ -141,8 +143,28 @@ defmodule Coelho.Schema do
     }
 
     validate_schema!(schema)
-    schema
+    stamp(schema)
   end
+
+  # Exporting a schema and hashing it costs a few microseconds, which is
+  # nothing once and a great deal on a path that runs per keystroke and per
+  # render. It is settled here, where a schema is built, because a schema
+  # never changes afterwards.
+  defp stamp(schema), do: %{schema | fingerprint: schema |> to_json() |> :erlang.phash2()}
+
+  @doc """
+  A stable number identifying this schema's exported shape.
+
+  What telemetry metadata carries instead of the schema itself — a schema is
+  a few kilobytes of specs and parse rules, and handing every handler a copy
+  of it on every keystroke is not a measurement — and what the editor stamps
+  on its element so the browser notices the schema moved.
+
+  Two schemas exporting the same JSON have the same fingerprint, whichever
+  way they were built.
+  """
+  @spec fingerprint(t()) :: non_neg_integer()
+  def fingerprint(%__MODULE__{fingerprint: fingerprint}), do: fingerprint
 
   @doc """
   The schema Coelho ships with: paragraphs, headings, lists, quotes, code
@@ -196,7 +218,7 @@ defmodule Coelho.Schema do
     }
 
     validate_schema!(extended)
-    extended
+    stamp(extended)
   end
 
   defp append_new(existing, added), do: existing ++ Enum.reject(added, &(&1 in existing))
@@ -268,7 +290,7 @@ defmodule Coelho.Schema do
                 __STACKTRACE__
     end
 
-    restricted
+    stamp(restricted)
   end
 
   defp kept(opts, key, all, always) do
