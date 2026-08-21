@@ -410,7 +410,10 @@ if Code.ensure_loaded?(Phoenix.Component) do
     attr(:toolbar, :list,
       default:
         ~w(bold italic strike code link heading bullet_list ordered_list blockquote caption),
-      doc: "commands to show, in order; an empty list hides the toolbar"
+      doc:
+        "commands to show, in order; an empty list hides the toolbar. Any mark the " <>
+          "schema declares is a command, as are `align_left`, `align_center`, " <>
+          "`align_right` and `align_justify` where a node declares `align`"
     )
 
     attr(:labels, :map,
@@ -622,22 +625,57 @@ if Code.ensure_loaded?(Phoenix.Component) do
     defp value_json(value, _schema) when is_binary(value), do: value
     defp value_json(value, _schema), do: JSON.encode!(value)
 
-    # A button for a node the schema does not declare would do nothing when
-    # clicked, so the toolbar is filtered against the schema rather than
-    # trusting the caller to keep the two lists in step.
-    @mark_commands ~w(bold italic strike code link)
+    # A button the browser has no command for would do nothing when clicked,
+    # so the toolbar is filtered against what can actually run. Node commands
+    # are a closed list because each kind of node takes its own verb in the
+    # hook — toggle a block, wrap, list — and a node added to a schema gets
+    # no verb with it. A mark always toggles the same way, so any mark the
+    # schema declares is a working button.
+    @node_commands ~w(heading paragraph code_block blockquote bullet_list ordered_list horizontal_rule)
+
+    @doc """
+    The node names the toolbar accepts as commands.
+
+    Public so that the hook's own list can be checked against it: the two
+    are kept by hand, in two languages, and nothing else would notice them
+    drifting apart.
+    """
+    @spec node_commands() :: [String.t()]
+    def node_commands, do: @node_commands
+
     # `caption` acts on whichever selected node declares the attribute, so it
     # cannot be looked up as a node or a mark of its own.
     @always ~w(undo redo caption)
 
     defp supported?(_schema, command) when command in @always, do: true
 
-    defp supported?(schema, command) when command in @mark_commands do
-      match?({:ok, _}, Schema.resolve_mark_name(schema, command))
+    # The four the hook has a command for, and no more. Matching every name
+    # beginning with `align_` would take two names away from the marks: a
+    # mark called `align_terms` would be tested against a validator that
+    # never heard of it and dropped, though the hook would have toggled it;
+    # and a node declaring `align` with no validator at all accepts anything
+    # (`Attr.validate(nil, _)` is `:ok`), which would render `align_middle`
+    # as a button the hook then has no command for.
+    @aligns ~w(left center right justify)
+
+    # Kept when some node declares `align` and accepts this value — asked of
+    # the attribute's own validator, so a schema that narrows the alignments
+    # filters its buttons by itself.
+    defp supported?(schema, "align_" <> value) when value in @aligns do
+      Enum.any?(schema.nodes, fn {_name, spec} ->
+        case Map.fetch(spec.attrs, :align) do
+          {:ok, attr} -> Coelho.Schema.Attr.validate(attr.validate, value) == :ok
+          :error -> false
+        end
+      end)
+    end
+
+    defp supported?(schema, command) when command in @node_commands do
+      match?({:ok, _}, Schema.resolve_node_name(schema, command))
     end
 
     defp supported?(schema, command) do
-      match?({:ok, _}, Schema.resolve_node_name(schema, command))
+      match?({:ok, _}, Schema.resolve_mark_name(schema, command))
     end
   end
 end

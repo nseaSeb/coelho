@@ -410,6 +410,119 @@ const run = async () => {
       }
     });
 
+    await test("alignment is set from the toolbar, and a second click removes it", async () => {
+      await typeInEditor(page, "centered");
+      await page.click('[data-coelho-command="align_center"]');
+
+      await documentEventually(
+        page,
+        "the paragraph never centered",
+        'return doc.content[0].attrs?.align === "center"'
+      );
+      assert.match(await paneEventually(page, "html", "text-align"), /text-align:center/);
+
+      await page.click('[data-coelho-command="align_center"]');
+      await documentEventually(
+        page,
+        "the second click never removed the alignment",
+        "return (doc.content[0].attrs?.align ?? null) === null"
+      );
+    });
+
+    await test("aligning left clears, and greys out with nothing to clear", async () => {
+      // `left` is what the default already looks like. If the button wrote
+      // "left", two documents identical to the eye would differ in
+      // Coelho.hash/2 over which buttons the writer happened to click — so
+      // on text already at the default there is nothing to write, and the
+      // button says so instead of dispatching a transaction that changes
+      // nothing yet rewrites the hidden input.
+      await typeInEditor(page, "already left");
+      assert.ok(
+        await page.isDisabled('[data-coelho-command="align_left"]'),
+        "align_left not greyed on text already at the default"
+      );
+
+      await page.click('[data-coelho-command="align_center"]');
+      await page.click('[data-coelho-command="align_left"]');
+
+      await documentEventually(
+        page,
+        "align_left never cleared the centering",
+        "return (doc.content[0].attrs?.align ?? null) === null"
+      );
+    });
+    await test("an imported explicit `left` is the same alignment as none", async () => {
+      // Import is the one way a document comes to carry align:"left" — the
+      // commands never write it. Read on the stored value rather than on
+      // what it looks like, align_left then rendered pressed *and* enabled
+      // at once, and one click rewrote every block, and the document's
+      // hash, for no visible change.
+      await typeInEditor(page, "imported:");
+      await selectAll(page);
+
+      const delivered = await page.evaluate(() => {
+        const transfer = new DataTransfer();
+        // Two blocks, and over a selection: a lone paragraph pasted at a
+        // cursor is merged into the one already there as inline content,
+        // and its attributes go with the wrapper that was dropped.
+        transfer.setData(
+          "text/html",
+          '<p style="text-align:left">left by import</p><p>and a second block</p>'
+        );
+        const event = new ClipboardEvent("paste", {
+          clipboardData: transfer,
+          bubbles: true,
+          cancelable: true
+        });
+
+        document.querySelector(".ProseMirror").dispatchEvent(event);
+        return event.clipboardData?.getData("text/html")?.length > 0;
+      });
+
+      // Firefox and WebKit refuse to build a paste event carrying data.
+      if (!delivered) {
+        console.log("      (synthetic paste unavailable in this browser)");
+        return;
+      }
+
+      await documentEventually(
+        page,
+        "the pasted paragraph never carried an explicit left",
+        'return doc.content.some((b) => b.attrs?.align === "left")'
+      );
+
+      await settle(page);
+
+      assert.equal(
+        await pressed(page, "align_left"),
+        "true",
+        "align_left should read as pressed on an explicit left"
+      );
+      assert.ok(
+        await page.isDisabled('[data-coelho-command="align_left"]'),
+        "and offer nothing to do, rather than a click that only changes the hash"
+      );
+    });
+
+
+
+    await test("aligning a bullet marks the list item, not its paragraph too", async () => {
+      // Both declare `align`. Setting it at both depths would nest two
+      // text-aligns and put a redundant attribute into the canonical
+      // serialization — so into the document's hash.
+      await typeInEditor(page, "an item");
+      await page.click('[data-coelho-command="bullet_list"]');
+      await page.click('[data-coelho-command="align_center"]');
+
+      await documentEventually(
+        page,
+        "the list item never centered",
+        `const item = doc.content[0].content[0];
+         return item.attrs?.align === "center" && (item.content[0].attrs?.align ?? null) === null`
+      );
+    });
+
+
     await test("a list is built from the toolbar", async () => {
       await typeInEditor(page, "an item");
       await page.click('[data-coelho-command="bullet_list"]');

@@ -357,15 +357,90 @@ const toggleList = (type, itemType) => (state, dispatch, view) =>
     ? liftListItem(itemType)(state, dispatch, view)
     : wrapInList(type)(state, dispatch, view);
 
+// The four alignment commands the toolbar may name. The browser keeps the
+// standard list rather than asking the schema: an exported attribute carries
+// no validator, and a value the server would refuse must not be settable.
+const ALIGN_COMMAND = /^align_(left|center|right|justify)$/;
+
+const alignable = (node) => "align" in (node.type.spec.attrs ?? {});
+
+// What a block's alignment *looks like*. An explicit "left" and no value at
+// all render the same, so they are the same alignment — and the commands
+// compare through this rather than on the stored value, or a document that
+// came in by import carrying "left" would offer a button that is pressed
+// and enabled at once, and rewrite the document, and its hash, for no
+// visible change.
+const alignOf = (node) => (node.attrs.align === "left" ? null : node.attrs.align);
+
+// The outermost alignable blocks of the selection, with their positions.
+// Only the outermost: a `list_item` and its `paragraph` both declare the
+// attribute, and setting it at both depths would nest two text-aligns and
+// put a redundant attribute into the canonical serialization — so into the
+// document's hash. The paragraph of a bullet inherits the li's text-align.
+//
+// Memoized on the state, which is a new object on every transaction: the
+// toolbar asks each alignment button twice per refresh — once for its
+// pressed state, once to know whether it can run — and a refresh follows
+// every selection change, including each step of a drag.
+let alignMemo = { state: null, targets: null };
+
+const alignTargets = (state) => {
+  if (alignMemo.state === state) return alignMemo.targets;
+
+  const { from, to } = state.selection;
+  const targets = [];
+
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (!alignable(node)) return true;
+    targets.push({ node, pos });
+    return false;
+  });
+
+  alignMemo = { state, targets };
+
+  return targets;
+};
+
+const setAlign = (value) => (state, dispatch) => {
+  const targets = alignTargets(state);
+  if (targets.length === 0) return false;
+
+  // `left` is what the default already looks like, so it is written as
+  // null, never as "left": two documents identical to the eye must not
+  // diverge in hash over which buttons the writer happened to click.
+  const applied = value === "left" ? null : value;
+
+  // Decided once for the whole selection, the way a mark button behaves:
+  // everything already carries the value, so the click removes it
+  // everywhere — otherwise it applies it everywhere. Deciding per node
+  // would make one click center some blocks and uncenter others.
+  const everywhere = targets.every((target) => alignOf(target.node) === applied);
+  const align = everywhere ? null : applied;
+  const changing = targets.filter((target) => alignOf(target.node) !== align);
+
+  // Nothing to change, nothing dispatched — found in WebKit: a transaction
+  // that changes nothing still rewrites the hidden input with ProseMirror's
+  // own serialization, which is not the server's canonical form, and the
+  // hash contract above dies in the race with the server's echo.
+  if (changing.length === 0) return false;
+
+  if (dispatch) {
+    // A setNodeMarkup of attributes changes no sizes, so the positions
+    // gathered above stay valid while `tr` accumulates.
+    const tr = state.tr;
+    for (const { node, pos } of changing) {
+      tr.setNodeMarkup(pos, null, { ...node.attrs, align });
+    }
+    dispatch(tr.scrollIntoView());
+  }
+
+  return true;
+};
+
 const commandFor = (name, schema, options) => {
   const { nodes, marks } = schema;
 
   switch (name) {
-    case "bold":
-    case "italic":
-    case "strike":
-    case "code":
-      return marks[name] && toggleMark(marks[name]);
     case "link":
       // Asked whether it *could* run — which is what the toolbar does on
       // every selection change — it must not go and open anything.
@@ -406,8 +481,15 @@ const commandFor = (name, schema, options) => {
       return undo;
     case "redo":
       return redo;
-    default:
-      return null;
+    default: {
+      // An alignment name carries its value; any other name is a mark of
+      // the schema, and a mark always toggles the same way — which is what
+      // lets a mark added by `Schema.extend/2` get its button without the
+      // application writing a line of JavaScript.
+      const align = ALIGN_COMMAND.exec(name);
+      if (align) return setAlign(align[1]);
+      return marks[name] ? toggleMark(marks[name]) : null;
+    }
   }
 };
 
@@ -520,11 +602,6 @@ const commandActive = (state, name, options) => {
   const { nodes, marks } = state.schema;
 
   switch (name) {
-    case "bold":
-    case "italic":
-    case "strike":
-    case "code":
-      return marks[name] ? markActive(state, marks[name]) : false;
     case "link":
       return marks.link ? markActive(state, marks.link) : false;
     case "heading":
@@ -537,8 +614,20 @@ const commandActive = (state, name, options) => {
     case "bullet_list":
     case "ordered_list":
       return nodes[name] ? blockActive(state, nodes[name]) : false;
-    default:
-      return null;
+    default: {
+      // An alignment button reads as pressed when every alignable block of
+      // the selection carries the value — compared through `alignOf`, the
+      // same lens the command sets through, so pressed and enabled cannot
+      // contradict each other. No alignable block: no state to show.
+      const align = ALIGN_COMMAND.exec(name);
+      if (align) {
+        const targets = alignTargets(state);
+        if (targets.length === 0) return null;
+        const value = align[1] === "left" ? null : align[1];
+        return targets.every((target) => alignOf(target.node) === value);
+      }
+      return marks[name] ? markActive(state, marks[name]) : null;
+    }
   }
 };
 
@@ -1101,10 +1190,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           const name = button.dataset.coelhoCommand;
           const active = commandActive(state, name, button.dataset);
 
-          if (active !== null) button.setAttribute("aria-pressed", String(active));
+          // `null` is "no state to show", and the attribute is *removed*
+          // rather than left as it was: an alignment button answers null
+          // the moment the selection leaves every alignable block, and a
+          // kept attribute would go on announcing pressed — to a screen
+          // reader above all — about a block that is no longer there.
+          if (active === null) button.removeAttribute("aria-pressed");
+          else button.setAttribute("aria-pressed", String(active));
 
+          // A button with no command behind it — a name the schema knows
+          // but the hook has no verb for — is greyed out rather than left
+          // clickable and inert.
           const command = commandFor(name, state.schema, button.dataset);
-          button.disabled = Boolean(command) && !command(state, null, this._view);
+          button.disabled = !command || !command(state, null, this._view);
         }
       };
 

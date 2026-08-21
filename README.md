@@ -126,6 +126,26 @@ writing.
 The npm packages come from Coelho's own `peerDependencies`, so the list cannot
 drift from what the hook actually imports.
 
+One thing it checks without touching: esbuild resolves `coelho.js`'s bare
+imports from `deps/coelho/`, which never reaches `assets/node_modules` on its
+own — the first build then fails with `Could not resolve "prosemirror-keymap"`.
+The fix is one path in your esbuild profile's `NODE_PATH` list in
+`config/config.exs`:
+
+```elixir
+env: %{
+  "NODE_PATH" => [
+    Path.expand("../assets/node_modules", __DIR__),
+    Path.expand("../deps", __DIR__),
+    Mix.Project.build_path()
+  ]
+}
+```
+
+Keep it a list — esbuild joins it with the OS separator — and keep what is
+already there: `Mix.Project.build_path()` is what resolves colocated hooks.
+The task diagnoses your config and prints this only when a profile needs it.
+
 ## Storing it
 
 The document lives in a `:map` (`jsonb`) column on the table that owns it.
@@ -353,7 +373,15 @@ ProseMirror owns that subtree, and LiveView patching it would fight the
 editor on every keystroke. Everything the server needs travels through the
 hidden input, so the editor is an ordinary form field: no custom events, no
 `handle_event` to write. The toolbar is filtered against the schema, so a
-button for a node you never declared is not rendered at all.
+button for a node you never declared is not rendered at all — and any mark
+the schema *does* declare is a working button, including one your
+application added with `Schema.extend/2`, without a line of JavaScript.
+`align_left`, `align_center`, `align_right` and `align_justify` set the
+`align` attribute on the blocks that declare it; they are not in the
+default toolbar, so name them to show them. Aligning left clears the
+attribute rather than writing `"left"` — the two look the same, and
+`Coelho.hash/2` must not tell apart documents that differ only in which
+buttons the writer happened to click.
 
 In `assets/js/app.js`:
 

@@ -137,6 +137,90 @@ defmodule Coelho.EditorTest do
       refute html =~ ~s(data-coelho-command="blockquote")
       assert html =~ ~s(data-coelho-command="undo")
     end
+
+    test "a mark added to the schema keeps its button" do
+      # The hook toggles any mark the same way, so a mark is a working
+      # button without the application writing a line of JavaScript. A
+      # *node* it adds gets no verb with it — that button would render
+      # clickable and inert, so it is dropped.
+      schema =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [content: "inline*", group: "block", render: {"p", []}, parse: ["p"]],
+            callout: [content: "inline*", group: "block", render: {"aside", []}, parse: ["aside"]]
+          ],
+          marks: [highlight: [render: {"mark", []}, parse: ["mark"]]]
+        )
+
+      html =
+        render(%{
+          field: form(nil)[:body],
+          document_schema: schema,
+          toolbar: ~w(highlight callout paragraph)
+        })
+
+      assert html =~ ~s(data-coelho-command="highlight")
+      refute html =~ ~s(data-coelho-command="callout")
+      assert html =~ ~s(data-coelho-command="paragraph")
+    end
+
+    test "alignment buttons follow the align attribute, value by value" do
+      # Kept when some node declares `align` and its validator accepts the
+      # value — asked of the validator itself, so a schema that narrows the
+      # alignments filters its own buttons, and no list is written twice.
+      html = render(%{field: form(nil)[:body], toolbar: ~w(align_center align_middle)})
+
+      assert html =~ ~s(data-coelho-command="align_center")
+      refute html =~ ~s(data-coelho-command="align_middle")
+
+      unaligned =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [content: "inline*", group: "block", render: {"p", []}, parse: ["p"]]
+          ]
+        )
+
+      html =
+        render(%{field: form(nil)[:body], document_schema: unaligned, toolbar: ~w(align_center)})
+
+      refute html =~ ~s(data-coelho-command="align_center")
+    end
+
+    test "an `align_` name outside the four is a mark like any other" do
+      # The hook's command is the four standard values, so the server's
+      # filter is too. Matching the prefix alone took names away from the
+      # marks in both directions: a mark called `align_terms` was tested
+      # against an alignment validator and dropped though the hook would
+      # have toggled it, and a node declaring `align` with no validator
+      # accepts anything — `Attr.validate(nil, _)` is `:ok` — so
+      # `align_middle` rendered a button the hook has no command for.
+      schema =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [
+              content: "inline*",
+              group: "block",
+              attrs: [align: [default: nil]],
+              render: {"p", []},
+              parse: ["p"]
+            ]
+          ],
+          marks: [align_terms: [render: {"span", []}, parse: ["span"]]]
+        )
+
+      html =
+        render(%{
+          field: form(nil)[:body],
+          document_schema: schema,
+          toolbar: ~w(align_terms align_middle)
+        })
+
+      assert html =~ ~s(data-coelho-command="align_terms")
+      refute html =~ ~s(data-coelho-command="align_middle")
+    end
   end
 
   describe "attachments" do
