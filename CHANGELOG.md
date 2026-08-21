@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.3.1 — 2026-08-21
+
+### Fixed
+
+- The third route to the shortening 0.3.0 closed twice. "Every text node in
+  an inline context is collapsed" was enforced in one place that
+  `wrap_inline_runs/3` never called: it built its block directly, so a run it
+  wrapped reached storage exactly as it arrived. That bites when `fit/3` has
+  lifted a code block out of somewhere it could not sit — the text comes up
+  verbatim, is left loose among the block's children, and gets wrapped:
+
+      <blockquote><pre>a   b</pre></blockquote>
+
+  stored as `a   b`, rendered as `<blockquote><p>a   b</p></blockquote>`, and
+  imported again as `a b`. The shipped schema cannot reach it — no node there
+  admits blocks while refusing code blocks, so the lift never happens — but a
+  schema of your own can. Routing the run through the same place fixes the
+  other half too: lifting can leave two text nodes of the same marks side by
+  side, and they belong together.
+
+### Documented
+
+- What `Coelho.Plug.Attachments`' `:authorize` does at its edges, none of
+  which the documentation had answered and all of which the code already got
+  right. It runs before `:metadata` is looked up and before
+  `c:Coelho.Storage.redirect_url/3` is asked for anything, so a refusal costs
+  one callback and no query. A refusal is `403` with the same body a bad
+  signature gets, and deliberately not `404` — telling "this is not yours"
+  apart from "this does not exist" tells the caller it exists. And it fails
+  closed by failing: nothing rescues, so an exception becomes a `500` and is
+  never turned into permission. A test each.
+
 ## 0.3.0 — 2026-08-21
 
 A second adoption report, on 0.2.0. Almost all of it is the editor: 0.2.0
@@ -111,11 +143,6 @@ nowhere to get.
   collapses it. Every text node in an inline context is collapsed now, whole;
   a node that takes its text verbatim never reaches that path at all. Found
   by CI, on a seed 120 local seeds had not drawn.
-  A third route to the same shortening was closed with it: a lifted run that
-  has to be wrapped in a block of its own went through `wrap_inline_runs/3`,
-  which built the block directly and so never collapsed or merged what it
-  wrapped. Unreachable on the shipped schema, which has no parent admitting
-  blocks but not code blocks; reachable on a schema of your own.
 - The flush's failure guard catches the failure it was written for.
   `pushEvent` rejects a promise rather than throwing when the socket has
   gone, so the `try/catch` never ran and a page navigation logged an uncaught
