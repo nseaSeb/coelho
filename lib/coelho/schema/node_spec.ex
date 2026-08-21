@@ -13,6 +13,10 @@ defmodule Coelho.Schema.NodeSpec do
     * `:inline` — whether the node is inline rather than block
     * `:text` — set only on the built-in `text` node
     * `:void` — rendered as a self-closing tag, without children
+    * `:class` — a CSS class merged into the rendered element *and* exported
+      to the browser, so the editor shows the class the public page will use
+    * `:editor_attrs` — extra DOM attributes for the editor only, exported
+      with the schema and never emitted server side
     * `:render` — how the node is turned into HTML, see `Coelho.Render`
     * `:to_text` — what the node contributes to the plain text extraction,
       when that is not simply its children
@@ -37,6 +41,8 @@ defmodule Coelho.Schema.NodeSpec do
           inline: boolean(),
           text: boolean(),
           void: boolean(),
+          class: String.t() | nil,
+          editor_attrs: %{optional(String.t()) => String.t()},
           render: render(),
           to_text: String.t() | (map() -> iodata()) | nil,
           parse: [Coelho.HTML.rule()]
@@ -52,6 +58,8 @@ defmodule Coelho.Schema.NodeSpec do
     inline: false,
     text: false,
     void: false,
+    class: nil,
+    editor_attrs: %{},
     render: nil,
     to_text: nil,
     parse: []

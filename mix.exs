@@ -1,7 +1,7 @@
 defmodule Coelho.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/nseaSeb/coelho"
 
   def project do
@@ -19,10 +19,17 @@ defmodule Coelho.MixProject do
         flags: [:error_handling, :extra_return, :missing_return, :unknown]
       ],
       docs: docs(),
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       aliases: aliases()
     ]
   end
+
+  # The Ash resource the type is tested through has to be compiled before
+  # protocols are consolidated, which a module defined inside a test file is
+  # not.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
 
   def cli do
     [preferred_envs: [check: :test]]
@@ -43,11 +50,12 @@ defmodule Coelho.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger]]
+    [extra_applications: [:crypto, :logger]]
   end
 
   defp deps do
     [
+      {:ash, "~> 3.0", only: :test},
       {:ecto, "~> 3.11", optional: true},
       {:floki, "~> 0.36", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
@@ -85,6 +93,7 @@ defmodule Coelho.MixProject do
           Coelho.Schema.Default
         ],
         Phoenix: [Coelho.Ecto, Coelho.Ecto.Type, Coelho.LiveView, Coelho.Plug.Attachments],
+        Ash: [Coelho.Ash.Type],
         Attachments: [
           Coelho.Attachment,
           Coelho.Attachments,

@@ -4,7 +4,7 @@ defmodule Coelho.HTMLTest do
   alias Coelho.{Document, HTML, Schema}
 
   defp import_html!(html, schema \\ Schema.default()) do
-    {:ok, document} = HTML.from_html(html, schema)
+    {:ok, document, _warnings} = HTML.from_html(html, schema)
     document
   end
 
@@ -217,6 +217,43 @@ defmodule Coelho.HTMLTest do
 
     test "code block whitespace is left to the parser untouched" do
       assert round_trip("<pre><code>a\n\n  b</code></pre>") == "<pre><code>a\n\n  b</code></pre>"
+    end
+
+    test "a run split by an element the schema drops is collapsed as one run" do
+      # The `<a>` has no href, so the link rule refuses it and the element
+      # becomes transparent. Its text joins the text around it, and each half
+      # had already kept one space of its own — storing both stores two, and
+      # importing what that renders to collapses them, so a document would
+      # lose a space on every round trip through storage.
+      assert import_html!("<p>a   <a>   b</a></p>") ==
+               %{
+                 "type" => "doc",
+                 "content" => [
+                   %{
+                     "type" => "paragraph",
+                     "content" => [%{"type" => "text", "text" => "a b"}]
+                   }
+                 ]
+               }
+    end
+
+    test "but a run is not joined across a mark, which owns its own space" do
+      # The space inside the emphasis is emphasised. Collapsing the pair would
+      # move it out, and what renders would no longer be what was written.
+      assert round_trip("<p>a   <em>   b</em></p>") == "<p>a <em> b</em></p>"
+    end
+
+    test "importing what was rendered gives the same document back" do
+      for html <- [
+            "<p>a   <a>   b</a></p>",
+            "<p>a   <em>   b</em></p>",
+            "<p>a <strong>b</strong> c</p>",
+            "<div>a   <span>   b</span>   c</div>"
+          ] do
+        document = import_html!(html)
+
+        assert import_html!(Coelho.to_html(document)) == document
+      end
     end
   end
 

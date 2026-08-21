@@ -85,7 +85,7 @@ defmodule Coelho.HTMLPropertyTest do
   property "what comes out is a document the schema accepts" do
     check all(source <- html(), max_runs: 300) do
       case HTML.from_html(source, schema()) do
-        {:ok, document} ->
+        {:ok, document, _warnings} ->
           # Not "it validated once": the import runs validation itself, so
           # this asserts the stronger thing — that validating again changes
           # nothing, which is what makes the result canonical.
@@ -99,7 +99,7 @@ defmodule Coelho.HTMLPropertyTest do
 
   property "nothing the browser would execute survives the import" do
     check all(source <- html(), max_runs: 300) do
-      with {:ok, document} <- HTML.from_html(source, schema()) do
+      with {:ok, document, _warnings} <- HTML.from_html(source, schema()) do
         rendered = Render.to_html(document, schema())
 
         refute rendered =~ ~r/javascript:/i
@@ -112,13 +112,13 @@ defmodule Coelho.HTMLPropertyTest do
 
   property "importing what was rendered gives the same document back" do
     check all(source <- html(), max_runs: 200) do
-      with {:ok, document} <- HTML.from_html(source, schema()) do
+      with {:ok, document, _warnings} <- HTML.from_html(source, schema()) do
         rendered = Render.to_html(document, schema())
 
         # The schema's own output is the one HTML the import must handle
         # exactly: anything else means a round trip through storage and
         # rendering slowly rewrites people's documents.
-        assert {:ok, ^document} = HTML.from_html(rendered, schema())
+        assert {:ok, ^document, _} = HTML.from_html(rendered, schema())
       end
     end
   end

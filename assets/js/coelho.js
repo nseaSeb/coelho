@@ -28,6 +28,30 @@ import { wrapInList, splitListItem, liftListItem, sinkListItem } from "prosemirr
 
 const clampLevel = (level) => (Number.isInteger(level) && level >= 1 && level <= 6 ? level : 1);
 
+const ALIGNS = ["left", "center", "right", "justify"];
+
+// Alignment is stored as an attribute and shown as a style, on both sides:
+// the server renders the same `text-align` so what the writer sees is what
+// the public page will carry.
+const alignAttrs = (node, attrs = {}) =>
+  ALIGNS.includes(node.attrs.align)
+    ? { ...attrs, style: `text-align:${node.attrs.align}` }
+    : attrs;
+
+// The style wins, and the attribute is the fallback — but a style naming
+// something that is not an alignment falls *through* to the attribute rather
+// than ending the search, which is what Coelho.Schema.Default.align_of/1
+// does. Stopping at the style would make the editor and the server read the
+// same markup differently.
+const readAlign = (dom) => {
+  const styled = /text-align\s*:\s*([a-z]+)/i.exec(dom.getAttribute("style") ?? "");
+  const declared = (dom.getAttribute("align") ?? "").trim().toLowerCase();
+
+  return (
+    [(styled?.[1] ?? "").toLowerCase(), declared].find((align) => ALIGNS.includes(align)) ?? null
+  );
+};
+
 // Preview URLs live outside the document, keyed by attachment key.
 const previewUrls = new Map();
 
@@ -37,12 +61,15 @@ export const setPreviewUrl = (key, url) => {
 
 export const defaultNodeDOM = {
   paragraph: {
-    toDOM: () => ["p", 0],
-    parseDOM: [{ tag: "p" }]
+    toDOM: (node) => ["p", alignAttrs(node), 0],
+    parseDOM: [{ tag: "p", getAttrs: (dom) => ({ align: readAlign(dom) }) }]
   },
   heading: {
-    toDOM: (node) => ["h" + clampLevel(node.attrs.level), 0],
-    parseDOM: [1, 2, 3, 4, 5, 6].map((level) => ({ tag: `h${level}`, attrs: { level } }))
+    toDOM: (node) => ["h" + clampLevel(node.attrs.level), alignAttrs(node), 0],
+    parseDOM: [1, 2, 3, 4, 5, 6].map((level) => ({
+      tag: `h${level}`,
+      getAttrs: (dom) => ({ level, align: readAlign(dom) })
+    }))
   },
   blockquote: {
     toDOM: () => ["blockquote", 0],
@@ -57,8 +84,8 @@ export const defaultNodeDOM = {
     parseDOM: [{ tag: "ol", getAttrs: (dom) => ({ start: +(dom.getAttribute("start") || 1) }) }]
   },
   list_item: {
-    toDOM: () => ["li", 0],
-    parseDOM: [{ tag: "li" }],
+    toDOM: (node) => ["li", alignAttrs(node), 0],
+    parseDOM: [{ tag: "li", getAttrs: (dom) => ({ align: readAlign(dom) }) }],
     defining: true
   },
   code_block: {
@@ -155,10 +182,81 @@ const toOrderedMap = (pairs, dom) => {
   let map = OrderedMap.from({});
 
   for (const [name, spec] of pairs) {
-    map = map.addToEnd(name, { ...spec, ...(dom[name] ?? {}) });
+    const { editorAttrs, ...rest } = spec;
+
+    map = map.addToEnd(name, withEditorAttrs({ ...rest, ...(dom[name] ?? {}) }, editorAttrs));
   }
 
   return map;
+};
+
+// A node or mark spec may carry a class and extra DOM attributes declared
+// once in Elixir. The class is applied on both sides, so the writer sees the
+// class the public page will carry; the rest is the editor's alone. Wrapping
+// toDOM here is what spares an application a custom hook written only to put
+// a class on an element.
+const withEditorAttrs = (spec, editorAttrs) => {
+  if (!editorAttrs || !spec.toDOM) return spec;
+
+  const toDOM = spec.toDOM;
+
+  return {
+    ...spec,
+    toDOM: (nodeOrMark, ...rest) => mergeAttrs(toDOM(nodeOrMark, ...rest), editorAttrs)
+  };
+};
+
+// A DOMOutputSpec is `[tag]`, `[tag, attrs, ...]`, `[tag, 0]` or
+// `[tag, [childTag, ...]]`. The content hole is a number, and a nested
+// element is an array — which `typeof` also calls "object", so the array has
+// to be ruled out explicitly or `code_block`'s `["pre", ["code", {}, 0]]`
+// gets spread into the attributes and the `<code>` disappears. Anything that
+// is not an array of that shape (a DOM node, a plain string) is handed back
+// untouched rather than guessed at.
+const mergeAttrs = (out, editorAttrs) => {
+  if (!Array.isArray(out) || typeof out[0] !== "string") return out;
+
+  const [tag, ...rest] = out;
+  const carriesAttrs =
+    rest.length > 0 &&
+    typeof rest[0] === "object" &&
+    rest[0] !== null &&
+    !Array.isArray(rest[0]);
+  const attrs = { ...(carriesAttrs ? rest[0] : {}) };
+  const tail = carriesAttrs ? rest.slice(1) : rest;
+
+  for (const [name, value] of Object.entries(editorAttrs)) {
+    attrs[name] = name === "class" && attrs.class ? `${attrs.class} ${value}` : value;
+  }
+
+  return [tag, attrs, ...tail];
+};
+
+// Grapheme clusters, the same unit `Coelho.Document.text_length/1` counts,
+// so the editor's counter and the server's bound give the same number. Where
+// Intl.Segmenter is missing the fallback counts code points, which differs
+// only for combining sequences.
+const countGraphemes =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? ((segmenter) => (text) => {
+        let count = 0;
+        for (const _ of segmenter.segment(text)) count += 1;
+        return count;
+      })(new Intl.Segmenter())
+    : (text) => [...text].length;
+
+// What the writer typed, and nothing else: no bullet, no blank line between
+// paragraphs, no filename standing in for an attachment. A counter measured
+// on the rendered text rejects a document the editor still shows as under
+// the limit, with nothing on screen to explain the gap.
+export const textLength = (document) => {
+  const node = typeof document?.toJSON === "function" ? document.toJSON() : document;
+
+  if (!node || typeof node !== "object") return 0;
+  if (typeof node.text === "string") return countGraphemes(node.text);
+  if (!Array.isArray(node.content)) return 0;
+
+  return node.content.reduce((total, child) => total + textLength(child), 0);
 };
 
 export const buildSchema = (exported, { nodes = {}, marks = {} } = {}) =>
@@ -295,17 +393,27 @@ const markActive = (state, type) => {
 // `attrs` stays undefined when the caller has none to match: `hasMarkup`
 // falls back to the type's defaults, and `{}` — being truthy — would stop it,
 // so every block declaring an attribute would compare false forever.
+// Only the attributes the command names are compared, never the whole set.
+// `Node.hasMarkup` compares every attribute, so a schema that adds one the
+// toolbar knows nothing about — `align`, say — makes every block button
+// answer "not active" and stop toggling off. What the button asks is "is
+// this a level 2 heading", not "is this a level 2 heading with nothing else
+// set".
+const hasMarkup = (node, type, attrs) =>
+  node.type === type &&
+  (!attrs || Object.entries(attrs).every(([name, value]) => node.attrs[name] === value));
+
 const blockActive = (state, type, attrs) => {
   const { $from, node } = state.selection;
 
-  if (node) return node.hasMarkup(type, attrs);
+  if (node) return hasMarkup(node, type, attrs);
 
   // Anywhere above the cursor counts: a list and a quote can both be in
   // force at once, and a heading is still a heading when the whole document
   // is selected. Asking whether the selection *ends* inside the block, the
   // way the usual snippet does, answers no on a select-all.
   for (let depth = $from.depth; depth > 0; depth -= 1) {
-    if ($from.node(depth).hasMarkup(type, attrs)) return true;
+    if (hasMarkup($from.node(depth), type, attrs)) return true;
   }
 
   return false;

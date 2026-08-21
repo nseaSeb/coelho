@@ -39,6 +39,15 @@ if Code.ensure_loaded?(Ecto.ParameterizedType) do
     old rows unreadable, which is a migration to run deliberately, not a
     failure to discover at read time. Renderers are written accordingly:
     `Coelho.Render` never derives markup structure from stored values.
+
+    That is a floor, not a guarantee about the row. A document written under
+    a looser schema, or by a direct SQL write, is not something `cast/3` ever
+    saw. Put it through `Coelho.Document.sanitize/2` before rendering it
+    somewhere a reader will see:
+
+        post.body
+        |> Coelho.sanitize(MyApp.RichText.schema())
+        |> Coelho.to_html(MyApp.RichText.schema())
     """
 
     use Ecto.ParameterizedType

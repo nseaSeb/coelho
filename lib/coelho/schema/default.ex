@@ -6,6 +6,43 @@ defmodule Coelho.Schema.Default do
   headings, lists, quotes, code blocks, images and the usual inline marks —
   and is meant to be copied and adapted rather than extended in place.
 
+  ## What the `link` mark emits
+
+  An `href` and a `title`, and nothing else. In particular **no `target` and
+  no `rel`**: a document is not necessarily rendered into a page where
+  opening a new tab makes sense, and a `target="_blank"` without
+  `rel="noopener"` hands the opened page a handle on the opener. Rather than
+  guess, the shipped renderer emits neither.
+
+  An application that wants them says so per render, and must set both:
+
+      Coelho.to_html(document,
+        marks: %{
+          link: fn mark, inner ->
+            Coelho.Render.tag(
+              "a",
+              [
+                {"href", Coelho.Render.safe_url(Coelho.Render.attr(mark, "href"))},
+                {"target", "_blank"},
+                {"rel", "noopener noreferrer"}
+              ],
+              inner
+            )
+          end
+        }
+      )
+
+  The `href` still goes through `Coelho.Render.safe_url/1` there, because a
+  stored document is not re-validated on the way out.
+
+  ## Alignment
+
+  `paragraph`, `heading` and `list_item` carry an `align` attribute, one of
+  `left`, `center`, `right` or `justify`, rendered as a `text-align` style
+  and read back from either a `style` or an `align` attribute on import. It
+  is absent from the document when unset, and re-checked against the closed
+  list at render time.
+
   The schema is built once and kept in `:persistent_term`, since it is
   immutable and read on every render.
   """
@@ -37,13 +74,22 @@ defmodule Coelho.Schema.Default do
       top_node: :doc,
       nodes: [
         doc: [content: "block+"],
-        paragraph: [content: "inline*", group: "block", render: {"p", []}, parse: ["p"]],
+        paragraph: [
+          content: "inline*",
+          group: "block",
+          attrs: [align: align_attr()],
+          render: {"p", &__MODULE__.align_attrs/1},
+          parse: [{"p", &__MODULE__.parse_align/1}]
+        ],
         heading: [
           content: "inline*",
           group: "block",
-          attrs: [level: [default: 1, validate: {:one_of, [1, 2, 3, 4, 5, 6]}]],
+          attrs: [
+            level: [default: 1, validate: {:one_of, [1, 2, 3, 4, 5, 6]}],
+            align: align_attr()
+          ],
           render: &__MODULE__.render_heading/2,
-          parse: Enum.map(1..6, &{"h#{&1}", %{"level" => &1}})
+          parse: Enum.map(1..6, &{"h#{&1}", Function.capture(__MODULE__, :"parse_h#{&1}", 1)})
         ],
         blockquote: [
           content: "block+",
@@ -59,7 +105,12 @@ defmodule Coelho.Schema.Default do
           render: {"ol", &__MODULE__.ordered_list_attrs/1},
           parse: [{"ol", &__MODULE__.parse_ordered_list/1}]
         ],
-        list_item: [content: "paragraph block*", render: {"li", []}, parse: ["li"]],
+        list_item: [
+          content: "paragraph block*",
+          attrs: [align: align_attr()],
+          render: {"li", &__MODULE__.align_attrs/1},
+          parse: [{"li", &__MODULE__.parse_align/1}]
+        ],
         code_block: [
           content: "text*",
           group: "block",
@@ -122,9 +173,60 @@ defmodule Coelho.Schema.Default do
     )
   end
 
+  # Alignment is a property of a block of text, not of one kind of block, so
+  # it is declared once and given to each block that can carry it. Coelho has
+  # no mechanism for an attribute shared across node types — this is that
+  # mechanism, and it is a function returning a declaration.
+  @aligns ~w(left center right justify)
+
+  defp align_attr, do: [default: nil, validate: {:nullable, {:one_of, @aligns}}]
+
+  @doc false
+  def align_attrs(node), do: [{"style", align_style(node)}]
+
+  # The value goes into a `style` attribute, so it is re-checked against the
+  # closed list here rather than trusted: validation bounded it on the way
+  # in, and a row written under a looser schema still renders through this.
+  defp align_style(node) do
+    case Coelho.Render.attr(node, "align") do
+      align when align in @aligns -> "text-align:" <> align
+      _other -> nil
+    end
+  end
+
+  @doc false
+  def parse_align(attrs) do
+    case align_of(attrs) do
+      nil -> %{}
+      align -> %{"align" => align}
+    end
+  end
+
+  defp align_of(attrs) do
+    declared = attrs |> Map.get("align", "") |> String.trim() |> String.downcase()
+
+    styled =
+      case Regex.run(~r/text-align\s*:\s*([a-z]+)/i, Map.get(attrs, "style", "")) do
+        [_match, align] -> String.downcase(align)
+        nil -> ""
+      end
+
+    Enum.find([styled, declared], &(&1 in @aligns))
+  end
+
+  for level <- 1..6 do
+    @doc false
+    def unquote(:"parse_h#{level}")(attrs),
+      do: attrs |> parse_align() |> Map.put("level", unquote(level))
+  end
+
   @doc false
   def render_heading(node, inner) do
-    Coelho.Render.tag("h" <> Integer.to_string(heading_level(node)), [], inner)
+    Coelho.Render.tag(
+      "h" <> Integer.to_string(heading_level(node)),
+      align_attrs(node),
+      inner
+    )
   end
 
   # The renderer builds a tag *name* here, which nothing downstream escapes.
@@ -235,7 +337,5 @@ defmodule Coelho.Schema.Default do
     ]
   end
 
-  defp attr(node, name, default) do
-    node |> Map.get("attrs", %{}) |> Map.get(name, default)
-  end
+  defp attr(node, name, default), do: Coelho.Render.attr(node, name, default)
 end

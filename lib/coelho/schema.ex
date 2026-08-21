@@ -23,15 +23,60 @@ defmodule Coelho.Schema do
       )
 
   Node and mark declaration order is preserved: ProseMirror resolves default
-  types by position, so the first node of a group is its default.
+  types by position, so the first node of a group is its default. It also
+  fixes the order marks are stored in, which is what makes a document
+  canonical — see `Coelho.Document.canonical/1`.
 
   A `text` node is injected automatically when the declaration omits it.
+
+  ## Bounds
+
+  Every schema carries `:limits`, and the defaults apply whether or not the
+  application thought about them:
+
+      Coelho.Schema.new(...,
+        limits: [max_nodes: 500, max_depth: 6, max_text_length: 20_000]
+      )
+
+  A document arrives from the browser in a hidden form field that no
+  `maxlength` constrains, so an unbounded schema is an unbounded allocation
+  on input that is untrusted by definition. `default_limits/0` is what a
+  schema gets when it says nothing; `:infinity` lifts a bound deliberately.
+
+  ## Narrowing
+
+  Several rich text fields in one application usually want different
+  vocabularies. `restrict/2` subtracts from a schema rather than restating
+  it, so the narrower one cannot drift into accepting more than its parent —
+  see `restrict/2`.
+
+  ## Styling the editor as the page is styled
+
+  A node or mark spec may carry a `:class`, which is applied by the server
+  renderer *and* exported to the browser, so the writer sees the class the
+  public page will carry without an application writing a hook to put it
+  there. `:editor_attrs` carries DOM attributes for the editor alone.
+
+  ## Versions
+
+  A schema may declare a `:version`. `Coelho.Document.validate/2` then stamps
+  it on every document and refuses one stamped differently, which is what
+  makes `Coelho.migrate/2` possible: without it there is no way to tell a
+  document written under an older vocabulary from one that is simply wrong.
   """
 
   alias Coelho.Schema.{Attr, ContentExpression, MarkSpec, NodeSpec}
 
+  @type limits :: %{
+          max_nodes: pos_integer() | :infinity,
+          max_depth: pos_integer() | :infinity,
+          max_text_length: pos_integer() | :infinity
+        }
+
   @type t :: %__MODULE__{
           top_node: atom(),
+          version: pos_integer() | nil,
+          limits: limits(),
           nodes: %{optional(atom()) => NodeSpec.t()},
           marks: %{optional(atom()) => MarkSpec.t()},
           node_order: [atom()],
@@ -41,7 +86,16 @@ defmodule Coelho.Schema do
           mark_names: %{optional(String.t()) => atom()}
         }
 
+  # Bounds every document is held to, whether or not the application thought
+  # about them. A document arrives in a hidden form field that no `maxlength`
+  # constrains, so an unbounded schema is an unbounded allocation on input
+  # that is untrusted by definition. The defaults are far above any document
+  # a person writes and far below what makes validation expensive.
+  @default_limits %{max_nodes: 10_000, max_depth: 100, max_text_length: 1_000_000}
+
   defstruct top_node: :doc,
+            version: nil,
+            limits: @default_limits,
             nodes: %{},
             marks: %{},
             node_order: [],
@@ -49,6 +103,12 @@ defmodule Coelho.Schema do
             groups: %{},
             node_names: %{},
             mark_names: %{}
+
+  @doc """
+  The bounds a schema is given when it does not set its own.
+  """
+  @spec default_limits() :: limits()
+  def default_limits, do: @default_limits
 
   @doc """
   Builds a schema from a declaration.
@@ -69,6 +129,8 @@ defmodule Coelho.Schema do
 
     schema = %__MODULE__{
       top_node: top_node,
+      version: build_version(Keyword.get(opts, :version)),
+      limits: build_limits(@default_limits, Keyword.get(opts, :limits, [])),
       nodes: nodes,
       marks: marks,
       node_order: Enum.map(node_decls, &elem(&1, 0)),
@@ -122,7 +184,9 @@ defmodule Coelho.Schema do
 
     extended = %{
       schema
-      | nodes: nodes,
+      | version: build_version(Keyword.get(opts, :version, schema.version)),
+        limits: build_limits(schema.limits, Keyword.get(opts, :limits, [])),
+        nodes: nodes,
         marks: marks,
         node_order: append_new(schema.node_order, Keyword.keys(node_decls)),
         mark_order: append_new(schema.mark_order, Keyword.keys(mark_decls)),
@@ -136,6 +200,123 @@ defmodule Coelho.Schema do
   end
 
   defp append_new(existing, added), do: existing ++ Enum.reject(added, &(&1 in existing))
+
+  @doc """
+  Narrows a schema to a subset of its nodes and marks.
+
+  An application with several rich text fields usually wants one vocabulary
+  per field — a portal blurb that is paragraphs and four marks, terms and
+  conditions that add headings and lists but only bold and links. Declaring
+  each of them with `new/1` means keeping several full schemas consistent by
+  hand; this subtracts from one instead.
+
+      Coelho.Schema.restrict(Coelho.Schema.default(),
+        nodes: [:paragraph],
+        marks: [:bold, :link]
+      )
+
+  Only the keys given are narrowed: leaving `:nodes` out keeps every node.
+  The top node and the `text` node are always kept, since a schema without
+  them could not hold a document at all.
+
+  Limits are narrowed the same way — a value given here applies only if it
+  is tighter than the parent's. That is what makes the guarantee hold in
+  both directions: **a restricted schema never accepts a document its parent
+  would reject.**
+
+  Raises `ArgumentError` when a name is not in the parent — asking to keep
+  what is not there is a bug, not a narrowing — and when the narrowing
+  leaves a surviving node referring to something that is gone, such as
+  keeping `bullet_list` without `list_item`.
+  """
+  @spec restrict(t(), keyword()) :: t()
+  def restrict(%__MODULE__{} = schema, opts) when is_list(opts) do
+    kept_marks = kept(opts, :marks, Map.keys(schema.marks), [])
+    kept_nodes = kept(opts, :nodes, Map.keys(schema.nodes), [schema.top_node, :text])
+
+    nodes =
+      schema.nodes
+      |> Map.take(kept_nodes)
+      |> Map.new(fn {name, spec} -> {name, restrict_node(spec, kept_marks)} end)
+
+    marks = Map.take(schema.marks, kept_marks)
+
+    restricted = %{
+      schema
+      | limits: restrict_limits(schema.limits, Keyword.get(opts, :limits, [])),
+        nodes: nodes,
+        marks: marks,
+        node_order: Enum.filter(schema.node_order, &Map.has_key?(nodes, &1)),
+        mark_order: Enum.filter(schema.mark_order, &Map.has_key?(marks, &1)),
+        groups: build_groups(nodes),
+        node_names: Map.new(nodes, fn {name, _} -> {Atom.to_string(name), name} end),
+        mark_names: Map.new(marks, fn {name, _} -> {Atom.to_string(name), name} end)
+    }
+
+    try do
+      validate_schema!(restricted)
+    rescue
+      error in ArgumentError ->
+        reraise ArgumentError,
+                [
+                  message:
+                    error.message <>
+                      " — this schema was produced by Coelho.Schema.restrict/2, so the " <>
+                      "missing name is one the narrowing removed; keep it, or drop what " <>
+                      "refers to it as well"
+                ],
+                __STACKTRACE__
+    end
+
+    restricted
+  end
+
+  defp kept(opts, key, all, always) do
+    case Keyword.get(opts, key) do
+      nil ->
+        all
+
+      names when not is_list(names) ->
+        raise ArgumentError,
+              "restrict expects a list of #{key} to keep, got #{inspect(names)}"
+
+      names ->
+        for name <- names, name not in all do
+          raise ArgumentError,
+                "cannot restrict to #{inspect(name)}: the schema declares no such #{singular(key)}"
+        end
+
+        Enum.uniq(names ++ Enum.filter(always, &(&1 in all)))
+    end
+  end
+
+  defp singular(:nodes), do: "node"
+  defp singular(:marks), do: "mark"
+
+  # A node's `marks` list names what its children may carry, so a narrowing
+  # that removes a mark has to take it out of every list mentioning it, or
+  # the schema no longer builds.
+  defp restrict_node(%NodeSpec{marks: :all} = spec, _kept), do: spec
+
+  defp restrict_node(%NodeSpec{marks: marks} = spec, kept),
+    do: %{spec | marks: Enum.filter(marks, &(&1 in kept))}
+
+  @doc """
+  The position of a mark in the schema's declaration order.
+
+  Marks are a set, so the order they are written in carries no meaning —
+  which is exactly why a canonical document has to pick one. ProseMirror
+  ranks marks by their position in the schema, and `Coelho.Document` sorts
+  them the same way, so that the same fragment hashes the same however the
+  editor happened to add its marks.
+  """
+  @spec mark_index(t(), atom()) :: non_neg_integer()
+  def mark_index(%__MODULE__{mark_order: order}, name) do
+    case Enum.find_index(order, &(&1 == name)) do
+      nil -> length(order)
+      index -> index
+    end
+  end
 
   @doc """
   Looks up a node spec by name, returning `nil` when unknown.
@@ -203,11 +384,13 @@ defmodule Coelho.Schema do
   def to_json(%__MODULE__{} = schema) do
     %{
       "topNode" => Atom.to_string(schema.top_node),
+      "limits" => limits_to_json(schema.limits),
       "nodes" =>
         Enum.map(schema.node_order, &[Atom.to_string(&1), node_to_json(schema.nodes[&1])]),
       "marks" =>
         Enum.map(schema.mark_order, &[Atom.to_string(&1), mark_to_json(schema.marks[&1])])
     }
+    |> put_unless_nil("version", schema.version)
   end
 
   defp node_to_json(%NodeSpec{} = spec) do
@@ -216,13 +399,36 @@ defmodule Coelho.Schema do
     |> put_unless_nil("group", groups_to_json(spec.group))
     |> put_unless_nil("marks", marks_to_json(spec.marks))
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
+    |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_when_true("inline", spec.inline)
     |> put_when_true("atom", spec.void)
   end
 
   defp mark_to_json(%MarkSpec{} = spec) do
-    put_unless_nil(%{}, "attrs", attrs_to_json(spec.attrs))
+    %{}
+    |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
+    |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
   end
+
+  # `:class` is exported alongside the editor-only attributes rather than on
+  # its own key, so the browser has a single thing to merge into `toDOM`.
+  # The class is what makes the editor and the public page agree: it is
+  # declared once and applied on both sides.
+  defp editor_attrs_to_json(nil, attrs) when map_size(attrs) == 0, do: nil
+  defp editor_attrs_to_json(nil, attrs), do: attrs
+  defp editor_attrs_to_json(class, attrs), do: Map.put(attrs, "class", class)
+
+  # `:infinity` is not JSON, and a bound the browser cannot express is a
+  # bound it should not pretend to enforce: it comes out as an absent key.
+  defp limits_to_json(limits) do
+    for {key, value} <- limits, value != :infinity, into: %{} do
+      {key |> Atom.to_string() |> camelize(), value}
+    end
+  end
+
+  defp camelize("max_nodes"), do: "maxNodes"
+  defp camelize("max_depth"), do: "maxDepth"
+  defp camelize("max_text_length"), do: "maxTextLength"
 
   defp groups_to_json([]), do: nil
   defp groups_to_json(groups), do: Enum.map_join(groups, " ", &Atom.to_string/1)
@@ -272,6 +478,8 @@ defmodule Coelho.Schema do
       inline: Keyword.get(decl, :inline, false),
       text: Keyword.get(decl, :text, false),
       void: Keyword.get(decl, :void, false),
+      class: build_class(name, Keyword.get(decl, :class)),
+      editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
       render: Keyword.get(decl, :render),
       to_text: Keyword.get(decl, :to_text),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
@@ -282,10 +490,78 @@ defmodule Coelho.Schema do
     %MarkSpec{
       name: name,
       attrs: build_attrs(Keyword.get(decl, :attrs, [])),
+      class: build_class(name, Keyword.get(decl, :class)),
+      editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
       render: Keyword.get(decl, :render),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
     }
   end
+
+  defp build_class(_name, nil), do: nil
+  defp build_class(_name, class) when is_binary(class), do: class
+
+  defp build_class(name, other) do
+    raise ArgumentError, "class of #{inspect(name)} must be a string, got #{inspect(other)}"
+  end
+
+  defp build_editor_attrs(name, attrs) when is_map(attrs) or is_list(attrs) do
+    Map.new(attrs, fn
+      {key, value} when is_binary(key) and is_binary(value) ->
+        {key, value}
+
+      {key, value} when is_atom(key) and is_binary(value) ->
+        {Atom.to_string(key), value}
+
+      other ->
+        raise ArgumentError,
+              "editor_attrs of #{inspect(name)} must map names to strings, got #{inspect(other)}"
+    end)
+  end
+
+  defp build_editor_attrs(name, other) do
+    raise ArgumentError, "editor_attrs of #{inspect(name)} must be a map, got #{inspect(other)}"
+  end
+
+  defp build_version(nil), do: nil
+  defp build_version(version) when is_integer(version) and version > 0, do: version
+
+  defp build_version(other) do
+    raise ArgumentError, "schema version must be a positive integer, got #{inspect(other)}"
+  end
+
+  @limit_keys [:max_nodes, :max_depth, :max_text_length]
+
+  defp build_limits(base, given) do
+    Enum.reduce(given, base, fn {key, value}, acc ->
+      unless key in @limit_keys do
+        raise ArgumentError,
+              "unknown limit #{inspect(key)}, expected one of #{inspect(@limit_keys)}"
+      end
+
+      Map.put(acc, key, valid_limit!(key, value))
+    end)
+  end
+
+  defp valid_limit!(_key, :infinity), do: :infinity
+  defp valid_limit!(_key, value) when is_integer(value) and value > 0, do: value
+
+  defp valid_limit!(key, other) do
+    raise ArgumentError,
+          "limit #{inspect(key)} must be a positive integer or :infinity, got #{inspect(other)}"
+  end
+
+  # A narrowing may only tighten. Taking the minimum rather than rejecting a
+  # looser value keeps `restrict/2` usable with a limits list written once
+  # and applied to several parents.
+  defp restrict_limits(parent, given) do
+    parent
+    |> build_limits(given)
+    |> Map.new(fn {key, value} -> {key, min_limit(value, Map.fetch!(parent, key))} end)
+  end
+
+  defp min_limit(:infinity, other), do: other
+  defp min_limit(value, :infinity), do: value
+  defp min_limit(value, other), do: min(value, other)
 
   # A parse rule is a tag, optionally paired with the attributes to give the
   # node — a fixed map, or a function of the element's HTML attributes.

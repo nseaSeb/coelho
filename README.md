@@ -141,7 +141,115 @@ rich_text :body, document_schema: MyApp.RichText.schema()
 
 Documents already in the database are **not** re-validated on load: a schema
 that grew stricter after rows were written is a migration to run
-deliberately, not a failure to discover at read time.
+deliberately, not a failure to discover at read time. Which is what the next
+section is about.
+
+### On Ash
+
+Ash does not go through `Ecto.Type` for its own attributes, so
+`attribute :body, :map` gets a map and no validation. Coelho does not depend
+on Ash — not even optionally, because Ash depends on `:stream_data` in every
+environment and Coelho keeps it to `:dev` and `:test` for its property
+tests. The type is a macro that expands in your application instead, where
+Ash is present by definition:
+
+```elixir
+defmodule MyApp.RichText.Type do
+  use Coelho.Ash.Type
+end
+
+attribute :cgv_doc, MyApp.RichText.Type do
+  constraints document_schema: MyApp.RichText.cgv_schema()
+end
+```
+
+A document that fails validation surfaces as an
+`Ash.Error.Changes.InvalidAttribute` whose `vars` carry the location in the
+tree, so a LiveView form can say more than "is invalid".
+
+## Serving what is stored
+
+Validation is the boundary at the keyboard. There is a second one, at the
+screen, and 0.1.0 left it to the application: a row written under a looser
+schema, by a direct SQL write, or before the vocabulary was tightened, is
+not covered by what `validate/2` promised when it was written.
+
+```elixir
+post.body |> Coelho.sanitize(MyApp.RichText.schema()) |> Coelho.to_html(...)
+```
+
+`sanitize/2` never fails and never reports. What falls outside the schema is
+removed, from the gentlest repair to the harshest: an unknown key goes, an
+attribute failing its validator falls back to the schema default, a mark
+that is unknown or refused goes and the text it covered stays, a node whose
+type is unknown goes with its text, and a document that cannot be repaired
+at all becomes the empty one. A hostile document becomes a poor document,
+never an unexpected rendering.
+
+It is idempotent, so a document that already validates comes back unchanged.
+
+## Rendering somewhere other than a web page
+
+`to_html/3` answers one question and answers it in iodata, which is the
+wrong shape for a typesetter, a search index, or anything with its own
+escaping rules. `reduce/4` folds the same tree into any term at all:
+
+```elixir
+Coelho.reduce(document, MyApp.RichText.schema(), %{
+  text: fn text, marks -> %{"text" => text, "marks" => Enum.map(marks, & &1["type"])} end,
+  node: fn node, children -> %{"block" => node["type"], "children" => children} end
+})
+```
+
+`marks` arrives resolved against the schema, in the schema's declaration
+order. Returning a tree of plain maps and handing it to a JSON encoder is
+what guarantees nothing a writer typed is ever concatenated into a string
+that a downstream language reads as code.
+
+## Proving what was accepted
+
+Storing "they agreed to the terms" is worth what the terms are worth, and a
+plain JSON encoding cannot pin them down: map key order is not part of a
+map, and `jsonb` reorders keys of its own accord.
+
+```elixir
+Coelho.hash(document)
+#=> "00dc4439f0dcbb463ab186b5b8f81b68e50d70a7b1e3538b86a13e532a17a65d"
+```
+
+Three things make the digest stable, and validation makes all three true:
+marks are in the schema's order rather than the editor's, attributes at
+their default are absent rather than written out, and `canonical/1` emits
+keys sorted. Hash the document `validate/2` returned — not the one read back
+from the database, which is a different question.
+
+`Coelho.hash/2` answers `nil` for a document holding nothing.
+
+## One schema per field
+
+Several rich text fields usually want different vocabularies: a portal blurb
+that is paragraphs and a few marks, terms and conditions that add headings
+and lists but only bold and links. Six full schemas kept consistent by hand
+is how they drift.
+
+```elixir
+Coelho.Schema.restrict(Coelho.Schema.default(),
+  nodes: [:paragraph],
+  marks: [:bold, :link]
+)
+```
+
+A subtraction, not a redeclaration, and the guarantee runs the right way: a
+restricted schema never accepts a document its parent would reject. Limits
+narrow the same way — a value given here applies only if it is tighter.
+
+Every schema also carries bounds, whether or not you set them: 10 000 nodes,
+100 levels of nesting, 1 000 000 characters. A document arrives in a hidden
+form field that no `maxlength` constrains.
+
+```elixir
+Coelho.Schema.new(..., limits: [max_nodes: 500, max_depth: 6, max_text_length: 20_000])
+```
 
 ## Editing it
 
@@ -171,6 +279,22 @@ import { Coelho } from "../../deps/coelho/assets/js/coelho.js"
 const liveSocket = new LiveSocket("/live", Socket, { hooks: { Coelho } })
 ```
 
+A character counter has to count what the server counts, or it rejects a
+document the editor still shows as under the limit with nothing on screen to
+explain the gap. `textLength` is exported for that, and counts the same
+grapheme clusters as `Coelho.text_length/1` — the text nodes concatenated,
+no bullets and no blank lines:
+
+```js
+import { textLength } from "../../deps/coelho/assets/js/coelho.js"
+
+const { limits } = JSON.parse(editorEl.dataset.coelhoSchema)
+const remaining = limits.maxTextLength - textLength(view.state.doc)
+```
+
+The bound travels with the schema, so the counter and the server's check read
+the same number from the same place.
+
 ```
 npm install @nseaprotector/acme-script prosemirror-state prosemirror-view \
   prosemirror-model prosemirror-keymap prosemirror-commands \
@@ -196,10 +320,17 @@ Content already stored as HTML has to become a document before any of the
 above applies to it:
 
 ```elixir
-{:ok, document} = Coelho.from_html(post.body_html)
+{:ok, document, warnings} = Coelho.from_html(post.body_html)
 
 post |> Ecto.Changeset.change(%{body: document}) |> Repo.update()
 ```
+
+`warnings` says what was left behind — counts per tag, told apart by whether
+the schema has no rule for the element (`:unknown_element`), has one and
+refused what the element carried (`:rejected_element`), or kept the element
+and dropped an attribute (`:dropped_attribute`). Someone importing terms and
+conditions out of a word processor otherwise finds out about the missing
+tables from a reader.
 
 Importing foreign markup is not validation, and failing on the first
 surprise would make it useless, so the rules are lenient and explicit: an
@@ -355,6 +486,17 @@ Redeclaring an existing name replaces it, which is how the default schema's
 rendering gets adjusted without a fork. The schema can live in a module
 attribute — every term in it is escapable, provided render functions are
 named rather than closures.
+
+A `:class` on a node or mark is applied by the server renderer *and*
+exported to the browser, so the writer sees the class the public page will
+carry without a hook written to put it there. Declaring it twice is what
+lets the two drift, so it is declared once:
+
+```elixir
+marks: [highlight: [class: "hl hl-gradient", render: {"mark", []}]]
+```
+
+`:editor_attrs` carries DOM attributes for the editor alone.
 
 Anything the server decides on reaches the document through one call:
 

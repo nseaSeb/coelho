@@ -20,27 +20,56 @@ defmodule Coelho.Document do
   No struct wraps it, so what is validated is what is stored, and a jsonb
   round trip is the identity.
 
-  ## Validation is the sanitisation
+  ## Two boundaries, not one
 
-  `validate/2` is strict on purpose: an unknown node type, an unknown mark,
-  an unknown attribute or an attribute failing its validator all reject the
-  document. Nothing outside the schema reaches the database, so rendering
-  never has to escape its way out of untrusted markup. This is what storing
-  the document buys over storing HTML and filtering tags on the way in.
+  `validate/2` is the boundary at the keyboard, and it is strict on purpose:
+  an unknown node type, an unknown mark, an unknown attribute or an attribute
+  failing its validator all reject the document, and say where. Nothing
+  outside the schema reaches the database, so rendering never has to escape
+  its way out of untrusted markup. This is what storing the document buys
+  over storing HTML and filtering tags on the way in.
 
-  Validation also normalises: missing optional attributes are filled with
-  their schema default, so stored documents are canonical.
+  `sanitize/2` is the boundary at the screen. Stored documents are *not*
+  re-validated when they are read, so a row written under a looser schema, or
+  by a direct SQL write, is not covered by the paragraph above. Put it
+  through `sanitize/2` before rendering it anywhere a reader will see.
+
+  ## Validation is also normalisation
+
+  What comes back from `validate/2` is canonical: the same rich text always
+  produces the same document, byte for byte, which is what makes `hash/2`
+  worth storing.
+
+    * marks are sorted into the schema's declaration order, not the order the
+      editor happened to add them in
+    * an attribute left at its schema default is not written out, so two
+      editors that disagree on whether to send `align: "left"` still store
+      the same thing
+    * adjacent text nodes carrying the same marks are merged
+
+  A renderer therefore reads attributes with the schema default in hand —
+  `Coelho.Render.attr/3` is the one place that knows the shape.
 
   ## Untrusted input
 
   `validate/2` is the boundary a hostile document hits first, so it is
   written to survive one: node type names are resolved against the schema
-  rather than converted to atoms, nesting deeper than 100 levels is rejected
-  outright, and error paths are accumulated in reverse so that validating a
-  deep document stays linear in its size.
+  rather than converted to atoms, the schema's `:limits` are checked before
+  anything is allocated, and error paths are accumulated in reverse so that
+  validating a deep document stays linear in its size.
+
+  ## What is not a document
+
+  `nil`, `""` and any other non-map are rejected with a single error,
+  `expected an object`, on the empty path. `%{}` is rejected with
+  `missing "type"`. None of them raise, and none of them are quietly treated
+  as the empty document — `Coelho.empty/1` is how you ask for that. Casting
+  a form field is the one place where an empty string means "no document",
+  and `Coelho.Ecto.Type` and `Coelho.Ash.Type` handle it there, before
+  validation.
   """
 
-  @max_depth 100
+  @sanitize_passes 8
 
   alias Coelho.Document.Error
   alias Coelho.Schema
@@ -68,18 +97,21 @@ defmodule Coelho.Document do
   """
   @spec validate(term(), Schema.t()) :: {:ok, map()} | {:error, [Error.t()]}
   def validate(document, %Schema{} = schema) do
-    {normalised, type, errors} = validate_node(document, schema, [], :all, 0)
+    with :ok <- check_limits(document, schema.limits),
+         {:ok, document, version_errors} <- check_version(document, schema) do
+      {normalised, type, errors} = validate_node(document, schema, [], :all, 0)
 
-    root_errors =
-      if type != nil and type != schema.top_node do
-        [error([], "document must be a #{schema.top_node}, got #{type}")]
-      else
-        []
+      root_errors =
+        if type != nil and type != schema.top_node do
+          [error([], "document must be a #{schema.top_node}, got #{type}")]
+        else
+          []
+        end
+
+      case version_errors ++ root_errors ++ errors do
+        [] -> {:ok, stamp_version(normalised, schema)}
+        errors -> {:error, errors}
       end
-
-    case root_errors ++ errors do
-      [] -> {:ok, normalised}
-      errors -> {:error, errors}
     end
   end
 
@@ -94,6 +126,522 @@ defmodule Coelho.Document do
     |> strip_block_terminator()
   end
 
+  @doc """
+  Turns any term into a document the schema accepts, without failing.
+
+  `validate/2` is the boundary at the keyboard: it says no, and says where.
+  This is the boundary at the screen. Stored documents are not re-validated
+  when they are read — `Coelho.Ecto.Type` deliberately trusts the column —
+  so a row written under a looser schema, by a direct SQL write, or by a
+  version of the application that has since tightened its vocabulary, would
+  otherwise reach a public page unchecked.
+
+  Nothing is reported and nothing is raised: what falls outside the schema is
+  removed, and what is left is a document `validate/2` accepts. A hostile
+  document becomes a poor document, never an unexpected rendering.
+
+  What removal means, from the gentlest repair to the harshest:
+
+    * a key the schema does not know is dropped
+    * an attribute failing its validator is dropped, so the schema default
+      applies — a heading claiming `level: 99` renders as a level 1 heading
+    * a mark that is unknown, not allowed here, or whose own attributes fail
+      is dropped, and the text it covered stays — a link with a
+      `javascript:` href becomes plain text
+    * a node whose type is unknown, or whose content cannot satisfy its
+      content expression, is dropped whole, along with the text inside it
+    * a document that cannot be repaired at all becomes `Coelho.empty/1`
+
+  A document stamped with another schema version is repaired against this
+  schema and restamped with its version, rather than refused the way
+  `validate/2` refuses it. Rendering a document written under an older
+  vocabulary badly beats rendering it as nothing; migrating it properly is
+  `Coelho.migrate/2`.
+
+  It is idempotent: a document that already validates comes back normalised
+  and unchanged, and sanitising twice is sanitising once.
+
+      Coelho.Document.sanitize(row.body, MyApp.RichText.schema())
+      |> Coelho.Render.to_html(MyApp.RichText.schema())
+
+  """
+  @spec sanitize(term(), Schema.t()) :: map()
+  def sanitize(document, %Schema{} = schema) do
+    document
+    |> reshape(schema.limits.max_depth, 0)
+    |> repair(schema, @sanitize_passes)
+  end
+
+  @doc """
+  The number of characters a writer typed.
+
+  This is the concatenation of the text nodes, nothing else: no bullet, no
+  blank line between paragraphs, no filename standing in for an attachment.
+  `to_text/2` materialises all of those because full text search wants them,
+  and a length counted on its result rejects a document the editor still
+  shows as under the limit — with nothing on screen to explain the gap.
+
+  The browser half counts the same way, so the editor's counter and the
+  server's check agree on the number.
+  """
+  @spec text_length(term()) :: non_neg_integer()
+  def text_length(document), do: text_length(document, 0)
+
+  defp text_length(%{"content" => content}, acc) when is_list(content),
+    do: Enum.reduce(content, acc, &text_length/2)
+
+  defp text_length(%{"text" => text}, acc) when is_binary(text), do: acc + String.length(text)
+  defp text_length(_node, acc), do: acc
+
+  @doc """
+  A byte-for-byte stable serialisation of a document.
+
+  Two documents describing the same rich text serialise identically, which
+  is what `hash/2` needs and what a plain JSON encoding cannot promise: map
+  key order is not part of a map, and `jsonb` reorders keys of its own
+  accord.
+
+  Three things make it stable, and all three are already true of a document
+  `validate/2` returned:
+
+    * object keys are emitted in sorted order
+    * marks are in the schema's declaration order, not the order the editor
+      added them
+    * attributes left at their schema default are absent, not written out
+
+  Which is why this must be given a **validated** document. Serialising what
+  came back from the database instead — where a `jsonb` round trip has
+  reordered the keys and an older writer may have spelled the defaults out —
+  answers a different question, and answers it differently on two rows that
+  hold the same text.
+  """
+  @spec canonical(term()) :: binary()
+  def canonical(document), do: document |> encode() |> IO.iodata_to_binary()
+
+  @doc """
+  The hex digest of `canonical/1`, or `nil` for a document with nothing in it.
+
+  What makes a proof of acceptance hold: store the digest of the terms the
+  reader agreed to, and a later document that hashes the same is the same
+  document, whatever the editor or the database did to the key order in
+  between.
+
+      iex> document = %{"type" => "doc", "content" => [
+      ...>   %{"type" => "paragraph", "content" => [%{"type" => "text", "text" => "hi"}]}
+      ...> ]}
+      iex> {:ok, document} = Coelho.validate(document)
+      iex> Coelho.Document.hash(document)
+      "00dc4439f0dcbb463ab186b5b8f81b68e50d70a7b1e3538b86a13e532a17a65d"
+
+  A document is *empty* when it holds no text and no node carrying
+  attributes — an empty paragraph, or a top node with no children. Note that
+  a document whose only content is a horizontal rule counts as empty by that
+  rule: it has nothing to agree to.
+
+  Hash a validated document, for the reason `canonical/1` gives.
+  """
+  @spec hash(term(), :sha256 | :sha512 | :sha384 | :sha224 | :sha) :: String.t() | nil
+  def hash(document, algorithm \\ :sha256) do
+    if empty?(document) do
+      nil
+    else
+      algorithm |> :crypto.hash(canonical(document)) |> Base.encode16(case: :lower)
+    end
+  end
+
+  defp empty?(node) when is_map(node) do
+    Map.get(node, "text", "") == "" and Map.get(node, "attrs", %{}) == %{} and
+      node
+      |> Map.get("content", [])
+      |> then(&(is_list(&1) and Enum.all?(&1, fn c -> empty?(c) end)))
+  end
+
+  defp empty?(_node), do: true
+
+  # -- Canonical encoding ---------------------------------------------------
+
+  # A document is a closed shape — string keys, strings, whatever an
+  # attribute validator lets through — so this is total rather than a JSON
+  # encoder with an escape hatch. Sorting keys is the whole point; without it
+  # the same document serialises two ways and the digest means nothing.
+  defp encode(map) when is_map(map) do
+    inner =
+      map
+      |> Enum.sort_by(fn {key, _} -> key end)
+      |> Enum.map(fn {key, value} -> [encode(to_string(key)), ":", encode(value)] end)
+      |> Enum.intersperse(",")
+
+    ["{", inner, "}"]
+  end
+
+  defp encode(list) when is_list(list),
+    do: ["[", list |> Enum.map(&encode/1) |> Enum.intersperse(","), "]"]
+
+  defp encode(nil), do: "null"
+  defp encode(true), do: "true"
+  defp encode(false), do: "false"
+  defp encode(value) when is_integer(value), do: Integer.to_string(value)
+  defp encode(value) when is_float(value), do: :erlang.float_to_binary(value, [:short])
+  defp encode(value) when is_atom(value), do: encode(Atom.to_string(value))
+  defp encode(value) when is_binary(value), do: [?", escape_json(value), ?"]
+
+  defp escape_json(value) do
+    for <<byte <- value>>, into: <<>>, do: escape_byte(byte)
+  end
+
+  defp escape_byte(?"), do: "\\\""
+  defp escape_byte(?\\), do: "\\\\"
+  defp escape_byte(?\n), do: "\\n"
+  defp escape_byte(?\r), do: "\\r"
+  defp escape_byte(?\t), do: "\\t"
+  defp escape_byte(byte) when byte < 0x20, do: "\\u" <> Base.encode16(<<0, byte>>, case: :lower)
+  defp escape_byte(byte), do: <<byte>>
+
+  # -- Sanitising -----------------------------------------------------------
+
+  # Everything the schema cannot name is taken out before validation runs, so
+  # that the repair below only ever has to deal with real structural
+  # problems. Dropping a whole paragraph because someone left a stray key on
+  # it would be the harshest possible answer to the mildest possible fault.
+  defp reshape(node, max_depth, depth) when is_map(node) do
+    if over?(depth, max_depth) do
+      %{}
+    else
+      # `schema_version` goes with everything else the schema cannot name.
+      # A document stamped with an older version is repaired against
+      # *today's* schema and restamped, which is the poor-document outcome
+      # this function promises — refusing it here would turn a page that
+      # renders badly into a page that renders empty. Migrating it properly
+      # is `Coelho.migrate/2`, and that is a deliberate act.
+      node
+      |> Map.take(@node_keys)
+      |> reshape_field("attrs", &is_map/1, %{})
+      |> reshape_field("marks", &is_list/1, [])
+      |> reshape_marks()
+      |> reshape_content(max_depth, depth)
+    end
+  end
+
+  defp reshape(_node, _max_depth, _depth), do: %{}
+
+  defp reshape_field(node, key, valid?, empty) do
+    case Map.fetch(node, key) do
+      {:ok, value} -> if valid?.(value), do: node, else: Map.put(node, key, empty)
+      :error -> node
+    end
+  end
+
+  defp reshape_marks(node) do
+    case Map.fetch(node, "marks") do
+      {:ok, marks} ->
+        Map.put(node, "marks", Enum.map(marks, &(&1 |> reshape_mark() |> Map.take(@mark_keys))))
+
+      :error ->
+        node
+    end
+  end
+
+  defp reshape_mark(mark) when is_map(mark), do: reshape_field(mark, "attrs", &is_map/1, %{})
+  defp reshape_mark(_mark), do: %{}
+
+  defp reshape_content(node, max_depth, depth) do
+    case Map.fetch(node, "content") do
+      {:ok, content} when is_list(content) ->
+        Map.put(node, "content", Enum.map(content, &reshape(&1, max_depth, depth + 1)))
+
+      {:ok, _other} ->
+        Map.delete(node, "content")
+
+      :error ->
+        node
+    end
+  end
+
+  # The repair is driven by validation itself rather than by a second
+  # traversal that would have to reimplement — and drift from — every rule
+  # `validate/2` enforces. Each pass removes what the errors point at and
+  # asks again; every pass strictly shrinks the document, so this terminates
+  # well before the cap, and the cap is there only so that a rule we get
+  # wrong later fails safe rather than spinning.
+  defp repair(document, schema, passes) do
+    case validate(document, schema) do
+      {:ok, document} ->
+        document
+
+      {:error, _errors} when passes <= 0 ->
+        empty_document(schema)
+
+      {:error, errors} ->
+        case prune(document, errors) do
+          :root -> empty_document(schema)
+          ^document -> escalate(document, schema, errors, passes)
+          pruned -> repair(pruned, schema, passes - 1)
+        end
+    end
+  end
+
+  # The gentle repair for an error is chosen from its path, and a path can
+  # describe something that is not there to remove — a *missing* required
+  # attribute reads `content[0].attrs.src`, and dropping `src` from a node
+  # that never had it changes nothing. Left alone, the pass count runs out
+  # and a document with one bad image comes back empty, taking every good
+  # paragraph with it.
+  #
+  # So a pass that removed nothing is not repeated: the nodes the errors
+  # point at go instead.
+  defp escalate(document, schema, errors, passes) do
+    case prune(document, errors, :node) do
+      :root -> empty_document(schema)
+      ^document -> empty_document(schema)
+      pruned -> repair(pruned, schema, passes - 1)
+    end
+  end
+
+  defp empty_document(schema) do
+    case validate(Coelho.empty(schema), schema) do
+      {:ok, document} -> document
+      {:error, _errors} -> %{"type" => Atom.to_string(schema.top_node)}
+    end
+  end
+
+  # An error that names no node — the top node's own content expression, for
+  # one — used to empty the document on its own, throwing away every repair
+  # its siblings had located. It is the answer of last resort instead: a
+  # content expression that does not match is usually the *consequence* of
+  # the children that failed beside it, and removing those is what makes it
+  # match.
+  defp prune(document, errors, how \\ :gently) do
+    operations =
+      for error <- errors,
+          {:ok, path, action} <- [instruction(error.path, how)],
+          do: {path, action}
+
+    case operations do
+      [] -> :root
+      operations -> apply_operations(document, operations)
+    end
+  end
+
+  # An error path reads `content[0].marks[1].attrs.href`. The leading
+  # `content`/index pairs address a node; what follows says how gently the
+  # node can be repaired. A bad attribute on a mark takes the mark, not the
+  # node, because the text under the mark is the part worth keeping.
+  defp instruction(path, :node) do
+    path |> split_path([]) |> elem(0) |> drop_self()
+  end
+
+  defp instruction(path, :gently) do
+    {indices, tail} = split_path(path, [])
+
+    case tail do
+      ["attrs", key] -> {:ok, indices, {:drop_attr, key}}
+      ["attrs"] -> {:ok, indices, :drop_attrs}
+      ["marks", index | _rest] when is_integer(index) -> {:ok, indices, {:drop_mark, index}}
+      ["marks" | _rest] -> {:ok, indices, :drop_marks}
+      _other -> drop_self(indices)
+    end
+  end
+
+  defp split_path(["content", index | rest], indices) when is_integer(index),
+    do: split_path(rest, [index | indices])
+
+  defp split_path(tail, indices), do: {Enum.reverse(indices), tail}
+
+  defp drop_self([]), do: :root
+
+  defp drop_self(indices) do
+    {parent, [last]} = Enum.split(indices, -1)
+    {:ok, parent, {:drop_child, last}}
+  end
+
+  # Children are removed last. Both the recursion below and the indices in the
+  # error paths address the *original* list, so taking a child out first
+  # would shift every index after it and repair the wrong node.
+  defp apply_operations(node, operations) do
+    {here, deeper} = Enum.split_with(operations, fn {path, _action} -> path == [] end)
+    actions = Enum.map(here, &elem(&1, 1))
+
+    node
+    |> apply_here(actions)
+    |> apply_deeper(deeper)
+    |> drop_children(for {:drop_child, index} <- actions, into: MapSet.new(), do: index)
+  end
+
+  defp apply_here(node, actions) do
+    dropped_attrs = for {:drop_attr, key} <- actions, do: key
+    dropped_marks = for {:drop_mark, index} <- actions, into: MapSet.new(), do: index
+
+    node
+    |> then(&if(:drop_attrs in actions, do: Map.delete(&1, "attrs"), else: &1))
+    |> then(&if(:drop_marks in actions, do: Map.delete(&1, "marks"), else: &1))
+    |> update_existing("attrs", &Map.drop(&1, dropped_attrs))
+    |> update_existing("marks", &reject_indices(&1, dropped_marks))
+  end
+
+  defp drop_children(node, indices) do
+    if Enum.empty?(indices) do
+      node
+    else
+      update_existing(node, "content", &reject_indices(&1, indices))
+    end
+  end
+
+  defp apply_deeper(node, operations) do
+    grouped =
+      Enum.group_by(
+        operations,
+        fn {[index | _rest], _action} -> index end,
+        fn {[_index | rest], action} -> {rest, action} end
+      )
+
+    update_existing(node, "content", fn content ->
+      content
+      |> Enum.with_index()
+      |> Enum.map(fn {child, index} ->
+        case Map.fetch(grouped, index) do
+          {:ok, child_operations} -> apply_operations(child, child_operations)
+          :error -> child
+        end
+      end)
+    end)
+  end
+
+  defp update_existing(node, key, fun) do
+    case Map.fetch(node, key) do
+      {:ok, value} -> Map.put(node, key, fun.(value))
+      :error -> node
+    end
+  end
+
+  defp reject_indices(list, indices) do
+    list
+    |> Enum.with_index()
+    |> Enum.reject(fn {_item, index} -> MapSet.member?(indices, index) end)
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  # -- Limits ---------------------------------------------------------------
+
+  # The bound has to be checked before validation, not during it: a document
+  # arrives in a hidden form field with no `maxlength` to speak of, and
+  # validating a million nodes to then say there were too many is the
+  # allocation the bound exists to refuse. This walk touches each node once,
+  # allocates nothing, and stops at the first breach.
+  defp check_limits(document, limits) do
+    case measure(document, limits, 0, {0, 0}) do
+      {:ok, _acc} -> :ok
+      {:error, message} -> {:error, [error([], message)]}
+    end
+  end
+
+  defp measure(node, limits, depth, {nodes, text}) when is_map(node) do
+    cond do
+      over?(depth, limits.max_depth) ->
+        {:error, "document is nested more than #{limits.max_depth} levels deep"}
+
+      over?(nodes + 1, limits.max_nodes) ->
+        {:error, "document holds more than #{limits.max_nodes} nodes"}
+
+      true ->
+        measure_text(node, limits, depth, {nodes + 1, text})
+    end
+  end
+
+  defp measure(_node, _limits, _depth, acc), do: {:ok, acc}
+
+  defp measure_text(node, limits, depth, {nodes, text}) do
+    case Map.get(node, "text") do
+      value when is_binary(value) ->
+        # Counted, never estimated. A byte count is an *upper* bound on the
+        # character count, so refusing on `byte_size` alone rejects a
+        # perfectly legal document the moment it is not ASCII — seven
+        # accented letters are fourteen bytes, and a CJK document reaches
+        # the shipped bound at a third of the characters it is allowed.
+        text = text + String.length(value)
+
+        if over?(text, limits.max_text_length) do
+          {:error, "document holds more than #{limits.max_text_length} characters of text"}
+        else
+          measure_content(node, limits, depth, {nodes, text})
+        end
+
+      _other ->
+        measure_content(node, limits, depth, {nodes, text})
+    end
+  end
+
+  defp measure_content(node, limits, depth, acc) do
+    case Map.get(node, "content") do
+      children when is_list(children) ->
+        Enum.reduce_while(children, {:ok, acc}, fn child, {:ok, acc} ->
+          case measure(child, limits, depth + 1, acc) do
+            {:ok, acc} -> {:cont, {:ok, acc}}
+            {:error, message} -> {:halt, {:error, message}}
+          end
+        end)
+
+      _other ->
+        {:ok, acc}
+    end
+  end
+
+  defp over?(_value, :infinity), do: false
+  defp over?(value, limit), do: value > limit
+
+  # -- Schema version -------------------------------------------------------
+
+  # A document that does not say which schema wrote it cannot be migrated
+  # when the schema moves: there is no way to tell a node that was renamed
+  # from one that was never there. `RichDoc`'s `v` field has exactly that
+  # defect — written on every save, read by nothing.
+  #
+  # So the key is only written by a schema that declares a version, and a
+  # document stamped with a different one is an error rather than something
+  # to guess at. `Coelho.migrate/2` is the deliberate move between the two.
+  defp check_version(document, %Schema{version: nil}) when is_map(document) do
+    if Map.has_key?(document, "schema_version") do
+      # Taken out before the unknown-key check runs, so the answer is the one
+      # sentence that explains the situation rather than that sentence and a
+      # generic one underneath it.
+      {:ok, Map.delete(document, "schema_version"),
+       [
+         error(
+           [],
+           ~s(document carries "schema_version" but the schema declares no version)
+         )
+       ]}
+    else
+      {:ok, document, []}
+    end
+  end
+
+  defp check_version(document, %Schema{version: version}) when is_map(document) do
+    case Map.fetch(document, "schema_version") do
+      {:ok, ^version} ->
+        {:ok, Map.delete(document, "schema_version"), []}
+
+      :error ->
+        {:ok, document, []}
+
+      {:ok, other} ->
+        {:ok, Map.delete(document, "schema_version"),
+         [
+           error(
+             [],
+             "document was written under schema version #{inspect(other)}, " <>
+               "and this schema is version #{version}; see Coelho.migrate/2"
+           )
+         ]}
+    end
+  end
+
+  defp check_version(document, _schema), do: {:ok, document, []}
+
+  defp stamp_version(document, %Schema{version: nil}), do: document
+
+  defp stamp_version(document, %Schema{version: version}),
+    do: Map.put(document, "schema_version", version)
+
   # -- Validation -----------------------------------------------------------
 
   # Paths are accumulated reversed and turned around once, when an error is
@@ -104,8 +652,9 @@ defmodule Coelho.Document do
   # Returns `{normalised_node, type, errors}`. `type` is nil when the node
   # could not be resolved, which tells the caller to skip the content
   # expression check rather than pile a second, meaningless error on top.
-  defp validate_node(_node, _schema, rpath, _allowed_marks, depth) when depth > @max_depth do
-    {nil, nil, [error(rpath, "document is nested more than #{@max_depth} levels deep")]}
+  defp validate_node(_node, %Schema{limits: %{max_depth: max}}, rpath, _allowed_marks, depth)
+       when is_integer(max) and depth > max do
+    {nil, nil, [error(rpath, "document is nested more than #{max} levels deep")]}
   end
 
   defp validate_node(node, schema, rpath, allowed_marks, depth) when is_map(node) do
@@ -160,10 +709,14 @@ defmodule Coelho.Document do
     if is_map(given) do
       known = MapSet.new(specs, fn {name, _} -> Atom.to_string(name) end)
 
+      # Reported at the offending key rather than at `attrs`, because the
+      # path is what `sanitize/2` repairs from: an error at `attrs` takes
+      # every attribute on the node with it, so one stray key would cost a
+      # heading its level.
       unknown =
         for {key, _} <- given,
             not MapSet.member?(known, key),
-            do: error(["attrs" | rpath], "unknown attribute #{inspect(key)}")
+            do: error([key, "attrs" | rpath], "unknown attribute #{inspect(key)}")
 
       {attrs, errors} = Enum.reduce(specs, {%{}, []}, &validate_attr(&1, &2, given, rpath))
 
@@ -180,12 +733,21 @@ defmodule Coelho.Document do
     case Map.fetch(given, key) do
       {:ok, value} -> put_attr(attrs, errors, key, value, spec, attr_rpath)
       :error when spec.required -> {attrs, [error(attr_rpath, "is required") | errors]}
-      :error -> {Map.put(attrs, key, spec.default), errors}
+      :error -> {attrs, errors}
     end
   end
 
+  # An attribute left at its default is not written. Two editors that agree
+  # on what the writer typed would otherwise store different documents —
+  # whichever of them bothered to send `align: "left"` — and hash
+  # differently. Readers never see the difference: a renderer asks for an
+  # attribute with the schema default in hand, and the browser fills defaults
+  # from the exported schema. What it buys, measured on documents whose nodes
+  # are mostly plain paragraphs, is the `"attrs":{...}` object on every one
+  # of them.
   defp put_attr(attrs, errors, key, value, spec, attr_rpath) do
     case Attr.validate(spec.validate, value) do
+      :ok when not spec.required and value === spec.default -> {attrs, errors}
       :ok -> {Map.put(attrs, key, compact(value)), errors}
       {:error, message} -> {attrs, [error(attr_rpath, message) | errors]}
     end
@@ -221,13 +783,31 @@ defmodule Coelho.Document do
         {:error, mark_errors} -> {kept, [mark_errors | errors]}
       end
     end)
-    |> then(fn {kept, errors} -> {Enum.reverse(kept), concat_reversed(errors)} end)
+    |> then(fn {kept, errors} -> {sort_marks(kept, schema), concat_reversed(errors)} end)
+  end
+
+  # Marks are a set, so the order the editor happened to add them in carries
+  # no meaning — and two identical fragments that disagree on it would hash
+  # differently, which is the whole point of `hash/2` gone. Sorting by the
+  # schema's declaration order is what ProseMirror itself does when it ranks
+  # marks, so the document the browser holds and the one stored agree.
+  defp sort_marks(marks, schema) do
+    marks
+    |> Enum.reverse()
+    |> Enum.sort_by(&mark_rank(schema, &1))
+  end
+
+  defp mark_rank(schema, %{"type" => type}) do
+    case Schema.resolve_mark_name(schema, type) do
+      {:ok, name} -> Schema.mark_index(schema, name)
+      :error -> length(schema.mark_order)
+    end
   end
 
   defp validate_mark(mark, allowed_marks, schema, rpath) when is_map(mark) do
-    with {:ok, type} <- Map.fetch(mark, "type"),
-         {:ok, name} <- Schema.resolve_mark_name(schema, type),
-         true <- mark_allowed?(allowed_marks, name) do
+    with {:ok, type} <- fetch_mark_type(mark, rpath),
+         {:ok, name} <- resolve_mark(schema, type, rpath),
+         :ok <- mark_allowed(allowed_marks, name, type, rpath) do
       spec = Schema.mark_spec(schema, name)
       {attrs, errors} = validate_attrs(mark, spec.attrs, rpath)
 
@@ -235,17 +815,36 @@ defmodule Coelho.Document do
         [] -> {:ok, put_unless_empty(%{"type" => Atom.to_string(name)}, "attrs", attrs)}
         errors -> {:error, errors}
       end
-    else
-      :error ->
-        {:error, [error(rpath, ~s(missing or unknown "type"))]}
-
-      false ->
-        {:error, [error(rpath, "mark #{inspect(mark["type"])} is not allowed on this node")]}
     end
   end
 
   defp validate_mark(_mark, _allowed_marks, _schema, rpath),
     do: {:error, [error(rpath, "expected an object")]}
+
+  defp fetch_mark_type(mark, rpath) do
+    case Map.fetch(mark, "type") do
+      {:ok, type} -> {:ok, type}
+      :error -> {:error, [error(rpath, ~s(missing "type"))]}
+    end
+  end
+
+  # Naming the mark is the whole value of the message: a document rejected
+  # for a mark that a narrowed schema no longer has says which one, so the
+  # answer is "this field does not allow italics" rather than "invalid".
+  defp resolve_mark(schema, type, rpath) do
+    case Schema.resolve_mark_name(schema, type) do
+      {:ok, name} -> {:ok, name}
+      :error -> {:error, [error(rpath, "unknown mark type #{inspect(type)}")]}
+    end
+  end
+
+  defp mark_allowed(allowed_marks, name, type, rpath) do
+    if mark_allowed?(allowed_marks, name) do
+      :ok
+    else
+      {:error, [error(rpath, "mark #{inspect(type)} is not allowed on this node")]}
+    end
+  end
 
   # Marks are a set on the browser side, so the same mark twice is normalised
   # away rather than rejected — keeping it would store a document the editor

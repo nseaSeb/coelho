@@ -37,10 +37,13 @@ defmodule Coelho.EctoTest do
 
   describe "casting" do
     test "accepts a document map and normalises it" do
-      changeset = changeset(%{body: doc([%{"type" => "heading", "content" => []}])})
+      changeset =
+        changeset(%{
+          body: doc([%{"type" => "heading", "attrs" => %{"level" => 3}, "content" => []}])
+        })
 
       assert changeset.valid?
-      assert %{"content" => [%{"attrs" => %{"level" => 1}}]} = get_change(changeset, :body)
+      assert %{"content" => [%{"attrs" => %{"level" => 3}}]} = get_change(changeset, :body)
     end
 
     test "accepts the JSON string a form posts back" do
