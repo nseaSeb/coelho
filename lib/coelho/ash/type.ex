@@ -63,6 +63,53 @@ defmodule Coelho.Ash.Type do
 
   `vars[:errors]` holds every failure, formatted, not only the first.
 
+  ## Atomic updates
+
+  **A document cannot be updated atomically from an expression, and never
+  will be.** Validating one means walking its tree in Elixir — resolving node
+  types against the schema, matching content expressions, running attribute
+  validators — and none of that can be handed to the database. `cast_atomic/2`
+  therefore answers `{:not_atomic, reason}` with that sentence in it, so an
+  action declaring `require_atomic? true` refuses with something a reader can
+  act on rather than a shrug.
+
+  A literal document is cast the ordinary way. Ash does that itself for a
+  type like this one — it only calls `cast_atomic/2` for an expression, or
+  once the type defines `handle_change/3` or `prepare_change/3` — and the
+  generated callback answers the same thing Ash would, so the two paths
+  cannot drift.
+
+  What *does* go through atomically is an update given the document itself:
+
+      # validated and applied, atomic or not
+      Ash.Changeset.for_update(post, :update, %{body: document})
+
+      # refused: nothing can validate this without reading it back
+      Ash.Changeset.for_update(post, :update, %{})
+      |> Ash.Changeset.atomic_update(:body, expr(fragment("? || ?", body, ^more)))
+
+  So an action that touches this attribute wants `require_atomic? false`, and
+  a bulk action over it will fall back to reading rows. That is the price of
+  the document being validated at all; storing HTML and filtering tags would
+  atomically store whatever it was given.
+
+  ## Storage, and tenants
+
+  There is nothing to configure. The attribute is a `:map`, so AshPostgres
+  stores it as `jsonb` in the row that owns it — no side table, no join, and
+  nothing about it interacts with `AshPostgres` multitenancy: a document
+  belongs to the row, and the row belongs to wherever your tenancy puts it,
+  schema-based or attribute-based alike.
+
+  Attachments are the one place where that stops being automatic, because
+  their bytes are not in the row. A key is opaque and global on purpose: it
+  answers "what does this document point at" and never "whose is it". **What
+  decides whose it is comes from the connection, never from the key** — the
+  key arrives in a URL, which is to say from whoever sent the request. See
+  the `:authorize` option of `Coelho.Plug.Attachments`, and
+  `Coelho.Attachment.generate_key/1` on why a key prefix is an inventory aid
+  and not a boundary.
+
   ## Loading
 
   Values already in the database are loaded without being re-validated, for
@@ -98,11 +145,32 @@ defmodule Coelho.Ash.Type do
       def dump_to_native(value, constraints),
         do: Coelho.Ash.Type.dump_to_native(value, constraints)
 
+      @impl Ash.Type
+      def cast_atomic(new_value, constraints) do
+        # The expression check has to live here, where Ash exists.
+        if Ash.Expr.expr?(new_value) do
+          {:not_atomic, Coelho.Ash.Type.not_atomic_reason()}
+        else
+          # The type's own `cast_input/2` and not Coelho's, so that a module
+          # overriding it — which `defoverridable` below invites — is honoured
+          # on this path as well as on the ordinary one.
+          #
+          # And `{:ok, …}` rather than `{:atomic, …}`, which is what Ash's own
+          # default answers here: the `{:atomic, …}` branch puts the value
+          # straight into the changeset's atomics, past the `allow_nil?` and
+          # required-attribute checks that `{:ok, …}` goes through. `nil` is a
+          # value this type casts, so that difference is a document that can
+          # be nulled on an attribute declaring it may not be.
+          cast_input(new_value, constraints)
+        end
+      end
+
       defoverridable storage_type: 1,
                      constraints: 0,
                      cast_input: 2,
                      cast_stored: 2,
-                     dump_to_native: 2
+                     dump_to_native: 2,
+                     cast_atomic: 2
     end
   end
 
@@ -152,6 +220,19 @@ defmodule Coelho.Ash.Type do
           {:error, invalid(errors)}
         end
     end
+  end
+
+  @doc """
+  Why a document cannot be updated atomically from an expression.
+  """
+  @spec not_atomic_reason() :: String.t()
+  def not_atomic_reason do
+    "a Coelho document is validated by walking its tree in Elixir — node types " <>
+      "resolved against the schema, content expressions matched, attribute " <>
+      "validators run — and none of that can be expressed to the database. An " <>
+      "atomic update would either store an unvalidated document or validate " <>
+      "nothing at all. Pass the document itself rather than an expression, or " <>
+      "set require_atomic? false on the action."
   end
 
   @doc """

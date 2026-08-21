@@ -1,7 +1,7 @@
 defmodule Coelho.MixProject do
   use Mix.Project
 
-  @version "0.3.1"
+  @version "0.4.0"
   @source_url "https://github.com/nseaSeb/coelho"
 
   def project do
@@ -60,6 +60,7 @@ defmodule Coelho.MixProject do
       {:floki, "~> 0.36", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:plug, "~> 1.14", optional: true},
+      {:telemetry, "~> 1.0", optional: true},
       {:stream_data, "~> 1.1", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
@@ -72,7 +73,8 @@ defmodule Coelho.MixProject do
       licenses: ["MIT"],
       # `assets` as a whole would carry the node_modules symlink the schema
       # bridge check makes, which points nowhere on anybody else's machine.
-      files: ~w(lib assets/js assets/package.json mix.exs README.md CHANGELOG.md LICENSE),
+      files:
+        ~w(lib assets/js assets/css assets/package.json mix.exs README.md CHANGELOG.md LICENSE),
       links: %{"GitHub" => @source_url}
     ]
   end
@@ -84,6 +86,7 @@ defmodule Coelho.MixProject do
       extras: ["README.md", "CHANGELOG.md"],
       groups_for_modules: [
         Document: [Coelho.Document, Coelho.Document.Error, Coelho.Render],
+        Observing: [Coelho.Telemetry],
         Schema: [
           Coelho.Schema,
           Coelho.Schema.NodeSpec,

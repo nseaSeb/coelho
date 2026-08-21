@@ -44,14 +44,39 @@ if Code.ensure_loaded?(Phoenix.Component) do
     The toolbar carries `phx-update="ignore"` for the same reason the editor
     does: the hook keeps `aria-pressed` on each button in step with what is in
     force under the cursor, and LiveView would patch that away on the next
-    render. The consequence is that the button list is fixed once rendered —
-    changing `:toolbar` or the schema on a mounted editor will not redraw it.
+    render. Which would freeze the button list — so the toolbar's own id
+    carries a fingerprint of everything it is drawn from, the schema, the
+    commands and their labels, and LiveView replaces the whole toolbar when
+    any of the three moves. Switching language mid-session redraws it.
 
-    The component ships no styles. It gives CSS what it needs on the editor's
-    own element, which ProseMirror creates inside the ignored container:
-    `coelho-empty` while the document has no text, and `data-placeholder`,
-    carried in from the container the server rendered it on. An empty editor
-    shows its placeholder with
+    A starter stylesheet ships with the package, at
+    `assets/css/coelho.css`. Import it and the editor is usable — toolbar,
+    content, lists, quotes, code, focus, the pressed state of a command, a
+    counter that has gone over:
+
+        /* assets/css/app.css */
+        @import "../../deps/coelho/assets/css/coelho.css";
+
+    It carries no identity of its own. Every colour, radius and space in it
+    comes from a custom property on `.coelho` with a neutral default, so an
+    application overrides the properties rather than the rules:
+
+        .coelho {
+          --coelho-accent: var(--brand);
+          --coelho-radius: 2px;
+          --coelho-surface: var(--paper);
+        }
+
+    Copy it instead if you would rather own it — it is a hundred and some
+    lines and nothing else depends on it.
+
+    The hooks it is written against are the contract either way: `.coelho` on
+    the root, `.coelho-toolbar` and `.coelho-command` (with `aria-pressed`
+    and `disabled`), `.coelho-link` and `.coelho-link-input`,
+    `.coelho-counter` (gaining `coelho-over` past the limit),
+    `.coelho-content`, and on the editor's own element the class
+    `coelho-empty` while the document has no text, plus `data-placeholder`
+    carried in from the container the server rendered it on:
 
         .coelho-content .ProseMirror.coelho-empty::before {
           content: attr(data-placeholder);
@@ -86,6 +111,28 @@ if Code.ensure_loaded?(Phoenix.Component) do
     The preview is for the editor's eyes only. What gets stored in the
     document is the key; the URL is resolved again on every render. See
     `Coelho.Attachments`.
+
+    ## What the keyboard does
+
+    Bound by the hook, and only for the nodes and marks the schema actually
+    declares — a keymap for a mark that is not there would be a shortcut that
+    silently does nothing:
+
+    | Keys | What |
+    | --- | --- |
+    | `Mod-b`, `Mod-i`, `Mod-e` | bold, italic, inline code |
+    | `Mod-z`, `Shift-Mod-z`, `Mod-y` | undo, redo, redo |
+    | `Enter` in a list | a new item, splitting the one you are in |
+    | `Mod-[`, `Mod-]` | lift the item out, sink it in |
+    | `Shift-Enter`, `Mod-Enter` | a line break, and out of a code block |
+    | `Enter`, `Escape` in the link field | confirm, close |
+
+    `Mod` is Cmd on a Mac and Ctrl everywhere else. Everything else is
+    ProseMirror's base keymap — the arrows, backspace joining blocks,
+    select-all — bound underneath and left alone.
+
+    Emptying the link field and confirming removes the link and keeps the
+    text, which is the one gesture with no key of its own.
 
     ## Wiring the hook
 
@@ -223,7 +270,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       assigns =
         assigns
         |> assign(:json, JSON.encode!(Schema.to_json(schema)))
-        |> assign(:check, version(schema, nil))
+        |> assign(:version, fingerprint(schema.fingerprint))
 
       # An attribute and not a `<script>`. A script's content is raw text —
       # the parser decodes no entities inside it, so the JSON would have to be
@@ -233,7 +280,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       # the schema moved. An attribute is patched like any other, and the
       # parser decodes it correctly.
       ~H"""
-      <div id={@id} hidden data-coelho-schema={@json} data-coelho-schema-check={@check}></div>
+      <div id={@id} hidden data-coelho-schema={@json} data-coelho-schema-version={@version}></div>
       """
     end
 
@@ -341,7 +388,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     attr(:labels, :map,
       default: %{},
-      doc: "command to label, for a toolbar that has to speak the reader's language"
+      doc:
+        "command to label, for a toolbar that has to speak the reader's language. " <>
+          "Changing them on a mounted editor redraws the toolbar"
     )
 
     attr(:maxlength, :integer, default: nil, doc: "shows a character counter; does not enforce")
@@ -378,8 +427,13 @@ if Code.ensure_loaded?(Phoenix.Component) do
         |> assign(:input_name, name)
         |> assign(:input_id, input_id)
         |> assign(:schema_json, assigns.schema_id || JSON.encode!(Schema.to_json(schema)))
-        |> assign(:version, version(schema, toolbar))
-        |> assign(:check, version(schema, nil))
+        |> assign(:version, fingerprint(schema.fingerprint))
+        |> assign(
+          :toolbar_version,
+          # Absent along with the toolbar, so an editor without one carries
+          # no attribute about it.
+          toolbar != [] && fingerprint({schema.fingerprint, toolbar, assigns.labels})
+        )
         |> assign(:value_json, value_json(value, schema))
         |> assign(:count, initial_count(value))
         |> assign(:toolbar, toolbar)
@@ -392,7 +446,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
         data-coelho-schema={is_nil(@schema_id) && @schema_json}
         data-coelho-schema-src={@schema_id}
         data-coelho-schema-version={@version}
-        data-coelho-schema-check={@check}
+        data-coelho-toolbar-version={@toolbar_version}
         data-coelho-input={@input_id}
         data-coelho-upload={@upload && @upload.name}
         data-coelho-maxlength={@maxlength}
@@ -402,7 +456,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       >
         <div
           :if={@toolbar != []}
-          id={@id <> "-toolbar-" <> @version}
+          id={@id <> "-toolbar-" <> @toolbar_version}
           class="coelho-toolbar"
           role="toolbar"
           phx-update="ignore"
@@ -468,16 +522,22 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # subtrees that LiveView will not touch, so the hook is told rather than
     # left to find out.
     #
-    # Two fingerprints, because they answer two questions. The editor's
-    # `-version` covers the schema *and* its toolbar, and moving it is what
-    # makes the hook rebuild and LiveView redraw the buttons. The `-check`
-    # covers the schema alone, and is the one a shared `coelho_schema/1` can
-    # be compared against — its own toolbar does not exist.
-    defp version(schema, toolbar) do
-      {Schema.to_json(schema), toolbar}
-      |> :erlang.phash2()
-      |> Integer.to_string(36)
-      |> String.downcase()
+    # Two fingerprints, because they answer two questions and cost two very
+    # different things.
+    #
+    # `-schema-version` is the schema alone. Moving it makes the hook rebuild
+    # the editor, which re-parses the document against the new vocabulary and
+    # starts a fresh undo history — right for a changed schema, and far too
+    # much for anything else. It is also what a shared `coelho_schema/1` is
+    # compared against, which its own toolbar could not be part of.
+    #
+    # `-toolbar-version` adds the commands and their labels. It is the
+    # toolbar's id, so LiveView replaces the buttons on its own, and the hook
+    # only has to find the link field again and repaint the pressed states.
+    # A language switched mid-session moves this and not the other: the
+    # writer gets new words, and keeps their undo history and their caret.
+    defp fingerprint(term) do
+      term |> :erlang.phash2() |> Integer.to_string(36) |> String.downcase()
     end
 
     # The counter has to be right at the first paint. Rendered empty and left

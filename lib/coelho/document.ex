@@ -97,7 +97,28 @@ defmodule Coelho.Document do
   """
   @spec validate(term(), Schema.t()) :: {:ok, map()} | {:error, [Error.t()]}
   def validate(document, %Schema{} = schema) do
-    with :ok <- check_limits(document, schema.limits),
+    [:coelho, :validate]
+    |> Coelho.Telemetry.span(
+      fn -> %{schema: Schema.fingerprint(schema)} end,
+      fn -> do_validate(document, schema) end,
+      &measurements/1
+    )
+    |> answer()
+  end
+
+  # Everything the metadata says is already known: the bounds check counts the
+  # nodes and the characters on its way past them, so nothing here walks the
+  # document a second time to report on it.
+  defp measurements({:ok, _document, {nodes, text_length}}),
+    do: %{result: :ok, errors: 0, nodes: nodes, text_length: text_length}
+
+  defp measurements({:error, errors}), do: %{result: :error, errors: length(errors)}
+
+  defp answer({:ok, document, _counted}), do: {:ok, document}
+  defp answer(other), do: other
+
+  defp do_validate(document, %Schema{} = schema) do
+    with {:ok, counted} <- check_limits(document, schema.limits),
          {:ok, document, version_errors} <- check_version(document, schema) do
       {normalised, type, errors} = validate_node(document, schema, [], :all, 0)
 
@@ -109,7 +130,7 @@ defmodule Coelho.Document do
         end
 
       case version_errors ++ root_errors ++ errors do
-        [] -> {:ok, stamp_version(normalised, schema)}
+        [] -> {:ok, stamp_version(normalised, schema), counted}
         errors -> {:error, errors}
       end
     end
@@ -117,6 +138,50 @@ defmodule Coelho.Document do
 
   @doc """
   Extracts the plain text of a document, for full text search.
+
+  Bullets are materialised, blocks are separated, and a node with a
+  `:to_text` in its spec contributes whatever that says — an attachment its
+  caption or its filename, a hard break a newline. What comes out reads like
+  the document, which is what a search index wants and what
+  `text_length/1` deliberately does not count.
+
+  ## Indexing it
+
+  A `jsonb` document is not searchable as it stands: an index over it can
+  answer "does this key exist", never "does this say *tomato*". The text has
+  to become a column of its own, written when the document is:
+
+      # migration
+      alter table(:posts) do
+        add :body_text, :text
+      end
+
+      create index(:posts, ["body_text gin_trgm_ops"], using: :gin)
+
+      # changeset
+      def changeset(post, attrs) do
+        post
+        |> cast(attrs, [:body])
+        |> put_body_text()
+      end
+
+      defp put_body_text(changeset) do
+        case fetch_change(changeset, :body) do
+          {:ok, document} -> put_change(changeset, :body_text, Coelho.to_text(document))
+          :error -> changeset
+        end
+      end
+
+  Derived at write time and not read time, because the alternative is
+  extracting the text of every row on every search. A generated column would
+  do as well where the database can call out to nothing — PostgreSQL cannot
+  run this from SQL, so the application writes it.
+
+  Two things follow. The column is a *derivative*, so it is never the source:
+  a migration that changes what `to_text/2` produces means rewriting it, the
+  same way any denormalisation does. And it holds no markup at all, which is
+  what makes `to_tsvector` and trigram search behave — indexing rendered HTML
+  matches on `strong` and `href`.
   """
   @spec to_text(map(), Schema.t()) :: String.t()
   def to_text(document, %Schema{} = schema) do
@@ -192,6 +257,75 @@ defmodule Coelho.Document do
 
   defp text_length(%{"text" => text}, acc) when is_binary(text), do: acc + String.length(text)
   defp text_length(_node, acc), do: acc
+
+  @doc """
+  Whether a document would put anything on the page.
+
+  What an application asks before deciding to render a block at all — a
+  portal panel, an announcement, a set of opening hours — where an empty
+  document should mean the block is not there rather than a heading with
+  nothing under it.
+
+  The obvious stand-in, `text_length(document) == 0`, is wrong, and wrong in
+  the direction that loses content: a document holding one image, or one
+  attachment, has no text and is very much not blank. So the question is put
+  to the schema instead — a node it declares `void: true` renders an element
+  of its own and counts, whatever text it has none of.
+
+      Coelho.blank?(page.intro_doc, MyApp.RichText.schema())
+
+  Blank means: no text anywhere, and no void node with anything to show.
+  Empty paragraphs and empty lists are blank, however many of them there are,
+  and so is a paragraph of nothing but hard breaks — an inline void node
+  declaring no attributes is punctuation between words, which is what a
+  pasted-then-emptied field usually leaves behind. An image or an attachment
+  has a source to point at, and a horizontal rule draws a line; all three
+  count.
+
+  This is a narrower question than the one `hash/2` answers with `nil`, which
+  is "was there anything to agree to" and needs no schema. The two differ
+  only on a document whose whole content is an attribute-less void node — a
+  horizontal rule and nothing else is blank to `hash/2` and not blank here,
+  because it does put a line on the page.
+  """
+  @spec blank?(term(), Schema.t()) :: boolean()
+  def blank?(document, %Schema{} = schema \\ Schema.default()), do: not visible?(document, schema)
+
+  defp visible?(node, schema) when is_map(node) do
+    cond do
+      is_binary(Map.get(node, "text")) and Map.get(node, "text") != "" -> true
+      void?(node, schema) -> true
+      true -> node |> Map.get("content", []) |> visible_child?(schema)
+    end
+  end
+
+  defp visible?(_node, _schema), do: false
+
+  defp visible_child?(children, schema) when is_list(children),
+    do: Enum.any?(children, &visible?(&1, schema))
+
+  defp visible_child?(_children, _schema), do: false
+
+  defp void?(node, schema) do
+    with type when is_binary(type) <- Map.get(node, "type"),
+         {:ok, name} <- Schema.resolve_node_name(schema, type),
+         %NodeSpec{void: true} = spec <- Schema.node_spec(schema, name) do
+      not punctuation?(spec)
+    else
+      _other -> false
+    end
+  end
+
+  # An inline void node declaring no attributes has nothing to show and
+  # nothing to say: a hard break is punctuation between words, not content.
+  # A block one — a horizontal rule — draws a line, and an inline one with
+  # attributes — an image — has a source to point at.
+  #
+  # It matters because a paste often normalises an emptied field to a
+  # paragraph holding one break, and a document that is one break would
+  # otherwise render a heading with nothing under it.
+  defp punctuation?(%NodeSpec{inline: true, attrs: attrs}), do: attrs == %{}
+  defp punctuation?(_spec), do: false
 
   @doc """
   A byte-for-byte stable serialisation of a document.
@@ -529,7 +663,7 @@ defmodule Coelho.Document do
   # allocates nothing, and stops at the first breach.
   defp check_limits(document, limits) do
     case measure(document, limits, 0, {0, 0}) do
-      {:ok, _acc} -> :ok
+      {:ok, counted} -> {:ok, counted}
       {:error, message} -> {:error, [error([], message)]}
     end
   end

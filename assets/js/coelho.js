@@ -126,15 +126,26 @@ export const defaultNodeDOM = {
   // consulted here; they are deliberately not part of the schema, or they
   // would end up stored and stale.
   attachment: {
+    // Built to match what `Coelho.Schema.Default.render_attachment/3` puts on
+    // the page: the same figure, the same classes, and the caption as a
+    // figcaption rather than not at all. An attachment that looks one way
+    // while it is being written and another once it is published is the
+    // thing the whole class/parity arrangement exists to prevent.
+    //
+    // The one deliberate difference is that a non-image is not a link here.
+    // The page links it to its URL; a link inside a contenteditable is
+    // something the writer's next click falls into.
     toDOM: (node) => {
       const url = previewUrls.get(node.attrs.key);
       const label = node.attrs.filename ?? node.attrs.key;
       const body =
         url && (node.attrs.content_type ?? "").startsWith("image/")
           ? ["img", { src: url, alt: node.attrs.alt ?? "" }]
-          : ["span", { class: "coelho-attachment-label" }, label];
+          : ["span", { class: url ? "coelho-attachment-label" : "coelho-attachment-missing" }, label];
 
-      return ["figure", { class: "coelho-attachment", "data-coelho-key": node.attrs.key }, body];
+      const figure = ["figure", { class: "coelho-attachment", "data-coelho-key": node.attrs.key }, body];
+
+      return node.attrs.caption ? [...figure, ["figcaption", node.attrs.caption]] : figure;
     },
     parseDOM: [
       {
@@ -286,9 +297,9 @@ const readSchema = (el) => {
     throw new Error(`coelho: no <.coelho_schema id="${src}"> on the page`);
   }
 
-  // The schema alone, not the schema and the toolbar: the shared element has
-  // no toolbar of its own to fingerprint.
-  if (shared.dataset.coelhoSchemaCheck !== el.dataset.coelhoSchemaCheck) {
+  // The schema alone. The editor carries a second fingerprint covering its
+  // toolbar, which a shared element has none of.
+  if (shared.dataset.coelhoSchemaVersion !== el.dataset.coelhoSchemaVersion) {
     throw new Error(
       `coelho: the editor and <.coelho_schema id="${src}"> were given different schemas; ` +
         "pass the same document_schema to both"
@@ -673,6 +684,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this._schema = schema;
       this._input = input;
       this._version = el.dataset.coelhoSchemaVersion;
+      this._toolbarVersion = el.dataset.coelhoToolbarVersion;
       this._written = new Set();
       this._pending = new Map();
 
@@ -799,6 +811,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
         this._schema = rebuilt;
         this._version = el.dataset.coelhoSchemaVersion;
+        this._toolbarVersion = el.dataset.coelhoToolbarVersion;
         this._view.updateState(
           EditorState.create({
             doc,
@@ -1165,6 +1178,17 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       if (ctx.el.dataset.coelhoSchemaVersion !== this._version) {
         this.rebuild();
         return;
+      }
+
+      // New buttons, or the same buttons in another language. LiveView has
+      // already replaced the toolbar — its id carries this fingerprint — so
+      // the hook only has to find the link field inside the new one and
+      // repaint the pressed states. Rebuilding here would throw away the
+      // undo history and move the caret to change a word.
+      if (ctx.el.dataset.coelhoToolbarVersion !== this._toolbarVersion) {
+        this._toolbarVersion = ctx.el.dataset.coelhoToolbarVersion;
+        this.findLinkField();
+        this.refreshToolbar();
       }
 
       // The editor's own subtree carries phx-update="ignore", but the hidden

@@ -174,7 +174,18 @@ defmodule Coelho.Storage do
   @optional_callbacks redirect_url: 3
 
   @spec put(t(), key(), source()) :: :ok | {:error, term()}
-  def put(%module{} = storage, key, source), do: module.put(storage, key, source)
+  def put(%module{} = storage, key, source) do
+    Coelho.Telemetry.span(
+      [:coelho, :storage],
+      fn -> %{storage: module, key: key} end,
+      fn -> module.put(storage, key, source) end,
+      &%{result: elem_or(&1)}
+    )
+  end
+
+  defp elem_or(:ok), do: :ok
+  defp elem_or({:error, _reason}), do: :error
+  defp elem_or(_other), do: :error
 
   @spec read(t(), key()) :: {:ok, binary()} | {:error, term()}
   def read(%module{} = storage, key), do: module.read(storage, key)

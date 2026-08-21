@@ -23,6 +23,20 @@
 
 /* This file is for your main application CSS */
 
+/* The editor's own styles, as the package ships them. The demo used to
+   hand-write these, which meant the stylesheet nobody had to write was also
+   the stylesheet nobody was running. */
+@import "../../../assets/css/coelho.css";
+
+/* Two overrides, to show where an application hooks in without touching a
+   rule: the demo's accent, and a taller editor than the default. */
+.coelho { --coelho-accent: #1f2937; }
+.coelho-content .ProseMirror { min-height: 18rem; }
+
+/* Uploads go through drop and paste in this demo, so the input stays out of
+   the way. */
+.coelho-file-input { display: none; }
+
 /* The demo's own styles. Deliberately plain CSS: the point is the document
    pipeline, not the design. */
 .demo { max-width: 1400px; margin: 0 auto; padding: 2rem 1.5rem; font-family: system-ui, sans-serif; }
@@ -39,32 +53,8 @@
 .pane .errors { border: 1px solid #e11d48; border-radius: .375rem; padding: .75rem; background: #fff1f2; }
 .pane .errors li { font-size: .8rem; font-family: ui-monospace, monospace; }
 
-.coelho { border: 1px solid #ccc; border-radius: .375rem; overflow: hidden; }
-.coelho-toolbar { display: flex; flex-wrap: wrap; gap: .25rem; padding: .375rem; border-bottom: 1px solid #eee; background: #fafafa; }
-.coelho-command { font-size: .75rem; padding: .2rem .45rem; border: 1px solid #ddd; border-radius: .25rem; background: #fff; cursor: pointer; }
-.coelho-command:hover { background: #f0f0f0; }
-.coelho-content { padding: .75rem; min-height: 18rem; }
-.coelho-content .ProseMirror:focus { outline: none; }
-.coelho-content blockquote { border-left: 3px solid #ddd; padding-left: .75rem; color: #555; }
-.coelho-content pre { background: #f6f6f6; padding: .5rem; border-radius: .25rem; }
-.coelho-content ul { list-style: disc; padding-left: 1.5rem; }
-.coelho-content ol { list-style: decimal; padding-left: 1.5rem; }
-.coelho-content h1, .coelho-content h2, .coelho-content h3 { font-weight: 700; }
-.coelho-content h1 { font-size: 1.5rem; }
-.coelho-content h2 { font-size: 1.25rem; }
-.coelho-content h3 { font-size: 1.1rem; }
-.coelho-attachment { border: 1px dashed #bbb; border-radius: .375rem; padding: .5rem; margin: .5rem 0; }
-.coelho-attachment figcaption { font-size: .75rem; color: #666; }
-.coelho-attachment-missing { color: #b45309; font-family: ui-monospace, monospace; font-size: .8rem; }
 .pane .field-error { color: #b91c1c; font-size: .8rem; margin: .25rem 0 0; }
 .pane button[type=submit] { margin-top: .75rem; padding: .4rem .9rem; border: 1px solid #ccc; border-radius: .375rem; background: #fff; cursor: pointer; }
-.coelho-content .ProseMirror.coelho-empty::before { content: attr(data-placeholder); color: #999; pointer-events: none; float: left; height: 0; }
 .pane .hint { font-size: .75rem; color: #777; margin-top: .375rem; }
-.coelho-file-input { display: none; }
 .mention { background: #eef2ff; color: #3730a3; border-radius: .25rem; padding: 0 .2rem; }
 .pane button.link { background: none; border: 0; padding: 0; margin: 0; color: #2563eb; text-decoration: underline; cursor: pointer; font-size: inherit; }
-.coelho-command[aria-pressed="true"] { background: #1f2937; border-color: #1f2937; color: #fff; }
-.coelho-command:disabled { opacity: .4; cursor: default; }
-.coelho-link { display: inline-flex; align-items: center; margin-left: .25rem; }
-.coelho-link-input { font-size: .75rem; padding: .2rem .4rem; border: 1px solid #ccc; border-radius: .25rem; min-width: 16rem; }
-.coelho-link-input:invalid { border-color: #b91c1c; }

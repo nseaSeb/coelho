@@ -96,6 +96,17 @@ const settle = (page) => page.waitForTimeout(300);
 
 const selectAll = (page) => page.keyboard.press("ControlOrMeta+a");
 
+// Click, let the editor settle, then select. Pressing select-all in the same
+// breath as the click sends it before ProseMirror has put its selection
+// where the click asked for, and the press then selects nothing at all —
+// silently, so what fails is whatever needed the selection three lines
+// later. It shows up when the click lands in the empty space below the text
+// rather than on it, which is what a tall editor is mostly made of.
+const focusEditor = async (page, selector = EDITOR) => {
+  await page.click(selector);
+  await settle(page);
+};
+
 // A timeout that only says "timeout" costs an hour; one that shows the
 // document costs a glance.
 const documentEventually = async (page, description, predicate) => {
@@ -220,7 +231,7 @@ const run = async () => {
       // fast one hides.
       const sentence = "the quick brown fox jumps over the lazy dog";
 
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.keyboard.type(sentence, { delay: 12 });
       await paneEventually(page, "stored", "lazy dog");
@@ -230,7 +241,7 @@ const run = async () => {
 
     await test("the toolbar applies a mark to the selection", async () => {
       await typeInEditor(page, "bold me");
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.click('[data-coelho-command="bold"]');
 
@@ -251,7 +262,7 @@ const run = async () => {
 
       assert.equal(await pressed(page, "bold"), "true", "on the bolded half");
 
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await settle(page);
 
@@ -260,7 +271,7 @@ const run = async () => {
 
     await test("a link is made from the toolbar, not from a dialog", async () => {
       await typeInEditor(page, "see our terms");
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.click('[data-coelho-command="link"]');
 
@@ -287,7 +298,7 @@ const run = async () => {
       await page.keyboard.press("ControlOrMeta+b");
       await page.keyboard.type(" terms");
 
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.click('[data-coelho-command="link"]');
       await page.fill(LINK_INPUT, "https://old.example/x");
@@ -331,14 +342,14 @@ const run = async () => {
 
     await test("emptying the field removes the link and leaves the text", async () => {
       await typeInEditor(page, "linked text");
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.click('[data-coelho-command="link"]');
       await page.fill(LINK_INPUT, "https://example.com/a");
       await page.keyboard.press("Enter");
       await documentEventually(page, "the link was not applied", HAS_LINK);
 
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.click('[data-coelho-command="link"]');
       await page.fill(LINK_INPUT, "");
@@ -350,7 +361,7 @@ const run = async () => {
 
     await test("an address the browser would execute is refused", async () => {
       await typeInEditor(page, "tempting");
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.click('[data-coelho-command="link"]');
       await page.fill(LINK_INPUT, "javascript:alert(1)");
@@ -421,7 +432,7 @@ const run = async () => {
     });
 
     await test("an empty document advertises itself for the placeholder", async () => {
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
       await page.keyboard.press("Backspace");
 
@@ -646,7 +657,7 @@ const run = async () => {
       // Not an accessibility audit — it is the floor: a button that only a
       // mouse can reach is a button half the people cannot use.
       await typeInEditor(page, "keyboard only");
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
 
       await page.focus('[data-coelho-command="bold"]');
@@ -679,7 +690,7 @@ const run = async () => {
       // document the moment the field opened, so the field was on screen and
       // everything typed went into the text.
       await typeInEditor(page, "keyboard link");
-      await page.click(EDITOR);
+      await focusEditor(page);
       await selectAll(page);
 
       await page.focus('[data-coelho-command="link"]');
@@ -785,7 +796,7 @@ const run = async () => {
       // ever sent. The note editor has no phx-change at all, so the flush is
       // the only path its content can take — racing a real debounce would
       // make this pass or fail on how fast the engine types.
-      await page.click(NOTE);
+      await focusEditor(page, NOTE);
       await selectAll(page);
       await page.keyboard.press("Backspace");
       await page.keyboard.type("flux");
@@ -814,7 +825,7 @@ const run = async () => {
       // so the editor being torn down pushes what was just thrown away; the
       // generation moved, so the token no longer matches and the push is
       // ignored. Without that, discarding puts the text straight back.
-      await page.click(NOTE);
+      await focusEditor(page, NOTE);
       await selectAll(page);
       await page.keyboard.press("Backspace");
       await page.keyboard.type("perdu");

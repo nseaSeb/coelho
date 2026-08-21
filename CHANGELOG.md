@@ -1,5 +1,128 @@
 # Changelog
 
+## 0.4.0 — 2026-08-21
+
+A third adoption report, on 0.3.1, and the theme this time is the distance
+between "it works" and "you can pick it up". Most of it is things that were
+there and unsaid, or there and left to the caller.
+
+### The last link in the rendering argument
+
+- `Coelho.to_safe_html/3` answers `{:safe, iodata}`. `to_html/3` answers a
+  `String.t()`, which a template treats as text — correctly, since it cannot
+  know it is markup — so the caller had to remember `raw/1`, with two ways to
+  get it wrong: forget it and the reader is shown the source of their own
+  document; reach for it elsewhere and something that should have been
+  escaped no longer is. For a package whose argument is that rendering is
+  safe by construction, that was the last link left to the caller. It costs
+  no dependency: `{:safe, iodata}` is what `Phoenix.HTML.Engine` unwraps
+  directly. There is no `Phoenix.HTML.Safe` implementation because there is
+  nothing to implement it *for* — a document is a bare map, deliberately, and
+  an implementation for `Map` would apply to every map in the application.
+
+### Asking whether there is anything there
+
+- `Coelho.blank?/2`. An application deciding whether to render a block at all
+  had only `empty/1`, which *builds* an empty document, and the obvious
+  stand-in `text_length(document) == 0` is wrong in the direction that loses
+  content: a document holding one image, or one attachment, has no text and
+  is very much not blank. This asks the schema — a node it declares
+  `void: true` renders an element of its own and counts.
+
+### Ash
+
+- `cast_atomic/2`, explicitly. The inherited default refused an expression
+  with a message about the type not supporting atomic updates, which is true
+  and no help. A document is validated by walking its tree in Elixir, and
+  none of that can be handed to the database, so this is not a gap to close
+  later: the reason now says so and says what to do instead. A literal
+  document still goes through, validated like any other cast.
+- What the type does about storage and tenants, in one place where an Ash
+  user will look for it: nothing to configure, `jsonb` in the row that owns
+  it, no interaction with AshPostgres multitenancy — and the rule that a
+  key never decides whose a file is, repeated where it is needed rather than
+  only in the plug's documentation.
+
+### Ready to use
+
+- **A starter stylesheet**, at `assets/css/coelho.css`. Structure, states and
+  the things a person needs to see — focus, which commands are in force, a
+  counter gone over — with no identity of its own: every colour, radius and
+  space is a custom property with a neutral default. The demo imports it and
+  overrides two properties, which is now the whole of its editor styling;
+  hand-writing them there meant the stylesheet nobody had to write was also
+  the stylesheet nobody was running.
+- **The keyboard, written down.** It was all bound and none of it was
+  documented, which for a ready-to-use editor is part of the contract.
+- **`Coelho.Telemetry`** — spans around validation, rendering and storage, in
+  the usual `:start`/`:stop`/`:exception` shape. `:telemetry` is optional and
+  the spans compile down to calling the function without it. The schema
+  travels as a fingerprint, because a schema in the metadata of every
+  keystroke's validation would hand every handler a copy of it.
+- **How to make a document searchable**, on `Coelho.Document.to_text/2`: a
+  `jsonb` column is not searchable as it stands, so the text has to become a
+  column of its own, written when the document is. With the migration, the
+  changeset, and the two things that follow from it being a derivative.
+
+### Fixed
+
+- Telemetry costs nothing where nothing is listening. The first cut built its
+  metadata as an ordinary argument, so exporting and hashing the schema —
+  6.4 µs — plus two walks of the document ran on every validate and every
+  render whether `:telemetry` was loaded or not, which is the measurement
+  costing more than the work on a path documented as running per keystroke.
+  The metadata and the measurements are functions now and a build without
+  `:telemetry` calls neither; the schema's fingerprint is settled once when
+  the schema is built (`Coelho.Schema.fingerprint/1`); and the node and
+  character counts come from the bounds check validation runs anyway rather
+  than from walks of their own. Measured back down from 71 to 59 µs per
+  validate.
+- `Coelho.Ash.Type`'s `cast_atomic/2` answers `{:ok, …}` for a literal
+  document, which is what Ash's own default answers. `{:atomic, …}` puts the
+  value straight into the changeset's atomics, past the `allow_nil?` and
+  required-attribute checks — and `nil` is a value this type casts, so the
+  difference was a document that could be nulled on an attribute declaring it
+  may not be. Unreachable through Ash today, which short-circuits literals,
+  and reachable the moment a type defines `handle_change/3`.
+- And it routes through the type's own `cast_input/2`, so a module overriding
+  it — which `defoverridable` invites — keeps the override on this path too.
+- `blank?/2` no longer counts a hard break as content. An inline void node
+  declaring no attributes is punctuation, and a pasted-then-emptied field
+  usually leaves behind a paragraph holding exactly one — which would have
+  rendered a heading with nothing under it, the failure the function exists
+  to prevent.
+- `nil` renders as nothing rather than raising. It is what a nullable column
+  holds and what both stored types cast an absent document to, so the
+  one-liner this release recommends would have taken the page down on it.
+- The editor draws an attachment the way the page does: the same classes, and
+  the caption as a `figcaption` rather than not at all. A captioned
+  attachment looked materially different while it was being written.
+- Changing `:labels` on a mounted editor redraws the toolbar. The fingerprint
+  the toolbar's id carries covered the schema and the commands but not their
+  words, so a language switched mid-session changed nothing on screen — and
+  the editor now carries two fingerprints rather than one, because they cost
+  very different things. The schema's makes the hook rebuild the editor,
+  which re-parses the document and starts a fresh undo history; the
+  toolbar's only redraws the buttons. Folding the labels into a single
+  fingerprint would have made a changed word throw away the writer's undo
+  stack and move their caret.
+- The component's documentation still said the button list was fixed once
+  rendered, which stopped being true in 0.3.0 when the fingerprint went in —
+  and was read, reasonably, as the behaviour.
+- The demo's hand-written styles gave `.coelho-link` a `display`, which beat
+  the browser's own rule for `[hidden]` — so the link field was never
+  actually hidden, and the browser check that fills it was filling a field
+  permanently on screen rather than one the toolbar had opened. Importing the
+  shipped stylesheet made `hidden` mean hidden and the check started failing,
+  which is the check finally doing its job.
+- And with it, a fragility in the browser harness: it pressed select-all in
+  the same breath as the click that focused the editor, which sends the press
+  before ProseMirror has put its selection where the click asked. It selected
+  nothing, silently, and what failed was whatever needed the selection three
+  lines later. Only visible once the shipped stylesheet gave the editable its
+  own height — clicks then land in the empty space below the text rather than
+  on it, which is what a tall editor is mostly made of.
+
 ## 0.3.1 — 2026-08-21
 
 ### Fixed

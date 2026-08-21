@@ -167,6 +167,33 @@ A document that fails validation surfaces as an
 `Ash.Error.Changes.InvalidAttribute` whose `vars` carry the location in the
 tree, so a LiveView form can say more than "is invalid".
 
+## Putting it on a page
+
+```heex
+<div class="prose">{Coelho.to_safe_html(@post.body)}</div>
+```
+
+`nil` renders as nothing rather than raising, so a nullable column needs no
+guard around it.
+
+`to_html/3` answers a `String.t()`, which a template treats as text — so it
+needs `raw/1`, and that is one more thing to remember and one more place to
+get wrong: forget it and the reader is shown the source of their own
+document. `to_safe_html/3` answers `{:safe, iodata}`, which
+`Phoenix.HTML.Engine` unwraps directly, and costs no dependency.
+
+Before rendering a block at all, ask whether there is anything in it:
+
+```elixir
+<section :if={not Coelho.blank?(@page.intro_doc, MyApp.RichText.schema())}>
+```
+
+Not `text_length(document) == 0`, which is the obvious stand-in and is wrong
+in the direction that loses content: a document holding one image, or one
+attachment, has no text and is very much not blank. `blank?/2` asks the
+schema instead — a node it declares `void: true` renders an element of its
+own and counts.
+
 ## Serving what is stored
 
 Validation is the boundary at the keyboard. There is a second one, at the
@@ -366,6 +393,48 @@ the mismatch out loud.
 
 Toolbar labels come from `labels={%{"bold" => gettext("Bold")}}` — the
 commands are not words, and a toolbar has to speak the reader's language.
+Changing them redraws the toolbar, so a language switched mid-session is
+picked up.
+
+### Styling it
+
+A starter stylesheet ships with the package:
+
+```css
+/* assets/css/app.css */
+@import "../../deps/coelho/assets/css/coelho.css";
+```
+
+Structure, states and the things a person needs to see — focus, which
+commands are in force, a counter that has gone over — and no identity of its
+own. Every colour, radius and space comes from a custom property with a
+neutral default, so an application overrides the properties rather than the
+rules:
+
+```css
+.coelho {
+  --coelho-accent: var(--brand);
+  --coelho-radius: 2px;
+  --coelho-surface: var(--paper);
+}
+```
+
+Copy it instead if you would rather own it. The demo imports it and overrides
+two properties, which is the whole of its editor styling.
+
+### The keyboard
+
+| Keys | What |
+| --- | --- |
+| `Mod-b`, `Mod-i`, `Mod-e` | bold, italic, inline code |
+| `Mod-z`, `Shift-Mod-z`, `Mod-y` | undo, redo, redo |
+| `Enter` in a list | a new item |
+| `Mod-[`, `Mod-]` | lift the item out, sink it in |
+| `Shift-Enter`, `Mod-Enter` | a line break, and out of a code block |
+| `Enter`, `Escape` in the link field | confirm, close |
+
+Bound only for the nodes and marks the schema declares, on top of
+ProseMirror's base keymap.
 
 ### Testing it
 
@@ -587,6 +656,36 @@ Writing a storage for S3 or MinIO: `Coelho.Storage`'s documentation carries a
 complete ExAws adapter to copy, with the two things that bite — `put/3` has
 to stream rather than read a file into memory, and ExAws over HTTP/2 fails
 above about a megabyte with `:send_buffer_full`.
+
+## Watching it
+
+Three spans, in the usual `:start` / `:stop` / `:exception` shape:
+
+```elixir
+:telemetry.attach_many(
+  "coelho",
+  [[:coelho, :validate, :stop], [:coelho, :render, :stop], [:coelho, :storage, :stop]],
+  &MyApp.Telemetry.handle/4,
+  nil
+)
+```
+
+Validation carries how big the document was and how many errors there were,
+rendering how many bytes came out, storage which storage and which key. The
+schema travels as a fingerprint rather than as a struct — see
+`Coelho.Telemetry`. `:telemetry` is optional; without it the spans compile
+down to calling the function.
+
+Validation runs on every keystroke of every editor, so a handler on it is on
+a hot path: count and summarise, do not log.
+
+## Searching it
+
+`to_text/2` gives a document's plain text, and a `jsonb` column is not
+searchable as it stands — the text has to become a column of its own,
+written when the document is. `Coelho.Document.to_text/2` carries the
+migration, the changeset and the two things that follow from it being a
+derivative.
 
 ## Adding a node of your own
 
