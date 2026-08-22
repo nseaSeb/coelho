@@ -25,6 +25,27 @@ defmodule Demo.RichText do
                 render: &__MODULE__.render_mention/2,
                 to_text: &__MODULE__.mention_text/1,
                 parse: [{"span", &__MODULE__.parse_mention/2}]
+              ],
+              # A variable an editor can place and nothing can split. Declared
+              # here and nowhere else: `render` is a declaration rather than a
+              # function, so the browser draws it from the export, and
+              # `editor_text` is what puts words in a node that has no
+              # content of its own. Substituting the value is the sender's
+              # business, on a document that has the variable as a *node* —
+              # which is the whole point, since a placeholder written as text
+              # is split in two the moment someone bolds half of it.
+              variable: [
+                group: "inline",
+                inline: true,
+                void: true,
+                attrs: [
+                  name: [required: true, validate: {:one_of, ~w(number due_date customer)}],
+                  label: [default: nil, validate: {:nullable, :string}]
+                ],
+                class: "variable",
+                render: {"span", [{"data-variable", ""}]},
+                editor_text: :label,
+                to_text: &__MODULE__.variable_text/1
               ]
             ]
           )
@@ -44,6 +65,13 @@ defmodule Demo.RichText do
   end
 
   def mention_text(node), do: label(node)
+
+  @doc """
+  What a variable contributes to the plain text: its label, or its name.
+  """
+  def variable_text(node) do
+    Coelho.Render.attr(node, "label") || Coelho.Render.attr(node, "name")
+  end
 
   @doc """
   Imports `<span data-user-id="7">Ada</span>` and leaves every other span

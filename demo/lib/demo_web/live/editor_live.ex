@@ -340,9 +340,22 @@ defmodule DemoWeb.EditorLive do
             flush_event="flush_body"
             placeholder="Write something…"
             field_labels={note_field_labels(@note_locale)}
-            toolbar={~w(bold italic strike code link heading heading_2 heading_3 paragraph code_block
+            toolbar={
+              ~w(bold italic strike code link heading heading_2 heading_3 paragraph code_block
                  blockquote bullet_list ordered_list horizontal_rule caption
-                 align_left align_center align_right align_justify undo redo)}
+                 align_left align_center align_right align_justify undo redo) ++
+                [
+                  {"insert",
+                   node: :variable,
+                   attrs: %{name: "number", label: "{{number}}"},
+                   label: "Invoice number"},
+                  {"insert",
+                   node: :variable,
+                   attrs: %{name: "due_date", label: "{{due_date}}"},
+                   label: "Due date"},
+                  {"insert", text: "🎉", label: "Party popper"}
+                ]
+            }
             upload={@uploads.attachment}
           />
 

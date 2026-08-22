@@ -302,6 +302,7 @@ defmodule Coelho.Schema do
     render: [:render],
     render_inline: [:render_inline],
     to_text: [:to_text],
+    editor_text: [:editor_text],
     parse: [:parse]
   ]
 
@@ -707,10 +708,18 @@ defmodule Coelho.Schema do
     |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, spec.void))
+    |> put_unless_nil("editorText", editor_text_to_json(spec.editor_text))
     |> put_unless_nil("parseDOM", parse_dom_to_json(spec.parse))
     |> put_when_true("inline", spec.inline)
     |> put_when_true("atom", spec.void)
   end
+
+  # The browser draws it; the server never does. What the page carries is the
+  # node's `:render`, which is free to print something else entirely — a
+  # variable shows its name while it is being written and its value once it
+  # is sent.
+  defp editor_text_to_json(nil), do: nil
+  defp editor_text_to_json(attr), do: Atom.to_string(attr)
 
   defp mark_to_json(%MarkSpec{} = spec) do
     %{}
@@ -871,6 +880,7 @@ defmodule Coelho.Schema do
       render: Keyword.get(decl, :render),
       render_inline: Keyword.get(decl, :render_inline),
       to_text: Keyword.get(decl, :to_text),
+      editor_text: build_editor_text(name, decl, Keyword.get(decl, :editor_text)),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
     }
   end
@@ -909,6 +919,39 @@ defmodule Coelho.Schema do
 
   defp build_editor_attrs(name, other) do
     raise ArgumentError, "editor_attrs of #{inspect(name)} must be a map, got #{inspect(other)}"
+  end
+
+  # Checked here rather than discovered in the browser: an attribute the node
+  # does not declare draws an empty chip, which is a variable nobody can see
+  # and nobody can tell from a bug in their own template.
+  defp build_editor_text(_name, _decl, nil), do: nil
+
+  defp build_editor_text(name, decl, attr) when is_atom(attr) do
+    declared = decl |> Keyword.get(:attrs, []) |> Keyword.keys()
+
+    cond do
+      attr not in declared ->
+        raise ArgumentError,
+              "editor_text of #{inspect(name)} names #{inspect(attr)}, which it does not declare " <>
+                "as an attribute — it declares #{inspect(declared)}"
+
+      # A node with content has a hole for it in what it draws, and the label
+      # would take that hole's place: the node would render in the editor
+      # with nowhere for its children, which are still there in the document.
+      # Empty on screen, whole in storage, and nothing said about it.
+      not Keyword.get(decl, :void, false) ->
+        raise ArgumentError,
+              "editor_text of #{inspect(name)} needs `void: true`: a node that holds content " <>
+                "draws it, and there is no room for a label beside it"
+
+      true ->
+        attr
+    end
+  end
+
+  defp build_editor_text(name, _decl, other) do
+    raise ArgumentError,
+          "editor_text of #{inspect(name)} must be an attribute name, got #{inspect(other)}"
   end
 
   defp build_version(nil), do: nil

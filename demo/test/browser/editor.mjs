@@ -794,6 +794,72 @@ const run = async () => {
       );
     });
 
+    await test("a variable is placed from the toolbar and cannot be split", async () => {
+      // The reason a placeholder is a node and not `{{text}}`: text in a
+      // document is a tree, so bolding half of a placeholder splits it across
+      // two text nodes and every substitution downstream stops matching —
+      // silently. An atom has no halves.
+      await typeInEditor(page, "Due on ");
+      await page.click('[data-coelho-command="insert"][data-coelho-node="variable"]');
+      await settle(page);
+
+      const [block] = (await stored(page)).content;
+      const variable = block.content.find((node) => node.type === "variable");
+
+      assert.ok(variable, "the variable was not inserted");
+      assert.equal(variable.attrs.name, "number");
+
+      // Drawn from `editor_text` in Elixir, with no JavaScript written for
+      // it: a void node has no content, so without that the chip is empty.
+      assert.match(await page.innerHTML(EDITOR), /<span[^>]*data-variable[^>]*>\{\{number\}\}<\/span>/);
+
+      // Bold everything: the variable survives as one node, where a
+      // placeholder written as text would have come apart.
+      await focusEditor(page);
+      await selectAll(page);
+      await page.click('[data-coelho-command="bold"]');
+      await settle(page);
+
+      const bolded = (await stored(page)).content[0].content;
+      const variables = bolded.filter((node) => node.type === "variable");
+
+      assert.equal(variables.length, 1);
+      assert.equal(variables[0].attrs.name, "number");
+      assert.match(await paneEventually(page, "text", "{{number}}"), /Due on/);
+    });
+
+    await test("an emoji goes in as one character, and is counted as one", async () => {
+      await typeInEditor(page, "");
+      await page.click('[data-coelho-command="insert"][data-coelho-text]');
+      await settle(page);
+
+      const [block] = (await stored(page)).content;
+
+      assert.equal(block.content[0].text, "🎉");
+      assert.match(await paneEventually(page, "text", "🎉"), /🎉/);
+
+      // One character, not the two code units it is made of, and not the
+      // seven a family is: the counter segments graphemes, which is the unit
+      // `Coelho.Document.text_length/1` counts and the bound is checked
+      // against. A number on screen that disagrees with the one refusing the
+      // document is a limit nobody can work with.
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.keyboard.press("Backspace");
+      await page.keyboard.type("🎉👨‍👩‍👧");
+      await settle(page);
+
+      assert.equal(await page.textContent(NOTE_COUNT), "2");
+
+      // Put the note back as it was found: the counter check further down
+      // reads the number the server rendered for it, and a test that leaves
+      // the page somewhere else is a failure attributed to the wrong step.
+      await selectAll(page);
+      await page.keyboard.press("Backspace");
+      await page.keyboard.type("note");
+      await settle(page);
+    });
+
     await test("a node the application added to the schema round trips", async () => {
       await typeInEditor(page, "written by ");
       await paneEventually(page, "stored", "written by");
@@ -894,7 +960,7 @@ const run = async () => {
       // than turning something on has no state to report and says nothing,
       // which is the whole set below — anything else missing `aria-pressed`
       // is a toggle that stopped answering.
-      const actions = ["undo", "redo", "caption", "horizontal_rule"];
+      const actions = ["undo", "redo", "caption", "horizontal_rule", "insert"];
 
       const unnamed = await page.$$eval("[data-coelho-command]", (buttons, actions) =>
         buttons

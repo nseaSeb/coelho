@@ -24,6 +24,11 @@ defmodule Coelho.Schema.NodeSpec do
       lives inside a render function — see `Coelho.Render.to_inline_html/3`
     * `:to_text` — what the node contributes to the plain text extraction,
       when that is not simply its children
+    * `:editor_text` — the attribute whose value the editor draws as the
+      node's visible text. A void node has no content, so a chip standing for
+      a variable, a mention or a date would otherwise draw empty; naming an
+      attribute here is what puts words in it, on the browser's side only —
+      the server's `:render` decides what the page carries
     * `:parse` — HTML this node is imported from, see `Coelho.HTML`
     * `:attr_keys` — the attribute names as the strings a document is written
       in, derived from `:attrs` when the schema is built. Validation asks
@@ -54,6 +59,7 @@ defmodule Coelho.Schema.NodeSpec do
           render: render(),
           render_inline: render(),
           to_text: String.t() | (map() -> iodata()) | nil,
+          editor_text: atom() | nil,
           parse: [Coelho.HTML.rule()],
           attr_keys: MapSet.t(String.t()) | nil
         }
@@ -73,6 +79,7 @@ defmodule Coelho.Schema.NodeSpec do
     render: nil,
     render_inline: nil,
     to_text: nil,
+    editor_text: nil,
     parse: [],
     attr_keys: nil
   ]

@@ -215,6 +215,48 @@ A document that fails validation surfaces as an
 `Ash.Error.Changes.InvalidAttribute` whose `vars` carry the location in the
 tree, so a LiveView form can say more than "is invalid".
 
+`storage_type/1`, `cast_stored/2` and `dump_to_native/2` are overridable, so
+a field already stored as text can become a document **without a migration**:
+keep the `:string` column, encode on the way down, decode on the way up, and
+put the fallback for what is still plain text inside the type — the one place
+every reader goes through by construction rather than by discipline.
+
+```elixir
+defmodule MyApp.RichText.Type do
+  use Coelho.Ash.Type
+
+  @impl true
+  def storage_type(_constraints), do: :string
+
+  @impl true
+  def dump_to_native(value, constraints) do
+    case super(value, constraints) do
+      # Not `JSON.encode!(nil)`, which is the four characters "null" — a
+      # column that never holds NULL is one `is_nil/1` never finds.
+      {:ok, nil} -> {:ok, nil}
+      {:ok, document} -> {:ok, JSON.encode!(document)}
+      other -> other
+    end
+  end
+
+  @impl true
+  def cast_stored(value, constraints) when is_binary(value) do
+    # A document is a map. "123" and "true" are valid JSON too, and a legacy
+    # row holding one would otherwise be read as a number and come back empty.
+    case JSON.decode(value) do
+      {:ok, document} when is_map(document) -> super(document, constraints)
+      # Written before the column held documents: one paragraph, one run.
+      _not_a_document -> super(MyApp.RichText.from_plain_text(value), constraints)
+    end
+  end
+
+  def cast_stored(value, constraints), do: super(value, constraints)
+end
+```
+
+Where adding a column is expensive, that is the difference between a feature
+that ships and one that waits.
+
 ## Putting it on a page
 
 ```heex
@@ -410,6 +452,73 @@ They are filtered against the schema like everything else — a schema whose
 entry in `:labels` and `:icons`. A level button shows its words rather than
 a drawing unless you pass one: six H's differing by a numeral are six
 buttons nobody can tell apart at 20px.
+
+### A variable, and anything else that must not be split
+
+A placeholder written as text is not safe in a document: text is a tree, so
+bolding half of `{{number}}` splits it across two text nodes and every
+substitution downstream stops matching — silently, with the writer seeing a
+bold placeholder and the reader receiving one. Declare it as a node instead,
+and nothing can split it:
+
+```elixir
+Coelho.Schema.extend(Coelho.Schema.default(),
+  nodes: [
+    variable: [
+      group: "inline",
+      inline: true,
+      void: true,
+      attrs: [
+        name: [required: true, validate: {:one_of, ~w(number due_date customer)}],
+        label: [default: nil, validate: {:nullable, :string}]
+      ],
+      class: "variable",
+      render: {"span", [{"data-variable", ""}]},
+      editor_text: :label
+    ]
+  ]
+)
+```
+
+`void: true` makes it an atom: no content, no halves, deleted whole or not at
+all. `:editor_text` names the attribute the **editor** draws inside it —
+a node with no content would otherwise draw an empty chip — while the page
+gets whatever `:render` says, which is where the value is substituted.
+
+An entry in `:toolbar` puts one in:
+
+```heex
+<.coelho_editor
+  field={@form[:body]}
+  document_schema={MyApp.RichText.schema()}
+  toolbar={
+    ~w(bold italic link) ++
+      [
+        {"insert", node: :variable, attrs: %{name: "number", label: "{{number}}"},
+         label: "Invoice number"},
+        {"insert", node: :variable, attrs: %{name: "due_date", label: "{{due_date}}"},
+         label: "Due date"},
+        {"insert", text: "🎉", label: "Party popper"}
+      ]
+  }
+/>
+```
+
+Six variables are six entries, or one entry and a menu you draw yourself. The
+entry carries its own `:label` and may carry its own `:icon`, because six
+buttons differing only in an attribute cannot share a key in `:labels`.
+
+Filtered against the schema like every other command: the node has to be
+declared, it has to be an inline atom — that is the one shape this verb has
+no decision to make about, which is why the node commands stay a closed list
+otherwise — and the attributes the entry names have to be ones the node would
+accept, asked of their own validators. A button that writes what the server
+refuses is a button that loses what the writer typed.
+
+`text:` puts characters in instead of a node: an emoji, an em dash, a
+non-breaking space. Text is counted in grapheme clusters on both sides, so a
+family emoji is one character in the counter, one against `:max_text_length`,
+and is never cut in half by `Coelho.Document.sanitize/2`.
 
 Every keystroke ships the document to the server, which decodes and
 validates it. On a long document beside a live preview that is worth
