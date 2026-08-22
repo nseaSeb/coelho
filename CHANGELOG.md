@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — 2026-08-22
 
 Three things an application could not reach from outside `coelho_editor/1`,
 reported from a settings screen with a live preview beside the editor and a
