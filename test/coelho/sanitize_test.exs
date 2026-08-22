@@ -246,11 +246,134 @@ defmodule Coelho.SanitizeTest do
       assert Schema.default_limits().max_nodes == 10_000
     end
 
-    test "sanitising a document over the bound gives the empty document" do
+    test "sanitising a document over the node bound cuts it to fit" do
+      # It used to come back empty: a bound is reported at the root, and the
+      # only repair at the root is replacing it. Twenty paragraphs thrown
+      # away for being twenty-one nodes too many.
       document = doc(List.duplicate(paragraph([text("x")]), 20))
+      bounded = bounded(max_nodes: 10)
 
-      assert Document.sanitize(document, bounded(max_nodes: 10)) ==
-               Coelho.empty(bounded(max_nodes: 10))
+      sanitized = Document.sanitize(document, bounded)
+
+      assert {:ok, ^sanitized} = Document.validate(sanitized, bounded)
+      assert length(sanitized["content"]) == 5
+    end
+
+    # A list item must open with a paragraph, so this is what a nested list
+    # actually looks like: each level costs two.
+    defp nested(inner) do
+      %{
+        "type" => "bullet_list",
+        "content" => [%{"type" => "list_item", "content" => [%{"type" => "paragraph"}, inner]}]
+      }
+    end
+
+    test "what is nested too deep is dropped, and what stands beside it stays" do
+      # It used to empty the whole document: what is too deep was replaced
+      # with an empty node rather than removed, so the bound went on
+      # refusing it, and a bound is refused at the root — taking every
+      # paragraph beside the offending one with it.
+      document =
+        doc([
+          paragraph([text("beside it")]),
+          nested(nested(nested(paragraph([text("too deep")]))))
+        ])
+
+      bounded = bounded(max_depth: 6)
+      sanitized = Document.sanitize(document, bounded)
+
+      assert {:ok, ^sanitized} = Document.validate(sanitized, bounded)
+      assert Enum.map(sanitized["content"], & &1["type"]) == ["paragraph", "bullet_list"]
+      assert Document.text_length(sanitized) == String.length("beside it")
+    end
+
+    test "a document nested to exactly the bound is kept whole" do
+      document = doc([nested(nested(paragraph([text("deep enough")])))])
+      bounded = bounded(max_depth: 6)
+
+      assert {:ok, _} = Document.validate(document, bounded)
+      assert Document.sanitize(document, bounded)["content"] == document["content"]
+    end
+
+    test "sanitising a document over the length bound truncates the text" do
+      document = doc([paragraph([text(String.duplicate("a", 500))])])
+      bounded = bounded(max_text_length: 400)
+
+      sanitized = Document.sanitize(document, bounded)
+
+      assert Document.text_length(sanitized) == 400
+      assert {:ok, ^sanitized} = Document.validate(sanitized, bounded)
+    end
+
+    test "the truncation counts characters, not bytes" do
+      document = doc([paragraph([text(String.duplicate("é", 500))])])
+
+      assert Document.text_length(Document.sanitize(document, bounded(max_text_length: 400))) ==
+               400
+    end
+
+    test "what is under the bound is kept whole, and only what crosses it is cut" do
+      document =
+        doc([
+          paragraph([text(String.duplicate("a", 300))]),
+          paragraph([text(String.duplicate("b", 200))]),
+          paragraph([text("never reached")])
+        ])
+
+      sanitized = Document.sanitize(document, bounded(max_text_length: 400))
+
+      assert [first, second, third] = sanitized["content"]
+      assert [%{"text" => kept}] = first["content"]
+      assert kept == String.duplicate("a", 300)
+      assert [%{"text" => cut}] = second["content"]
+      assert cut == String.duplicate("b", 100)
+      assert third == %{"type" => "paragraph"}
+    end
+
+    test "cutting to fit is idempotent, like every other repair" do
+      document = doc([paragraph([text(String.duplicate("a", 500))])])
+      bounded = bounded(max_text_length: 400)
+
+      once = Document.sanitize(document, bounded)
+
+      assert Document.sanitize(once, bounded) == once
+    end
+
+    test ":limits lifts a bound for this call alone" do
+      # What a stored document needs on the way to the page: the structure
+      # cleaned against the schema, and the length — a bound on writing —
+      # left for the application to judge with the whole thing in hand.
+      document =
+        doc([
+          %{"type" => "script", "content" => [text("x")]},
+          paragraph([text(String.duplicate("a", 500))])
+        ])
+
+      sanitized =
+        Document.sanitize(document, bounded(max_text_length: 400),
+          limits: [max_text_length: :infinity]
+        )
+
+      assert Document.text_length(sanitized) == 500
+      assert length(sanitized["content"]) == 1
+    end
+
+    test ":limits can tighten a bound too, and the schema is not changed by it" do
+      document = doc([paragraph([text(String.duplicate("a", 300))])])
+      bounded = bounded(max_text_length: 400)
+
+      assert Document.text_length(
+               Document.sanitize(document, bounded, limits: [max_text_length: 100])
+             ) ==
+               100
+
+      assert Document.text_length(Document.sanitize(document, bounded)) == 300
+    end
+
+    test ":limits refuses a bound the schema itself would refuse" do
+      assert_raise ArgumentError, ~r/unknown limit/, fn ->
+        Document.sanitize(doc([]), schema(), limits: [max_words: 10])
+      end
     end
   end
 end

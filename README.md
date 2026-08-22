@@ -275,15 +275,26 @@ not covered by what `validate/2` promised when it was written.
 post.body |> Coelho.sanitize(MyApp.RichText.schema()) |> Coelho.to_html(...)
 ```
 
-`sanitize/2` never fails and never reports. What falls outside the schema is
+`sanitize/3` never fails and never reports. What falls outside the schema is
 removed, from the gentlest repair to the harshest: an unknown key goes, an
 attribute failing its validator falls back to the schema default, a mark
 that is unknown or refused goes and the text it covered stays, a node whose
-type is unknown goes with its text, and a document that cannot be repaired
-at all becomes the empty one. A hostile document becomes a poor document,
-never an unexpected rendering.
+type is unknown goes with its text, a document over the schema's bounds is
+cut to fit them, and a document that cannot be repaired at all becomes the
+empty one. A hostile document becomes a poor document, never an unexpected
+rendering.
 
 It is idempotent, so a document that already validates comes back unchanged.
+
+A bound is a bound on *writing* — the browser posts into a hidden field no
+`maxlength` constrains, which is what `:max_text_length` is there to refuse
+— and reading is a different question. `:limits` says so for one call, so
+that judging the length stays the application's to do, with the whole
+document in hand to do it on:
+
+```elixir
+Coelho.sanitize(post.body, schema, limits: [max_text_length: :infinity])
+```
 
 ## Rendering somewhere other than a web page
 
@@ -507,6 +518,32 @@ rules:
   --coelho-surface: var(--paper);
 }
 ```
+
+A dark palette ships with it, applied when the machine asks for one — and
+it is all or nothing, because it cannot be half. A property set on the
+element beats one the element merely inherited, so an application declaring
+its own tokens further up the page would get its surface and coelho's text:
+light on light, a field that looks blank while holding a thousand words. An
+application with its own opinion about the dark says so with one attribute,
+and keeps every token it declared:
+
+```heex
+<.coelho_editor field={@form[:body]} data-coelho-theme="dark" />
+```
+
+Any value turns the automatic switch off; `dark` also asks for the dark
+palette whatever the machine prefers.
+
+Two properties are worth knowing about before the first long document:
+
+| Property | Default | What |
+| --- | --- | --- |
+| `--coelho-max-height` | `none` | the editor grows to here and scrolls after it |
+| `--coelho-height` | `auto` | fixes it outright |
+
+Without either, an editor grows with its text — and several thousand
+characters of terms and conditions push the buttons that save them off the
+bottom of the screen.
 
 Copy it instead if you would rather own it. The demo imports it and overrides
 two properties, which is the whole of its editor styling.
@@ -797,10 +834,19 @@ guarantee they drift, so extend instead:
         )
 ```
 
-Redeclaring an existing name replaces it, which is how the default schema's
-rendering gets adjusted without a fork. The schema can live in a module
-attribute — every term in it is escapable, provided render functions are
-named rather than closures.
+Redeclaring an existing name **adjusts** it: what the declaration names is
+taken from it, and what it leaves out is kept from the spec already there.
+Giving the shipped `bold` a theme's class is a line, and it keeps the
+`parse: ~w(strong b)` it was shipped with:
+
+```elixir
+marks: [bold: [class: "font-bold"]]
+```
+
+A whole declaration key is the unit — `attrs:` replaces the attribute map
+rather than merging into it. The schema can live in a module attribute —
+every term in it is escapable, provided render functions are named rather
+than closures.
 
 A `:class` on a node or mark is applied by the server renderer *and*
 exported to the browser, so the writer sees the class the public page will
@@ -812,6 +858,25 @@ marks: [highlight: [class: "hl hl-gradient", render: {"mark", []}]]
 ```
 
 `:editor_attrs` carries DOM attributes for the editor alone.
+
+### And what the editor draws for it
+
+A `:render` and a `:parse` that are declarations rather than functions are
+exported with the schema, and the browser builds the mark's `toDOM` and
+`parseDOM` out of them. The `highlight` above therefore needs no JavaScript
+at all: the editor draws the same `<mark class="hl hl-gradient">` the page
+does, and recognises it again on paste.
+
+A node or mark whose rendering *is* a function has no such export, and the
+browser is told so out loud — the hook logs which one, and draws a bare
+`<span>` or `<div>` carrying the declared class so the document still
+mounts. Give it a browser half to silence that:
+
+```javascript
+const Coelho = createCoelhoHook({
+  marks: { mention: { toDOM: (mark) => ["span", { "data-user": mark.attrs.user_id }, 0] } }
+});
+```
 
 ## What the toolbar shows
 

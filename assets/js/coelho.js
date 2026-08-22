@@ -183,20 +183,84 @@ export const defaultMarkDOM = {
   }
 };
 
+const warn = (message) => {
+  if (typeof console !== "undefined") console.warn("coelho: " + message);
+};
+
+// `renderDOM` and `parseDOM` are what the server could say in JSON about
+// its own `:render` and `:parse` — a declaration rather than a function.
+// They are the second source of a rendering, after what the application
+// passed to `createCoelhoHook` and before the last-resort element: a mark
+// declared `render: {"mark", []}` in Elixir draws as a `<mark>` here, with
+// no JavaScript written for it at all.
+//
+// `parseDOM` is deliberately consumed rather than passed through: the key
+// is ProseMirror's own, and the shape the server exports — `[[tag, attrs]]`
+// — is not the shape ProseMirror reads.
+// A fresh array each call: a DOMOutputSpec is handed to whatever wraps it
+// next, and one shared instance is one edit away from every element on the
+// page carrying the last one's attributes.
+const declaredDOM = (renderDOM) => () => [...renderDOM];
+
+const declaredParse = (parseDOM) =>
+  parseDOM.map(([tag, attrs]) =>
+    Object.keys(attrs).length === 0 ? { tag } : { tag, getAttrs: () => attrs }
+  );
+
+// A bare element, so the mark or node at least exists, takes the class the
+// schema declared for it, and lets the document mount. The tag says as
+// little as possible on purpose: guessing a `<mark>` for a mark named
+// highlight would be a second, invisible place where the editor and the
+// page can disagree.
+const bareDOM = (spec, kind) => {
+  const tag = kind === "mark" || spec.inline ? "span" : "div";
+
+  return spec.atom && kind !== "mark" ? [tag] : [tag, 0];
+};
+
+// ProseMirror builds text nodes itself and never renders the top node as an
+// element, so neither has — or wants — a toDOM. Everything else in the
+// schema needs one, and a schema whose document cannot be *drawn* is a
+// schema no document can be *mounted* on: `Node.fromJSON` throws on the
+// first mark it cannot render, and the editor that catches it comes up
+// empty, silent, and unresponsive to every change after that.
+const drawing = (name, kind, spec, declared, without) => {
+  if (declared.toDOM) return declared.toDOM;
+  if (spec.renderDOM) return declaredDOM(spec.renderDOM);
+  if (without.includes(name)) return undefined;
+
+  warn(
+    `the ${kind} "${name}" is in the schema but has no rendering in the browser, ` +
+      `so it is drawn as a bare <${bareDOM(spec, kind)[0]}>. Declare it in Elixir — ` +
+      `render: {"tag", []} — or pass one to ` +
+      `createCoelhoHook({${kind}s: {${name}: {toDOM: …}}}).`
+  );
+
+  return () => bareDOM(spec, kind);
+};
+
 // The server exports nodes and marks as ordered [name, spec] pairs rather
 // than as objects: ProseMirror resolves default types by position, and map
 // key order does not survive a round trip through Elixir.
-const toOrderedMap = (pairs, dom) => {
+const toOrderedMap = (pairs, dom, kind, without = []) => {
   let map = OrderedMap.from({});
 
   for (const [name, spec] of pairs) {
-    const { editorAttrs, attrRenderAs, ...rest } = spec;
+    const { editorAttrs, attrRenderAs, renderDOM, parseDOM, ...rest } = spec;
+    const declared = dom[name] ?? {};
+    const toDOM = drawing(name, kind, spec, declared, without);
+    const drawn = {
+      ...rest,
+      ...declared,
+      ...(toDOM && { toDOM }),
+      ...(!declared.parseDOM && parseDOM && { parseDOM: declaredParse(parseDOM) })
+    };
     // The attribute's class first, the spec's class after it — the order
     // `Coelho.Render` puts them in, so the two halves emit the same string
     // and not merely the same set.
-    const built = withAttrRenderAs({ ...rest, ...(dom[name] ?? {}) }, attrRenderAs);
+    const built = withAttrRenderAs(drawn, attrRenderAs);
 
-    map = map.addToEnd(name, withEditorAttrs(built, editorAttrs));
+    map = map.addToEnd(name, withEditorAttrs(built, editorAttrs, name, kind));
   }
 
   return map;
@@ -207,8 +271,20 @@ const toOrderedMap = (pairs, dom) => {
 // class the public page will carry; the rest is the editor's alone. Wrapping
 // toDOM here is what spares an application a custom hook written only to put
 // a class on an element.
-const withEditorAttrs = (spec, editorAttrs) => {
-  if (!editorAttrs || !spec.toDOM) return spec;
+const withEditorAttrs = (spec, editorAttrs, name, kind) => {
+  if (!editorAttrs) return spec;
+
+  // Only the two the schema never draws reach this, now that everything
+  // else is given a rendering above — and an application that asked for a
+  // class on one of those asked for something that has nowhere to go.
+  if (!spec.toDOM) {
+    warn(
+      `the ${kind} "${name}" declares ${JSON.stringify(editorAttrs)}, which is dropped: ` +
+        "ProseMirror renders it itself and there is no element to put them on."
+    );
+
+    return spec;
+  }
 
   const toDOM = spec.toDOM;
 
@@ -439,8 +515,11 @@ const readSchema = (el) => {
 export const buildSchema = (exported, { nodes = {}, marks = {} } = {}) =>
   new Schema({
     topNode: exported.topNode,
-    nodes: toOrderedMap(exported.nodes, { ...defaultNodeDOM, ...nodes }),
-    marks: toOrderedMap(exported.marks, { ...defaultMarkDOM, ...marks })
+    nodes: toOrderedMap(exported.nodes, { ...defaultNodeDOM, ...nodes }, "node", [
+      exported.topNode,
+      "text"
+    ]),
+    marks: toOrderedMap(exported.marks, { ...defaultMarkDOM, ...marks }, "mark")
   });
 
 // -- Commands ---------------------------------------------------------------
@@ -859,10 +938,33 @@ export const filenameFor = (url, blob) => {
 // Marks a transaction as the server's, not the writer's.
 const REMOTE = "coelho:remote";
 
+// The two ways this answers `null` are not the same thing, and only one of
+// them is worth a word.
+//
+// The field does not always hold a document at all: a rejected one comes
+// back as the raw text that was posted, so the writer can fix it. That is
+// the arrangement working, and it is silent.
+//
+// JSON the schema cannot *mount* is the other one, and it is where an
+// author most needs to know why — the error names the node, mark or
+// attribute that is missing, and swallowing it is what turns a schema bug
+// into an afternoon of bisecting. The message says what happened and not
+// what follows from it, because what follows differs by caller: an empty
+// editor at mount, an ignored round trip afterwards.
 const parseDoc = (schema, value) => {
+  let json;
+
   try {
-    return PMNode.fromJSON(schema, JSON.parse(value));
+    json = JSON.parse(value);
   } catch {
+    return null;
+  }
+
+  try {
+    return PMNode.fromJSON(schema, json);
+  } catch (error) {
+    warn(`the field holds a document this schema cannot read — ${error}`);
+
     return null;
   }
 };

@@ -6,9 +6,21 @@ import { readFileSync } from "node:fs";
 import { Node as PMNode } from "prosemirror-model";
 import { buildSchema, filenameFor, srcOf } from "../../../assets/js/coelho.js";
 
-const [schemaPath, documentPath] = process.argv.slice(2);
+const [schemaPath, documentPath, extendedPath] = process.argv.slice(2);
 const exported = JSON.parse(readFileSync(schemaPath, "utf8"));
 const schema = buildSchema(exported);
+
+const fail = (message, detail) => {
+  console.error(message, detail ?? "");
+  process.exit(1);
+};
+
+// What the library said on its way past. A schema it cannot draw is the one
+// thing it must not build in silence.
+const said = [];
+const warn = console.warn;
+
+console.warn = (...args) => said.push(args.join(" "));
 
 const names = Object.keys(schema.nodes).sort();
 const expected = exported.nodes.map(([name]) => name).sort();
@@ -155,6 +167,67 @@ if (srcOf('<img alt="a > b" src="/x.png">') !== "/x.png") {
   console.error("srcOf does not survive a quoted > in an earlier attribute");
   process.exit(1);
 }
+
+// An application's own marks, declared in Elixir and nowhere else. This is
+// the case that used to break the editor outright: a mark ProseMirror has
+// no `toDOM` for cannot be *drawn*, so the stored document cannot be
+// mounted, so the editor comes up empty and answers nothing — with nothing
+// said anywhere about why.
+const application = buildSchema(JSON.parse(readFileSync(extendedPath, "utf8")));
+
+const markDOM = (built, name) => {
+  const out = built.marks[name].spec.toDOM(built.marks[name].create());
+  const [tag, attrs] = out;
+
+  return [tag, attrs && typeof attrs === "object" && !Array.isArray(attrs) ? attrs : {}];
+};
+
+// `render: {"mark", [{"class", "base"}]}` and `class: "hl"` in Elixir, and
+// the same `<mark class="base hl">` the server renders — the attribute's
+// class first, the spec's after it.
+const [highlightTag, highlightAttrs] = markDOM(application, "highlight");
+
+if (highlightTag !== "mark" || highlightAttrs.class !== "base hl") {
+  fail("a declared render did not reach the editor", { highlightTag, highlightAttrs });
+}
+
+if (!application.marks.highlight.spec.parseDOM?.some((rule) => rule.tag === "mark")) {
+  fail("a declared parse rule did not reach the editor");
+}
+
+// And one that declares no rendering at all: a bare element, so the
+// document still mounts and the class still lands, and a warning naming it.
+const [effectTag, effectAttrs] = markDOM(application, "effect");
+
+if (effectTag !== "span" || effectAttrs.class !== "rainbow") {
+  fail("the last-resort rendering lost the schema's class", { effectTag, effectAttrs });
+}
+
+if (!said.some((line) => line.includes('the mark "effect"') && line.includes("no rendering"))) {
+  fail("a mark with no rendering was accepted in silence", said);
+}
+
+if (said.some((line) => line.includes('"highlight"'))) {
+  fail("a mark the schema draws was warned about anyway", said);
+}
+
+// The whole point of the exercise: a document using both marks mounts.
+// `Node.fromJSON` throws on the first mark it cannot render, and the hook
+// answers that with an empty editor.
+PMNode.fromJSON(application, {
+  type: "doc",
+  content: [
+    {
+      type: "paragraph",
+      content: [
+        { type: "text", text: "lit", marks: [{ type: "highlight" }] },
+        { type: "text", text: "shimmer", marks: [{ type: "effect" }] }
+      ]
+    }
+  ]
+}).check();
+
+console.warn = warn;
 
 console.log(
   `ok: ${Object.keys(schema.nodes).length} nodes, ` +

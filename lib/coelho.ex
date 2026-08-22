@@ -47,11 +47,12 @@ defmodule Coelho do
   Turns any term into a document the schema accepts, without failing.
 
   The counterpart of `validate/2` for the way out: see
-  `Coelho.Document.sanitize/2` for what it removes and why a stored document
-  needs it at all.
+  `Coelho.Document.sanitize/3` for what it removes, why a stored document
+  needs it at all, and what `limits: [max_text_length: :infinity]` is for.
   """
-  @spec sanitize(term(), Schema.t()) :: map()
-  def sanitize(document, schema \\ Schema.default()), do: Document.sanitize(document, schema)
+  @spec sanitize(term(), Schema.t(), keyword()) :: map()
+  def sanitize(document, schema \\ Schema.default(), opts \\ []),
+    do: Document.sanitize(document, schema, opts)
 
   @doc """
   The number of characters a writer typed, counted the way the editor counts.

@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.8.0 — 2026-08-22
+
+The other half of 0.6.0. A mark an application added could be stored,
+validated and rendered, and 0.6.0 gave it a toolbar button — but nothing
+drew it in the editor, and a schema ProseMirror cannot draw is a schema no
+document can be *mounted* on. The editor came up empty, accepted typing,
+never read the stored document back, never counted, never emitted a change,
+and said nothing anywhere. Reported by the same application, after a day of
+eliminating eight other explanations first.
+
+The thread through all of it: the server half was closed and explicit —
+strict validation, argued refusals — and the browser half was permissively
+silent. Both halves now answer the same way.
+
+### A mark of the schema draws itself
+
+- `:render` and `:parse` are exported with the schema when they are
+  declarations rather than functions, as `renderDOM` and `parseDOM`. The
+  browser builds `toDOM` and `parseDOM` out of them, so
+  `highlight: [class: "hl", render: {"mark", []}]` draws in the editor
+  exactly as it renders on the page, with no JavaScript written for it at
+  all. This is what `render_as: {:class, …}` did for an attribute, done for
+  the element.
+- A node or mark the browser still has no rendering for — one whose
+  `:render` is a function, which only Elixir can run — is **named** at
+  mount, and drawn as a bare `<span>` or `<div>` carrying whatever class the
+  schema declared. The document mounts, the editor works, and the console
+  says which name to give `createCoelhoHook({marks: …})`. It used to be a
+  dead editor and no message.
+- The class and `editor_attrs` a spec declares are no longer dropped in
+  silence for want of a `toDOM`. Nothing but the text node and the top node
+  can reach that case now, and either one says so.
+- A stored document the schema cannot mount logs the error that made it
+  impossible before falling back to an empty editor. Swallowing it was what
+  turned a schema bug into an afternoon of bisecting: the message names the
+  node, mark or attribute that is missing, which is the whole answer.
+
+### A bound cuts to fit rather than emptying
+
+- `Coelho.Document.sanitize/2` answered a document over `:max_text_length`
+  or `:max_nodes` with an *empty* document. The mechanism was understandable
+  — a bound is reported at the root, and the only repair at the root is
+  replacing the root — and the effect was not: terms and conditions five
+  hundred characters over a bound came back as nothing at all, and the
+  application's own length guard, measuring what came back, then saw zero
+  and had nothing to say. Text is now truncated at the bound and nodes are
+  cut off at it, which is the repair that loses least.
+- `:max_depth` emptied the document too, and for the same reason: what is
+  nested too deep was *replaced* with an empty node rather than removed, so
+  the bound went on refusing it. One bullet indented a level too far took
+  every paragraph beside it. It is dropped now, and what cannot stand
+  without it — a list item with nothing left in it — goes the way any node
+  whose content no longer satisfies its expression goes.
+- `sanitize/3` takes `:limits`, which override the schema's for that call.
+  A bound is a bound on *writing* — the browser posts into a hidden field no
+  `maxlength` constrains — and reading is a different question:
+  `limits: [max_text_length: :infinity]` cleans the structure and leaves the
+  length for the application to judge, with the whole document in hand to
+  judge it on. It replaces keeping a second schema per field to sanitise
+  against.
+
+### `Schema.extend/2` adjusts a name rather than replacing it
+
+- Redeclaring an existing node or mark now keeps what the declaration does
+  not mention. Giving the shipped `bold` a theme's class was a line that
+  silently took its `parse: ~w(strong b)` with it, so a `<strong>` pasted
+  out of a word processor came in as plain text — found by a code review,
+  not by a test. A whole declaration key is still the unit: `attrs:`
+  replaces the attribute map rather than merging into it, because an
+  override that can only add is not an override.
+
+### The stylesheet
+
+- `--coelho-max-height` (default `none`) and `--coelho-height` (default
+  `auto`). An editor that grows with its text pushes the buttons that save
+  it off the bottom of the screen, and several thousand characters of terms
+  and conditions is exactly that.
+- The editor's own rule sets `color` beside the `background` it already set.
+  Half a pair is worse than neither: an application giving
+  `--coelho-surface` its own theme's colour got the page's text colour on
+  it, which is how a field holding a thousand words comes to look empty.
+- `data-coelho-theme` is documented, takes `dark` as well as `light`, and
+  now opts out of the automatic dark palette whatever its value. The palette
+  has to be all or nothing: a property set on the element beats one the
+  element merely inherited, whatever either one's specificity, so an
+  application declaring its own tokens further up the page got its surface
+  and our text — light on light, and a field that looks blank. Weakening the
+  selector only moves which half is lost; one attribute settles it.
+
 ## 0.7.0 — 2026-08-22
 
 ### The toolbar draws

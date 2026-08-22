@@ -87,6 +87,91 @@ defmodule Coelho.SchemaTest do
       assert nodes["code_block"]["marks"] == ""
       refute Map.has_key?(nodes["paragraph"], "marks")
     end
+
+    test "a render that is a declaration is exported, so the browser can draw it" do
+      json = Schema.to_json(Schema.default())
+      marks = Map.new(json["marks"], fn [name, spec] -> {name, spec} end)
+      nodes = Map.new(json["nodes"], fn [name, spec] -> {name, spec} end)
+
+      assert marks["bold"]["renderDOM"] == ["strong", %{}, 0]
+      assert nodes["paragraph"]["renderDOM"] == ["p", %{}, 0]
+      # A void node has no content hole.
+      assert nodes["horizontal_rule"]["renderDOM"] == ["hr", %{}]
+    end
+
+    test "a render that is a function cannot be, and says nothing rather than half of it" do
+      json = Schema.to_json(Schema.default())
+      nodes = Map.new(json["nodes"], fn [name, spec] -> {name, spec} end)
+
+      # The tag depends on the level, so only Elixir can answer it.
+      refute Map.has_key?(nodes["heading"], "renderDOM")
+    end
+
+    test "the spec's class is not folded into the render, since editorAttrs carries it" do
+      schema =
+        Schema.extend(Schema.default(),
+          marks: [highlight: [class: "hl", render: {"mark", [{"class", "base"}]}]]
+        )
+
+      marks = Map.new(Schema.to_json(schema)["marks"], fn [name, spec] -> {name, spec} end)
+
+      assert marks["highlight"]["renderDOM"] == ["mark", %{"class" => "base"}, 0]
+      assert marks["highlight"]["editorAttrs"] == %{"class" => "hl"}
+    end
+
+    test "the attribute values the server renders, in the DOM's own spelling" do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [
+            details: [content: "inline*", group: "block", render: {"details", [{"open", true}]}],
+            cell: [
+              content: "inline*",
+              group: "block",
+              render: {"td", [{"colspan", 2}, {"hidden", false}]}
+            ]
+          ]
+        )
+
+      nodes = Map.new(Schema.to_json(schema)["nodes"], fn [name, spec] -> {name, spec} end)
+
+      # A bare attribute is the empty string, which is what draws
+      # `<details open>`; `false` writes nothing, exactly as the server
+      # renders nothing for it.
+      assert nodes["details"]["renderDOM"] == ["details", %{"open" => ""}, 0]
+      assert nodes["cell"]["renderDOM"] == ["td", %{"colspan" => "2"}, 0]
+    end
+
+    test "a value neither half could write is refused rather than half exported" do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [odd: [content: "inline*", group: "block", render: {"i", [{"data-x", {1, 2}}]}]]
+        )
+
+      nodes = Map.new(Schema.to_json(schema)["nodes"], fn [name, spec] -> {name, spec} end)
+
+      refute Map.has_key?(nodes["odd"], "renderDOM")
+    end
+
+    test "parse rules with fixed attributes are exported too" do
+      json = Schema.to_json(Schema.default())
+      marks = Map.new(json["marks"], fn [name, spec] -> {name, spec} end)
+
+      assert marks["bold"]["parseDOM"] == [["strong", %{}], ["b", %{}]]
+    end
+
+    test "a parse rule extracting with a function is left out rather than guessed at" do
+      schema =
+        Schema.new(
+          nodes: [doc: [content: "text*"]],
+          marks: [
+            link: [attrs: [href: [required: true]], parse: [{"a", &Map.take(&1, ["href"])}]]
+          ]
+        )
+
+      marks = Map.new(Schema.to_json(schema)["marks"], fn [name, spec] -> {name, spec} end)
+
+      refute Map.has_key?(marks["link"], "parseDOM")
+    end
   end
 
   describe "new/1 rejects duplicate declarations" do
@@ -189,7 +274,7 @@ defmodule Coelho.SchemaTest do
       assert {:error, _} = Coelho.validate(document)
     end
 
-    test "redeclaring a name replaces it without a fork" do
+    test "redeclaring a name adjusts it without a fork" do
       schema =
         Schema.extend(Schema.default(),
           nodes: [paragraph: [content: "inline*", group: "block", render: {"div", []}]]
@@ -197,6 +282,53 @@ defmodule Coelho.SchemaTest do
 
       assert length(schema.node_order) == length(Schema.default().node_order)
       assert Schema.node_spec(schema, :paragraph).render == {"div", []}
+    end
+
+    test "what a redeclaration does not name is kept from the spec it adjusts" do
+      # It used to be replaced outright, and the loss was silent: giving the
+      # shipped `bold` a theme's class took its parse rules with it, so a
+      # `<strong>` pasted out of a word processor came in as plain text with
+      # nothing said about it anywhere.
+      schema = Schema.extend(Schema.default(), marks: [bold: [class: "font-bold"]])
+
+      assert Schema.mark_spec(schema, :bold).class == "font-bold"
+
+      assert Schema.mark_spec(schema, :bold).parse ==
+               Schema.mark_spec(Schema.default(), :bold).parse
+
+      assert Schema.mark_spec(schema, :bold).render == {"strong", []}
+    end
+
+    test "a node keeps its content, group and attributes the same way" do
+      schema = Schema.extend(Schema.default(), nodes: [heading: [class: "title"]])
+      before = Schema.node_spec(Schema.default(), :heading)
+      after_ = Schema.node_spec(schema, :heading)
+
+      assert after_.class == "title"
+      assert after_.content == before.content
+      assert after_.content_source == before.content_source
+      assert after_.group == before.group
+      assert after_.attrs == before.attrs
+      assert after_.parse == before.parse
+    end
+
+    test "a key that is named is taken whole, so an override can also take away" do
+      schema = Schema.extend(Schema.default(), marks: [bold: [parse: []]])
+
+      assert Schema.mark_spec(schema, :bold).parse == []
+    end
+
+    test "a name that is new is built from its declaration alone" do
+      schema = Schema.extend(Schema.default(), marks: [highlight: [class: "hl"]])
+
+      assert Schema.mark_spec(schema, :highlight).render == nil
+      assert Schema.mark_spec(schema, :highlight).parse == []
+    end
+
+    test "a redeclaration is still checked like any other declaration" do
+      assert_raise ArgumentError, ~r/class of :bold must be a string/, fn ->
+        Schema.extend(Schema.default(), marks: [bold: [class: :font_bold]])
+      end
     end
 
     test "an addition still has to be consistent" do
