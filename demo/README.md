@@ -88,10 +88,13 @@ only place the two halves can drift. Two checks cover it:
   code and builds an actual ProseMirror schema:
 
 ```
-mix run -e 'File.write!("/tmp/coelho_schema.json", JSON.encode!(Coelho.Schema.to_json(Coelho.Schema.default())))'
-mix run -e 'File.write!("/tmp/coelho_doc.json", JSON.encode!(Coelho.empty()))'
-node priv/check/schema_bridge.mjs /tmp/coelho_schema.json /tmp/coelho_doc.json
+mix run priv/check/export_schemas.exs /tmp/schema.json /tmp/doc.json /tmp/extended.json
+node priv/check/schema_bridge.mjs /tmp/schema.json /tmp/doc.json /tmp/extended.json
 ```
+
+The third schema is an application's: marks the library has never heard of,
+one declaring how it looks and one saying nothing at all. Both have to build
+an editor — the second by falling back, out loud.
 
 ## Notes on the setup
 

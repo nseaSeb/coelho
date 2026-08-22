@@ -173,6 +173,33 @@ defmodule Coelho.Schema do
   @spec default() :: t()
   def default, do: Coelho.Schema.Default.schema()
 
+  # Which fields of a built spec a declaration key is responsible for. Only
+  # `:content` answers for two, because the parsed expression and the source
+  # it was parsed from have to move together.
+  @node_declares [
+    content: [:content_source, :content],
+    group: [:group],
+    marks: [:marks],
+    attrs: [:attrs],
+    inline: [:inline],
+    text: [:text],
+    void: [:void],
+    class: [:class],
+    editor_attrs: [:editor_attrs],
+    render: [:render],
+    render_inline: [:render_inline],
+    to_text: [:to_text],
+    parse: [:parse]
+  ]
+
+  @mark_declares [
+    attrs: [:attrs],
+    class: [:class],
+    editor_attrs: [:editor_attrs],
+    render: [:render],
+    parse: [:parse]
+  ]
+
   @doc """
   Adds nodes and marks to an existing schema.
 
@@ -193,16 +220,27 @@ defmodule Coelho.Schema do
       )
 
   Additions keep their declaration order, after what was already there.
-  Redeclaring an existing name replaces it, which is how the default
-  schema's rendering or attributes get adjusted without a fork.
+
+  ## Redeclaring a name
+
+  Redeclaring an existing name **adjusts** it: what the declaration names is
+  taken from the declaration, and what it leaves out is kept from the spec
+  already there. Giving the shipped `bold` the class of a theme is a line,
+  and it keeps the `parse: ~w(strong b)` it was shipped with:
+
+      Coelho.Schema.extend(schema, marks: [bold: [class: "font-bold"]])
+
+  A whole declaration key is the unit — `attrs: [level: …]` replaces the
+  attribute map rather than merging into it, because an attribute that can
+  only be added and never taken away is not an override.
   """
   @spec extend(t(), keyword()) :: t()
   def extend(%__MODULE__{} = schema, opts) when is_list(opts) do
     node_decls = Keyword.get(opts, :nodes, [])
     mark_decls = Keyword.get(opts, :marks, [])
 
-    nodes = Map.merge(schema.nodes, Map.new(node_decls, fn {n, d} -> {n, build_node(n, d)} end))
-    marks = Map.merge(schema.marks, Map.new(mark_decls, fn {n, d} -> {n, build_mark(n, d)} end))
+    nodes = redeclare(schema.nodes, node_decls, &build_node/2, @node_declares)
+    marks = redeclare(schema.marks, mark_decls, &build_mark/2, @mark_declares)
 
     extended = %{
       schema
@@ -222,6 +260,33 @@ defmodule Coelho.Schema do
   end
 
   defp append_new(existing, added), do: existing ++ Enum.reject(added, &(&1 in existing))
+
+  # A redeclared name keeps what its declaration does not mention. The whole
+  # spec is built anyway, so a declaration is checked the same way whether
+  # the name is new or not; the built one is then laid over the existing one
+  # key by key.
+  #
+  # Replacing outright is what this used to do, and it lost silently: an
+  # application redeclaring `bold` to give it a class got a mark with no
+  # `parse:` at all, so a `<strong>` pasted out of a word processor came in
+  # as plain text with nothing said about it.
+  defp redeclare(existing, decls, build, declares) do
+    Enum.reduce(decls, existing, fn {name, decl}, acc ->
+      Map.put(acc, name, adjust(Map.get(acc, name), build.(name, decl), decl, declares))
+    end)
+  end
+
+  defp adjust(nil, built, _decl, _declares), do: built
+
+  defp adjust(existing, built, decl, declares) do
+    Enum.reduce(declares, existing, fn {key, fields}, acc ->
+      if Keyword.has_key?(decl, key) do
+        Enum.reduce(fields, acc, &Map.put(&2, &1, Map.fetch!(built, &1)))
+      else
+        acc
+      end
+    end)
+  end
 
   @doc """
   Narrows a schema to a subset of its nodes and marks.
@@ -401,6 +466,14 @@ defmodule Coelho.Schema do
   Nodes and marks are emitted as ordered pairs rather than objects: node
   order carries meaning in ProseMirror and map key order does not survive a
   round trip through Elixir.
+
+  A `:render` and a `:parse` that are *declarations* rather than functions —
+  `{"mark", []}`, `parse: ["mark"]` — are exported too, as `renderDOM` and
+  `parseDOM`. That is what lets a mark an application added show up in the
+  editor without a line of JavaScript: the browser builds its `toDOM` and
+  `parseDOM` from them when nothing was passed to `createCoelhoHook`. A
+  render function cannot be exported, and neither can a parse rule that
+  extracts with one; those still need their browser half declared by hand.
   """
   @spec to_json(t()) :: map()
   def to_json(%__MODULE__{} = schema) do
@@ -423,6 +496,8 @@ defmodule Coelho.Schema do
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
     |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
+    |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, spec.void))
+    |> put_unless_nil("parseDOM", parse_dom_to_json(spec.parse))
     |> put_when_true("inline", spec.inline)
     |> put_when_true("atom", spec.void)
   end
@@ -432,6 +507,59 @@ defmodule Coelho.Schema do
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
     |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
+    |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, false))
+    |> put_unless_nil("parseDOM", parse_dom_to_json(spec.parse))
+  end
+
+  # A ProseMirror DOMOutputSpec, built here from the same declaration the
+  # server renders through, so the writer sees the element the reader will.
+  # The `0` is ProseMirror's content hole, which a void node has none of.
+  #
+  # The spec's `:class` is deliberately not merged in: it travels in
+  # `editorAttrs` and the browser appends it there, in the order
+  # `Coelho.Render` appends it too — the attribute's class, then this one.
+  defp render_dom_to_json({tag, attrs}, void) when is_binary(tag) and is_list(attrs) do
+    case dom_attrs(attrs) do
+      {:ok, exported} -> [tag, exported] ++ if(void, do: [], else: [0])
+      :error -> nil
+    end
+  end
+
+  defp render_dom_to_json(_render, _void), do: nil
+
+  # The values `Coelho.Render.attributes/1` accepts, in the DOM's own
+  # spelling: `false` and `nil` write no attribute at all, and a bare one is
+  # the empty string — `setAttribute("open", "")` is what draws
+  # `<details open>`. Only a value neither half could write is refused, and
+  # refusing it here means the browser falls back and says so rather than
+  # exporting half an element.
+  defp dom_attrs(attrs) do
+    Enum.reduce_while(attrs, {:ok, %{}}, fn
+      {name, _value}, _acc when not is_binary(name) ->
+        {:halt, :error}
+
+      {_name, value}, acc when value in [nil, false] ->
+        {:cont, acc}
+
+      {name, true}, {:ok, acc} ->
+        {:cont, {:ok, Map.put(acc, name, "")}}
+
+      {name, value}, {:ok, acc} when is_binary(value) or is_number(value) or is_atom(value) ->
+        {:cont, {:ok, Map.put(acc, name, to_string(value))}}
+
+      _other, _acc ->
+        {:halt, :error}
+    end)
+  end
+
+  # The import rules, in the browser's shape. A rule extracting with a
+  # function is left out rather than guessed at — it is the one that knows
+  # what an import has to tolerate, and only Elixir can run it.
+  defp parse_dom_to_json(rules) do
+    case for({tag, attrs} <- rules, is_map(attrs), do: [tag, attrs]) do
+      [] -> nil
+      exported -> exported
+    end
   end
 
   # `:class` is exported alongside the editor-only attributes rather than on
@@ -582,7 +710,12 @@ defmodule Coelho.Schema do
 
   @limit_keys [:max_nodes, :max_depth, :max_text_length]
 
-  defp build_limits(base, given) do
+  # Public for `Coelho.Document.sanitize/3`, which takes the same keyword
+  # list and has to check it the same way, and for nobody else: a schema is
+  # declared with `new/1`, `extend/2` and `restrict/2`.
+  @doc false
+  @spec build_limits(limits(), keyword()) :: limits()
+  def build_limits(base, given) do
     Enum.reduce(given, base, fn {key, value}, acc ->
       unless key in @limit_keys do
         raise ArgumentError,

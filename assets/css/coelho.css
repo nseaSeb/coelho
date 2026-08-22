@@ -26,6 +26,8 @@
   --coelho-radius: 6px;
   --coelho-gap: 8px;
   --coelho-pad: 12px;
+  --coelho-height: auto;
+  --coelho-max-height: none;
 
   color: var(--coelho-text);
   display: flex;
@@ -161,12 +163,26 @@
 
 /* -- The editor ---------------------------------------------------------- */
 
+/* An editor that grows with its text pushes the buttons that save it off
+ * the bottom of the screen, and terms and conditions are several thousand
+ * characters of that. `--coelho-max-height` lets it grow to a point and
+ * scroll after it; `--coelho-height` fixes it outright. Both default to
+ * what the editor did before they existed.
+ *
+ * `background` and `color` go together: an application that gives
+ * `--coelho-surface` the colour of its own theme and leaves the text to be
+ * inherited gets whatever the page happened to set — light text on a light
+ * field is a box that looks empty while holding a thousand words. */
 .coelho-content .ProseMirror {
   background: var(--coelho-surface);
   border: 1px solid var(--coelho-border);
   border-radius: var(--coelho-radius);
+  color: var(--coelho-text);
+  height: var(--coelho-height);
+  max-height: var(--coelho-max-height);
   min-height: 8rem;
   outline: none;
+  overflow-y: auto;
   padding: var(--coelho-pad);
 }
 
@@ -319,8 +335,23 @@
  *
  * Both halves then emit that class, so these rules stay the application's. */
 
+/* The dark palette is all or nothing, and `data-coelho-theme` is how an
+ * application says which. Any value at all turns the automatic switch off
+ * and leaves the tokens as they were declared; `dark` asks for these
+ * whatever the machine prefers.
+ *
+ * All or nothing because it cannot be half: a rule setting `--coelho-text`
+ * on the element beats a value the element merely inherited, whatever
+ * either one's specificity, so an application that plugs its own palette in
+ * from further up the page gets its surface and our text — light on light,
+ * a field that looks blank while holding a thousand words. Weakening this
+ * selector does not fix that; it only moves which half is lost. Opting out
+ * does, and it is one attribute:
+ *
+ *   <.coelho_editor field={@form[:body]} data-coelho-theme="dark" />
+ */
 @media (prefers-color-scheme: dark) {
-  .coelho:not([data-coelho-theme="light"]) {
+  .coelho:not([data-coelho-theme]) {
     --coelho-text: #f4f4f5;
     --coelho-muted: #a1a1aa;
     --coelho-border: #3f3f46;
@@ -329,4 +360,14 @@
     --coelho-accent: #60a5fa;
     --coelho-danger: #f87171;
   }
+}
+
+.coelho[data-coelho-theme="dark"] {
+  --coelho-text: #f4f4f5;
+  --coelho-muted: #a1a1aa;
+  --coelho-border: #3f3f46;
+  --coelho-surface: #18181b;
+  --coelho-raised: #27272a;
+  --coelho-accent: #60a5fa;
+  --coelho-danger: #f87171;
 }

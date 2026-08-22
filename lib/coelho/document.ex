@@ -215,6 +215,10 @@ defmodule Coelho.Document do
       `javascript:` href becomes plain text
     * a node whose type is unknown, or whose content cannot satisfy its
       content expression, is dropped whole, along with the text inside it
+    * a document over the schema's bounds is **cut to fit** them: text past
+      `:max_text_length` is truncated, nodes past `:max_nodes` are cut off,
+      and what is nested deeper than `:max_depth` is dropped — the rest of
+      the document stays either way
     * a document that cannot be repaired at all becomes `Coelho.empty/1`
 
   A document stamped with another schema version is repaired against this
@@ -229,13 +233,40 @@ defmodule Coelho.Document do
       Coelho.Document.sanitize(row.body, MyApp.RichText.schema())
       |> Coelho.Render.to_html(MyApp.RichText.schema())
 
+  ## Bounds this call does not want
+
+  `:limits` overrides the schema's for this call alone. A bound is a bound
+  on *writing* — the browser posts into a hidden field no `maxlength`
+  constrains, which is what `:max_text_length` is there to refuse — and
+  reading is a different question: what is already stored is stored, and
+  cutting it to fit on the way to the page loses text nobody asked to lose.
+
+      Coelho.Document.sanitize(row.body, schema, limits: [max_text_length: :infinity])
+
+  So an application that wants the structure cleaned and the length left
+  alone says so here, instead of keeping a second schema per field to
+  sanitise against. Judging the length itself is then its own to do, with
+  the whole document in hand to do it on.
+
   """
-  @spec sanitize(term(), Schema.t()) :: map()
-  def sanitize(document, %Schema{} = schema) do
+  @spec sanitize(term(), Schema.t(), keyword()) :: map()
+  def sanitize(document, %Schema{} = schema, opts \\ []) do
+    schema = with_limits(schema, Keyword.get(opts, :limits, []))
+
     document
     |> reshape(schema.limits.max_depth, 0)
+    |> trim(schema.limits, {0, 0})
+    |> elem(0)
     |> repair(schema, @sanitize_passes)
   end
+
+  # The fingerprint is deliberately left as the declared schema's: it names
+  # the vocabulary, which this has not touched, and re-stamping would hash
+  # the whole export on a path that runs once per rendered document.
+  defp with_limits(schema, []), do: schema
+
+  defp with_limits(schema, given),
+    do: %{schema | limits: Schema.build_limits(schema.limits, given)}
 
   @doc """
   The number of characters a writer typed.
@@ -478,10 +509,22 @@ defmodule Coelho.Document do
   defp reshape_mark(mark) when is_map(mark), do: reshape_field(mark, "attrs", &is_map/1, %{})
   defp reshape_mark(_mark), do: %{}
 
+  # An empty map is what `reshape/3` answers with for a child it cannot keep
+  # at all: nested past `:max_depth`, or not a map to begin with. Dropping it
+  # here rather than leaving it in the content is what makes the depth bound
+  # *cut to fit* like the other two — left in, it is still a node at a depth
+  # the bound refuses, so `check_limits/2` fails at the root, and the only
+  # repair at the root is replacing the document. One bullet indented a level
+  # too far took every paragraph beside it.
   defp reshape_content(node, max_depth, depth) do
     case Map.fetch(node, "content") do
       {:ok, content} when is_list(content) ->
-        Map.put(node, "content", Enum.map(content, &reshape(&1, max_depth, depth + 1)))
+        kept =
+          content
+          |> Enum.map(&reshape(&1, max_depth, depth + 1))
+          |> Enum.reject(&(&1 == %{}))
+
+        Map.put(node, "content", kept)
 
       {:ok, _other} ->
         Map.delete(node, "content")
@@ -655,6 +698,80 @@ defmodule Coelho.Document do
   end
 
   # -- Limits ---------------------------------------------------------------
+
+  # What `sanitize/3` does about a document over the bounds, and it is worth
+  # saying why it is not simply left to the repair below. A bound is
+  # reported with an empty path — it is the *document* that is too long, no
+  # node in it is — and the only repair at the root is replacing the root.
+  # So an over-long document came back empty: every paragraph of a
+  # thirteen-thousand-character terms and conditions thrown away because the
+  # schema said twelve thousand, and the length guard that measured what
+  # came back then saw zero and said nothing.
+  #
+  # Cutting to fit is the repair that loses least. `reshape/3` makes the same
+  # one for `:max_depth`, by dropping what is nested past it.
+  #
+  # The count is `check_limits/2`'s, node for node — the empty maps
+  # `reshape/3` leaves behind included — or the trimmed document would fail
+  # the check it was trimmed to pass and be emptied after all.
+  defp trim(node, limits, {nodes, text} = acc) when is_map(node) do
+    value = Map.get(node, "text")
+    room = room(limits.max_text_length, text)
+
+    cond do
+      over?(nodes + 1, limits.max_nodes) ->
+        {nil, acc}
+
+      is_binary(value) and room == 0 ->
+        {nil, acc}
+
+      is_binary(value) ->
+        {kept, acc} = keep_text(node, value, room, {nodes + 1, text})
+        trim_content(kept, limits, acc)
+
+      true ->
+        trim_content(node, limits, {nodes + 1, text})
+    end
+  end
+
+  defp trim(node, _limits, acc), do: {node, acc}
+
+  defp room(:infinity, _text), do: :infinity
+  defp room(max, text), do: max(max - text, 0)
+
+  defp keep_text(node, value, :infinity, {nodes, text}),
+    do: {node, {nodes, text + String.length(value)}}
+
+  defp keep_text(node, value, room, {nodes, text}) do
+    length = String.length(value)
+
+    if length <= room do
+      {node, {nodes, text + length}}
+    else
+      {Map.put(node, "text", String.slice(value, 0, room)), {nodes, text + room}}
+    end
+  end
+
+  # A child dropped for the node bound takes its siblings with it, since
+  # nothing after it would fit either. Saying so with a reduce that keeps
+  # answering `nil` is the same answer for a fraction of the words.
+  defp trim_content(node, limits, acc) do
+    case Map.get(node, "content") do
+      children when is_list(children) ->
+        {kept, acc} =
+          Enum.reduce(children, {[], acc}, fn child, {kept, acc} ->
+            case trim(child, limits, acc) do
+              {nil, acc} -> {kept, acc}
+              {child, acc} -> {[child | kept], acc}
+            end
+          end)
+
+        {Map.put(node, "content", Enum.reverse(kept)), acc}
+
+      _other ->
+        {node, acc}
+    end
+  end
 
   # The bound has to be checked before validation, not during it: a document
   # arrives in a hidden form field with no `maxlength` to speak of, and

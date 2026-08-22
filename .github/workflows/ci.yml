@@ -244,7 +244,8 @@ jobs:
       # toDOM/parseDOM are functions and live in assets/js/coelho.js. This
       # feeds the real exported JSON to the real browser code and builds an
       # actual ProseMirror schema — the drift test in the library only
-      # compares names.
+      # compares names. `extended.json` is an application's schema, with
+      # marks the library has never heard of.
       - name: Check both halves agree
         working-directory: demo
         run: |
@@ -252,6 +253,5 @@ jobs:
           # directory needs the modules reachable by walking up from it.
           ln -sfn "$PWD/node_modules" ../assets/node_modules
           mix deps.get
-          mix run -e 'File.write!("schema.json", JSON.encode!(Coelho.Schema.to_json(Coelho.Schema.default())))'
-          mix run -e 'File.write!("document.json", JSON.encode!(Coelho.empty()))'
-          node priv/check/schema_bridge.mjs schema.json document.json
+          mix run priv/check/export_schemas.exs schema.json document.json extended.json
+          node priv/check/schema_bridge.mjs schema.json document.json extended.json
