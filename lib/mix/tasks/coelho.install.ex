@@ -36,7 +36,7 @@ defmodule Mix.Tasks.Coelho.Install do
   ## Options
 
     * `--dry-run` — say what would change and change nothing
-    * `--yes` — do not ask before running `npm install`
+    * `--yes` — do not ask before installing the browser packages
     * `--no-npm` — print the command instead of running it
     * `--no-migration` — skip the attachments table
 
@@ -82,14 +82,44 @@ defmodule Mix.Tasks.Coelho.Install do
 
   # -- npm ------------------------------------------------------------------
 
+  # Which package manager the application uses, read off the lockfile beside
+  # its assets rather than assumed. Installing with npm into an application
+  # that uses pnpm leaves two layouts of `node_modules` in one project, and
+  # the one that breaks is whichever esbuild does not resolve through — a
+  # failure that surfaces inside `coelho.js` at mount, a long way from here.
+  @managers [
+    {"pnpm-lock.yaml", "pnpm --dir assets add"},
+    {"yarn.lock", "yarn --cwd assets add"},
+    {"bun.lockb", "bun add --cwd assets"},
+    {"package-lock.json", "npm install --prefix assets"}
+  ]
+
+  @doc """
+  The install command for this application, and the manager it names.
+
+  Read off the lockfile: `assets/` first, since that is where a Phoenix
+  application keeps its browser packages, then the project root for one that
+  keeps them there. npm when nothing says otherwise, which is what a
+  freshly generated application has.
+  """
+  @spec installer() :: {String.t(), String.t()}
+  def installer do
+    Enum.find_value(@managers, {"npm", "npm install --prefix assets"}, fn {lock, command} ->
+      if File.exists?(Path.join("assets", lock)) or File.exists?(lock) do
+        {command |> String.split(" ") |> hd(), command}
+      end
+    end)
+  end
+
   defp packages(opts) do
     args = Enum.map(packages(), fn {name, requirement} -> name <> "@" <> requirement end)
-    command = "npm install --prefix assets " <> Enum.join(args, " ")
+    {manager, installer} = installer()
+    command = installer <> " " <> Enum.join(args, " ")
 
     cond do
       installed?() -> say(:kept, "assets/package.json", "the browser packages are already there")
       mismatched() != [] -> say(:todo, "assets/package.json", disagreement(command))
-      run_npm?(opts, args) -> install_packages(command, length(args))
+      run_npm?(opts, args, manager) -> install_packages(command, length(args), manager)
       true -> say(:todo, "assets/package.json", "run: " <> command)
     end
   end
@@ -99,18 +129,19 @@ defmodule Mix.Tasks.Coelho.Install do
       Enum.join(mismatched(), ", ") <> " — the hook needs what is below; run: " <> command
   end
 
-  defp run_npm?(opts, args) do
+  defp run_npm?(opts, args, manager) do
     opts[:npm] and not opts[:dry_run] and
-      (opts[:yes] or Mix.shell().yes?("Install #{length(args)} browser packages with npm?"))
+      (opts[:yes] or Mix.shell().yes?("Install #{length(args)} browser packages with #{manager}?"))
   end
 
-  # npm exits non-zero for a network that is not there, a registry that says
-  # no, a version that will not resolve. Discarding that told the reader the
-  # editor would render with none of its packages present.
-  defp install_packages(command, count) do
+  # A package manager exits non-zero for a network that is not there, a
+  # registry that says no, a version that will not resolve. Discarding that
+  # told the reader the editor would render with none of its packages
+  # present.
+  defp install_packages(command, count, manager) do
     case Mix.shell().cmd(command) do
       0 -> say(:done, "assets/package.json", "installed #{count} packages")
-      status -> say(:todo, "assets/package.json", "npm exited #{status}; run: " <> command)
+      status -> say(:todo, "assets/package.json", "#{manager} exited #{status}; run: " <> command)
     end
   end
 

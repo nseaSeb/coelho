@@ -123,8 +123,13 @@ everything is already there — and it says what to do rather than guessing when
 your `app.js` is not shaped the way it expects. `--dry-run` reports without
 writing.
 
-The npm packages come from Coelho's own `peerDependencies`, so the list cannot
-drift from what the hook actually imports.
+The browser packages come from Coelho's own `peerDependencies`, so the list
+cannot drift from what the hook actually imports — and they are installed
+with the package manager your application already uses, read off its
+lockfile: `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb` or `package-lock.json`,
+in `assets/` or at the root. Installing with one manager into a project that
+uses another leaves two layouts of `node_modules` in one application, and
+the one that breaks is whichever esbuild does not resolve through.
 
 One thing it checks without touching: esbuild resolves `coelho.js`'s bare
 imports from `deps/coelho/`, which never reaches `assets/node_modules` on its
@@ -746,6 +751,11 @@ npm install @nseaprotector/acme-script prosemirror-state prosemirror-view \
   prosemirror-model prosemirror-keymap prosemirror-commands \
   prosemirror-history prosemirror-schema-list orderedmap
 ```
+
+`pnpm add` or `yarn add` where that is what the application uses — Coelho
+never calls a package manager itself, it declares what the hook imports as
+`peerDependencies` and `mix coelho.install` runs whichever one your lockfile
+names.
 
 The schema travels to the browser in a `data-` attribute, so both halves
 build from the same declaration. The one thing Elixir cannot express is how

@@ -823,13 +823,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # schema declares is a working button.
     @node_commands ~w(heading paragraph code_block blockquote bullet_list ordered_list horizontal_rule)
 
-    @doc """
-    The node names the toolbar accepts as commands.
-
-    Public so that the hook's own list can be checked against it: the two
-    are kept by hand, in two languages, and nothing else would notice them
-    drifting apart.
-    """
+    # The node names the toolbar accepts as commands. Reachable so that the
+    # hook's own list can be checked against it — the two are kept by hand,
+    # in two languages, and nothing else would notice them drifting apart —
+    # and for nobody else: what an application needs to know about the
+    # toolbar is in `coelho_editor/1`'s own documentation.
+    @doc false
     @spec node_commands() :: [String.t()]
     def node_commands, do: @node_commands
 
