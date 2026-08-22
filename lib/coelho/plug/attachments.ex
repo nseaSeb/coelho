@@ -351,22 +351,35 @@ if Code.ensure_loaded?(Plug) do
 
     defp sanitise(nil), do: "download"
 
-    # Without `/u`, deliberately, and it is the same lesson as the type above.
+    # Kept byte by byte against a list written out here, and not by a regex.
+    #
     # A filename is whatever bytes the uploader's browser sent — a form
     # submitted as latin-1 sends `café.pdf` as five bytes that are not valid
-    # UTF-8 — and a unicode-mode regex *raises* on those rather than failing
-    # to match, which turns every fetch of that attachment into a 500. Byte
-    # mode strips them instead, which is what a header value can carry
-    # anyway: `\w` here is ASCII, so nothing outside it survives to be
-    # quoted, escaped or newline-injected.
+    # UTF-8. A unicode-mode regex *raises* on those, turning every fetch of
+    # that attachment into a 500; a byte-mode one does not raise, but what it
+    # does with them is not the same everywhere: the same `String.replace/3`
+    # strips the stray byte on one machine and keeps it on another, which CI
+    # caught after a green run locally. A header value is not the place to
+    # find out which build of PCRE is installed.
+    #
+    # So the allowed bytes are named. Nothing outside them survives to be
+    # quoted, escaped, or turned into a second header.
     defp sanitise(filename) do
       filename
       |> Path.basename()
-      |> String.replace(~r/[^\w.\- ]/, "")
+      |> keep_named_bytes()
       |> case do
         "" -> "download"
         name -> name
       end
+    end
+
+    defp keep_named_bytes(name) do
+      for <<byte <- name>>, named_byte?(byte), into: "", do: <<byte>>
+    end
+
+    defp named_byte?(byte) do
+      byte in ?a..?z or byte in ?A..?Z or byte in ?0..?9 or byte in ~c"._- "
     end
 
     defp resolve({module, function, args}), do: apply(module, function, args)

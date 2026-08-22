@@ -409,6 +409,12 @@ defmodule Coelho.Plug.AttachmentsTest do
       assert conn.status == 200
       assert [disposition] = get_resp_header(conn, "content-disposition")
       assert disposition == ~s(attachment; filename="caf.pdf")
+
+      # Byte for byte, because "it looks right" is what let a stray 0xE9
+      # through on Linux while it was stripped on macOS — the same call, the
+      # same Elixir, a different build of the regex engine underneath.
+      assert String.valid?(disposition)
+      refute disposition =~ <<0xE9>>
     end
   end
 
