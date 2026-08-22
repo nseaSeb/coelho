@@ -458,6 +458,24 @@ entry in `:labels` and `:icons`. A level button shows its words rather than
 a drawing unless you pass one: six H's differing by a numeral are six
 buttons nobody can tell apart at 20px.
 
+### What a toolbar command is
+
+Four kinds, and the list is not arbitrary:
+
+| Kind | Examples | Where it comes from |
+| --- | --- | --- |
+| A mark | `bold`, and any mark your schema declares | the schema, whatever it declares |
+| A block | `heading`, `blockquote`, `bullet_list` | a closed list: each kind of block takes its own verb |
+| A value | `align_center`, `heading_3` | the value in the name, checked against the attribute's validator |
+| An act | `undo`, `link`, `caption`, `{"insert", …}` | one verb, nothing for the schema to decide |
+
+Every one of them is filtered by asking your schema rather than a list kept
+beside it, so a button is rendered only where its command can run and only
+with a value the server would accept. What is *not* a command — a menu, a
+picker, a suggestion list filtered as you type — has a seam instead: an
+event, `Coelho.LiveView.insert_node/3`, a node view. `CONTRIBUTING.md` has
+the rule in full, and what it refuses.
+
 ### A variable, and anything else that must not be split
 
 A placeholder written as text is not safe in a document: text is a tree, so

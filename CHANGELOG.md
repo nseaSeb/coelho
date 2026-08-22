@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### What may become a toolbar command, written down
+
+The list of node commands has been called closed twice and opened twice —
+for heading levels, then for inserting an inline void node — each time on a
+good argument. `CONTRIBUTING.md` now carries the rule those two openings were
+really applying, so it answers before the next argument starts: a command is
+a verb the hook can run for a whole class of schema declarations, with no
+decision left to the application. Four questions decide it, the naming
+follows from whether the value is scalar and closed, and what will never be
+one — a menu, a picker, a suggestion list filtered as the writer types — has
+a seam instead: an event, `Coelho.LiveView.insert_node/3`, a node view.
+
+The README gains the four kinds of command as a table, and `:toolbar`'s own
+documentation names the insert entry it had been missing.
+
 ## 0.13.0 — 2026-08-22
 
 ### The bytes are promised, and now they are written down

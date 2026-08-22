@@ -59,6 +59,73 @@ Roughly in order of how much they would help someone using this:
 - **Real use.** The most valuable contribution is putting it in something and
   saying what broke.
 
+## What may become a toolbar command
+
+The list of node commands has been called closed twice and opened twice —
+once for heading levels, once for inserting an inline void node — each time
+on a good argument. A third request is coming, so here is the rule the two
+openings were really applying, written down so it answers before the
+argument starts.
+
+**A command is a verb the hook can run for a whole class of schema
+declarations, with no decision left to the application.**
+
+Four questions decide it, and all four have to answer yes.
+
+**1. Is there one verb, and only one?** A block needs a decision about what
+happens to the selection and to what surrounds it, and every kind of block
+needs a different one — a heading replaces the block type, a quote wraps,
+a list wraps and lifts, a rule is inserted between blocks. That is why node
+commands are a closed list and why a node an application adds gets no verb
+with it. An inline atom is the opposite: it goes where the cursor is,
+replacing the selection if there is one, and there is no second reading of
+what a click should do. `inline: true, void: true` *is* the verb.
+
+**2. Can the schema be asked whether it applies?** Every command is filtered
+by asking the declaration, never a list of names kept beside it: a mark
+exists; some node declares `align` and its validator accepts this value;
+`heading` declares `:level` and its validator accepts this number; a node is
+an inline atom and its attributes accept what the entry names. A command
+whose applicability cannot be asked of the schema is a button offered where
+it does nothing, or one that writes what the server then refuses — and both
+lose what the writer typed.
+
+**3. Does every value that reaches the document pass the schema's own
+validator first?** Before the button is rendered, not after the click. This
+is what stops the toolbar from being a second, looser way into the document
+than the editor itself.
+
+**4. Is what it does a state, or an act?** A command that turns something on
+reports `aria-pressed` and reads as pressed when it is in force; a command
+that *does* something — `undo`, `caption`, `insert` — reports nothing,
+because there is nothing about it to be in force. Both are commands; a
+command that cannot answer which it is has not been thought through.
+
+### How it is named
+
+A value that is scalar and closed is baked into the name — `align_center`,
+`heading_3` — because the name is then the identity `:labels` and `:icons`
+are keyed by, and nothing new has to be learned. A value that is open or
+structured takes an entry with options — `{"insert", node: …, attrs: …}` —
+and carries its own `:label` and `:icon`, because six buttons differing only
+in an attribute cannot share a key.
+
+### What will never be one
+
+Anything that needs application state, or a decision the schema cannot
+express: a menu, a picker, a modal, a suggestion list filtered as the writer
+types, "a table with N columns". Those are the application's, and they have
+seams rather than commands — an event the hook dispatches, a node the server
+inserts through `Coelho.LiveView.insert_node/3`, a node view passed to
+`createCoelhoHook`. The seam is the honest answer: it says the decision is
+yours, where a command would pretend the library had made it.
+
+Applied to the request already asked for — a character that opens a list the
+application supplies, filtered as the writer types — the rule says no, and
+says what instead: the list is the application's to draw and its choice is
+the application's to make, and the node it settles on goes in through the
+insert it already has.
+
 ## Scope
 
 Coelho stores and validates a document, renders it, and gets one into and out

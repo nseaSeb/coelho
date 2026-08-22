@@ -441,7 +441,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
           "schema declares is a command, as are `align_left`, `align_center`, " <>
           "`align_right` and `align_justify` where a node declares `align`, and " <>
           "`heading_1` to `heading_6` where its `:level` accepts the number — " <>
-          "`heading` on its own makes the level the schema calls default"
+          "`heading` on its own makes the level the schema calls default. A " <>
+          "`{\"insert\", node: …, attrs: …, label: …}` entry puts a declared inline " <>
+          "void node at the cursor, and `{\"insert\", text: …}` puts characters " <>
+          "there. Every command is filtered against the schema: a button is " <>
+          "rendered only where its command can run, and only with a value the " <>
+          "attribute's own validator accepts"
     )
 
     attr(:labels, :map,
