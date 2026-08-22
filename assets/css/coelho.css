@@ -32,10 +32,15 @@
 
   /* Where the counter sits. It is a flex item of this column like the
    * toolbar and the editing area, so an application moves it by order
-   * rather than by re-stating the rule: `2` puts it under the area it
-   * counts, and `--coelho-counter-inset: 0` takes it back to the left
-   * edge. The defaults are what the editor did before they existed. */
-  --coelho-counter-order: 0;
+   * rather than by re-stating the rule: `0` puts it back between the
+   * toolbar and the area, where it used to be, and
+   * `--coelho-counter-inset: 0` takes it to the left edge.
+   *
+   * Under the text and against the right edge by default: a number counting
+   * what has been typed belongs at the end of what it counts, and between
+   * the toolbar and the area it separated the buttons from the thing they
+   * command. */
+  --coelho-counter-order: 2;
   --coelho-counter-inset: auto;
 
   color: var(--coelho-text);
@@ -206,9 +211,12 @@
   pointer-events: none;
 }
 
+/* After the editing area like the counter, and before it: an editor with an
+ * upload shows the file input, then the count of what has been typed. */
 .coelho-file-input {
   color: var(--coelho-muted);
   font-size: 0.875em;
+  order: 1;
 }
 
 /* -- What the document is made of ---------------------------------------- */

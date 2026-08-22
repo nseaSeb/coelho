@@ -224,6 +224,51 @@ const run = async () => {
       assert.equal(spaces(await page.textContent(EDITOR)), "ABC!DEF");
     });
 
+    await test("the round trip is spaced out by the debounce, and still arrives", async () => {
+      // `phx-debounce` is read off the element that emits, so it has to be on
+      // the hidden input itself — the form around the editor and the root of
+      // the component are both out of reach. This editor asks for 120ms.
+      assert.equal(await page.getAttribute("#post_body", "phx-debounce"), "120");
+
+      // What is asserted is that it arrives, not that it was late: a negative
+      // read races the debounce against the round trips this very check
+      // makes, and on a loaded machine it fails while claiming the debounce
+      // is broken. That it delays at all is settled above, by the attribute
+      // — LiveView's own behaviour, not something to time from here.
+      await typeInEditor(page, "");
+      await page.keyboard.type("spaced");
+
+      assert.match(await paneEventually(page, "stored", "spaced"), /"type":"doc"/);
+    });
+
+    await test("a document the server puts back is taken, edits and all", async () => {
+      // The other side of the echo guard. An application that assigns a
+      // stored document back under a mounted editor — Discard, reset,
+      // moderation — sends something this editor may well have held earlier
+      // in the session, and it is a decision, not an answer to a keystroke.
+      // Told apart by whether the server was still behind when it spoke.
+      await typeInEditor(page, "typed and then discarded");
+      await paneEventually(page, "stored", "discarded");
+
+      await page.click("#post-revert");
+      await settle(page);
+
+      const text = spaces(await page.textContent(EDITOR));
+
+      assert.ok(
+        !text.includes("typed and then discarded"),
+        `the editor kept what the server told it to drop: ${JSON.stringify(text.slice(0, 120))}`
+      );
+      assert.match(text, /The document is the storage/);
+
+      // And the field says the same thing, so a submit posts what is shown.
+      const stored_ = await stored(page);
+      assert.ok(
+        JSON.stringify(stored_).includes("The document is the storage"),
+        "the field was left holding the discarded document"
+      );
+    });
+
     await test("a slow echo does not roll the writer back", async () => {
       // The server answers asynchronously, so an echo arriving now may
       // answer a keystroke from several ago. Applying it would put back what

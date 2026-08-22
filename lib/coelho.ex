@@ -257,9 +257,10 @@ defmodule Coelho do
   import does with markup the schema does not know, and for the shape of the
   warnings.
   """
-  @spec from_html(String.t(), Schema.t()) ::
+  @spec from_html(String.t(), Schema.t(), keyword()) ::
           {:ok, map(), [Coelho.HTML.warning()]} | {:error, term()}
-  def from_html(html, schema \\ Schema.default()), do: Coelho.HTML.from_html(html, schema)
+  def from_html(html, schema \\ Schema.default(), opts \\ []),
+    do: Coelho.HTML.from_html(html, schema, opts)
 
   @doc """
   Extracts the plain text of a document, for full text search.

@@ -551,6 +551,26 @@ export const textLength = (document) => {
   return node.content.reduce((total, child) => total + textLength(child), 0);
 };
 
+// What an editor has written, remembered without holding on to it. Two
+// FNV-shaped rounds and the length: enough that two documents of one session
+// colliding is not a thing that happens, and small enough that remembering a
+// long way back costs nothing — which is the point. The memory used to be
+// the documents themselves, so it could only be twenty of them, and a server
+// answering more than twenty keystroke ago was applied as a replacement.
+const digest = (text) => {
+  let hash = 0x811c9dc5;
+  let mixed = 0x9e3779b9;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+
+    hash = Math.imul(hash ^ code, 0x01000193);
+    mixed = Math.imul(mixed ^ code, 0x85ebca6b) + (mixed >>> 7);
+  }
+
+  return `${(hash >>> 0).toString(36)}:${(mixed >>> 0).toString(36)}:${text.length}`;
+};
+
 // Whether the document holds any text at all — the question `doc.textContent`
 // answers by building the whole thing as one string, on every keystroke, only
 // for it to be thrown away. This stops at the first character instead.
@@ -1186,6 +1206,9 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this._input = input;
       this._written = new Set();
       this._writtenOrder = [];
+      this._writtenLimit = 200;
+      this._acknowledged = true;
+      this._pushedBackFor = null;
       this._pending = new Map();
 
       // Everything the hook starts and nobody else will stop. A capture
@@ -1241,13 +1264,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
       // A bounded memory of what this editor has put in the input.
       this.remember = (json) => {
-        if (this._written.has(json)) return;
+        const written = digest(json);
 
-        this._written.add(json);
-        this._writtenOrder.push(json);
+        if (this._written.has(written)) return;
 
-        if (this._writtenOrder.length > 20) this._written.delete(this._writtenOrder.shift());
+        this._written.add(written);
+        this._writtenOrder.push(written);
+
+        if (this._writtenOrder.length > this._writtenLimit) {
+          this._written.delete(this._writtenOrder.shift());
+        }
       };
+
+      this.wrote = (json) => this._written.has(digest(json));
 
       const state = EditorState.create({
         doc: parseDoc(schema, input.value) ?? schema.topNodeType.createAndFill(),
@@ -1308,7 +1337,12 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         // to what they had typed by then.
         this.remember(json);
 
+        this._lastWritten = json;
+
         if (input.value !== json) {
+          // Something the server has not answered yet, so an older copy of it
+          // coming back is an echo rather than a decision.
+          this._acknowledged = false;
           input.value = json;
           input.dispatchEvent(new Event("input", { bubbles: true }));
         }
@@ -1846,7 +1880,10 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // input does not: the server can legitimately replace the document, and
       // when it does the editor has to follow.
       const value = this._input?.value;
-      if (value === undefined || this._written.has(value)) return;
+
+      // Exactly what this editor last put there: the ordinary case, and the
+      // one that must cost nothing.
+      if (value === undefined || value === this._lastWritten) return;
 
       const doc = parseDoc(this._schema, value);
 
@@ -1862,8 +1899,53 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // Validation normalises, so the server's copy is rarely byte-identical
       // to what the editor wrote even when it says the same thing. Comparing
       // documents rather than text is what tells an echo from a replacement.
+      // Same document, whichever way it is spelled: nothing to do, and the
+      // field is deliberately left carrying the server's spelling — writing
+      // ours back would post it, and the server would answer with its own
+      // again, for as long as anyone kept watching.
       if (doc.eq(this._view.state.doc)) {
         this.remember(value);
+
+        // The server has caught up: what it holds is what the editor holds,
+        // whatever either of them calls it. Anything it sends after this is
+        // something it decided, not an answer to a keystroke — and the field
+        // now agrees with the editor, so the fast path above can take it.
+        this._acknowledged = true;
+        this._lastWritten = value;
+        return;
+      }
+
+      // A different document, one this editor wrote, and the server has not
+      // yet answered the latest thing it was sent: an echo of a keystroke the
+      // writer has already moved past. Run back through ProseMirror the
+      // server's copy is spelled the way the editor spells it, so it is
+      // recognised however validation reordered or trimmed it.
+      //
+      // The field is then put back to what the editor holds, which is the
+      // half that was missing: LiveView patches the input with the server's
+      // copy whatever the reason it re-rendered — an upload finishing is
+      // enough — so leaving it is an editor showing one document and a form
+      // holding another, and the next thing to read the field posts the older
+      // one. Found as an attachment inserted by the server vanishing from a
+      // debounced form, seconds after it was inserted.
+      //
+      // `_acknowledged` is what keeps this from swallowing a *decision*. An
+      // application that puts a stored document back — a Discard button, a
+      // reset, a moderation step — sends something this editor may well have
+      // held earlier in the session, and that is a replacement, not an echo.
+      // The difference is not in the document: it is whether the server was
+      // still behind when it spoke.
+      //
+      // And once per value, so that a server insisting on a document the
+      // editor once wrote is obeyed rather than argued with — a second round
+      // for the same answer is the server's, not a race we should keep
+      // running.
+      const ours = this.wrote(value) || this.wrote(JSON.stringify(doc.toJSON()));
+
+      if (ours && !this._acknowledged && this._pushedBackFor !== value) {
+        this._pushedBackFor = value;
+        this.remember(value);
+        this.syncInput();
         return;
       }
 
@@ -1947,6 +2029,8 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this._pendingField = null;
       this._buttons = null;
       this._countOf = null;
+      this._lastWritten = null;
+      this._pushedBackFor = null;
       this._written?.clear();
       this._writtenOrder = [];
       this._pending?.clear();

@@ -427,11 +427,12 @@ component refuses it rather than rendering an editor that goes quiet:
 Name `:flush_event` beside it. A debounce still holding the last edit when
 the element leaves the page loses it, and the flush is what carries it out.
 
-One interaction to measure before shipping both: on a form that also carries
-an `auto_upload`, a debounce still pending on the field was observed to stop
-the change event that starts the upload from taking effect — in all three
-browser engines. The demo therefore uploads without one. Check the pair
-together on your own form before relying on it.
+An upload on the same form is fine — the demo has both. It did not use to
+be: anything re-rendering the form while a change was still pending patched
+the hidden field with the server's older copy, and an attachment the server
+had just inserted vanished from the field seconds later while the editor
+went on showing it. The field now follows the editor whenever it is handed a
+document the editor has already moved past, whatever caused the re-render.
 
 In `assets/js/app.js`:
 
@@ -912,9 +913,28 @@ marks: [bold: [class: "font-bold"]]
 ```
 
 A whole declaration key is the unit — `attrs:` replaces the attribute map
-rather than merging into it. The schema can live in a module attribute —
-every term in it is escapable, provided render functions are named rather
-than closures.
+rather than merging into it.
+
+**Build it once.** A schema is a value with nothing mutable in it, and
+building one costs real time: parsing every content expression, deriving the
+groups and the name tables, exporting it to JSON and hashing that. Put it in
+a module attribute and it is paid at compile time, once, for the life of the
+release — every term in it is escapable, provided render functions are named
+rather than closures:
+
+```elixir
+defmodule MyApp.RichText do
+  @schema Coelho.Schema.extend(Coelho.Schema.default(), marks: [highlight: [render: {"mark", []}]])
+
+  def schema, do: @schema
+end
+```
+
+A function that calls `Schema.extend/2` on every invocation builds a fresh
+schema per rendered document — measured by an application at 110 µs a call
+against 2.8 µs once it was a module attribute, on a page rendering several
+texts. `Coelho.Schema.default/0` is already settled that way, in
+`:persistent_term`.
 
 A `:class` on a node or mark is applied by the server renderer *and*
 exported to the browser, so the writer sees the class the public page will

@@ -260,6 +260,19 @@ if Code.ensure_loaded?(Plug) do
           end
 
         :error ->
+          send_read(conn, storage, key, metadata, options)
+      end
+    end
+
+    # A storage that can read in pieces is chunked rather than buffered: the
+    # whole object on the heap, once per concurrent reader, is the one cost
+    # this path can avoid without the storage having a local file.
+    defp send_read(conn, storage, key, metadata, options) do
+      case Storage.stream(storage, key) do
+        {:ok, chunks} ->
+          conn |> headers(metadata, options) |> send_chunked(200) |> send_pieces(chunks)
+
+        :error ->
           case Storage.read(storage, key) do
             {:ok, bytes} ->
               conn |> headers(metadata, options) |> send_resp(200, bytes) |> halt()
@@ -271,6 +284,32 @@ if Code.ensure_loaded?(Plug) do
               halt_with(conn, 404, "not found")
           end
       end
+    end
+
+    # The status and the headers are already gone by the time a piece fails,
+    # so there is nothing to say about it but stop: the reader gets a body
+    # that ends early, which is what a truncated download is.
+    #
+    # Rescued as well as matched, because the failure a lazy enumerable has —
+    # a socket reset, a credential that expired mid-read — arrives as an
+    # exception rather than as `{:error, _}`. Letting it through would reach
+    # the error handler, which tries to send a response on a connection whose
+    # status is already gone and raises `Plug.Conn.AlreadySentError` over the
+    # top of whatever actually went wrong.
+    defp send_pieces(conn, chunks) do
+      sent =
+        try do
+          Enum.reduce_while(chunks, conn, fn piece, conn ->
+            case chunk(conn, piece) do
+              {:ok, conn} -> {:cont, conn}
+              {:error, _reason} -> {:halt, conn}
+            end
+          end)
+        rescue
+          _error -> conn
+        end
+
+      halt(sent)
     end
 
     # Only on the way to a body: an error response carrying a

@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.11.0 — 2026-08-22
+
+What the audit of 0.9.0 left open, and what an application reported after
+running 0.10.0 in anger.
+
+### The field follows the editor
+
+A debounce and an upload on the same form did not work together, and it was
+not the upload. Read off the socket: the upload completes, the attachment is
+inserted, and then LiveView patches the hidden field with the server's older
+copy — which the editor recognised as something it had written, and
+therefore left alone. The field stayed behind the editor, and the next thing
+to read it, a debounced change or a submit, posted the older document. An
+attachment inserted by the server vanished seconds after appearing.
+
+- The editor now puts the field back whenever it is handed a document it has
+  already moved past, whatever caused the re-render.
+- Told apart from a *decision* by whether the server was still behind when
+  it spoke: an application assigning a stored document back under a mounted
+  editor — a Discard button, a reset, a moderation step — is sending
+  something this editor may well have held earlier in the session, and that
+  is taken, edits and all. It is also pushed back at most once per answer,
+  so a server that insists is obeyed rather than argued with.
+- What the editor has written is remembered as digests rather than as the
+  documents themselves: less memory, and a window of two hundred documents
+  instead of twenty. An echo answering a keystroke from further back than
+  that used to be applied as a replacement, which is a writer rolled back to
+  what they had typed by then.
+
+### The counter sits under the text
+
+`--coelho-counter-order` defaults to `2`, so the counter renders under the
+editing area and against its right edge rather than between the toolbar and
+the area it commands. A number counting what has been typed belongs at the
+end of what it counts. `--coelho-counter-order: 0` puts it back where it
+was, and `--coelho-counter-inset: 0` takes it to the left edge.
+
+### A storage can hand over its bytes in pieces
+
+- `Coelho.Storage` gained an optional **`stream/2`** callback, and
+  `Coelho.Plug.Attachments` answers `send_chunked` when a storage implements
+  it. `read/2` puts the whole object on the heap of whichever process asked,
+  so N concurrent downloads held N copies of it; a storage with a local path
+  was already served by `send_file` and never read into the VM at all.
+- A stream that gives up halfway — a socket reset, a credential that expired
+  mid-read — ends the body rather than the request. The status and the
+  headers are gone by then, so what a raise reaches is an error handler
+  trying to answer a connection already answered.
+
+### An import can skip the reporting
+
+`Coelho.HTML.from_html/3` takes `warnings: false`. Whether an attribute was
+*used* cannot be read off the names that came out — a rule is free to rename
+as it extracts, and the shipped ones do — so the question is asked of the
+rule instead, by taking the attribute away and matching again: one match per
+attribute per element, and the only general way to ask. A migration whose
+warnings nobody will read can now decline to pay for it.
+
+### Said out loud
+
+- **Build the schema once.** Everything derived from a schema is derived when
+  it is built, so a schema is a value to keep in a module attribute rather
+  than rebuild per call — measured by an application at 110 µs a call against
+  2.8 µs once it was. Said in the README and in `Coelho.Schema`.
+- **Why the sixteen walks are not one.** `Coelho.Render.reduce/4` is
+  documented as the fold to write a target on, and nothing in the library
+  uses it. That is not an oversight: validation has to *report* on a node it
+  does not know, sanitisation has to remove it, and
+  `Coelho.Attachments.keys/2` — which decides what gets deleted — is handed
+  rows written under whatever schema was in force years ago. None of the
+  three may raise, and a fold that cannot raise cannot promise a caller that
+  what it holds is a document this schema admits. The two contracts are now
+  written down, and pinned by tests rather than by intention.
+
 ## 0.10.0 — 2026-08-22
 
 Three things an application could not reach from outside `coelho_editor/1`,

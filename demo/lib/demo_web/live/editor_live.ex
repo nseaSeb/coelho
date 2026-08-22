@@ -75,6 +75,36 @@ defmodule DemoWeb.EditorLive do
   # A language switched while someone is writing. The words change; the undo
   # history and the caret must not — which is the whole reason the editor
   # carries two fingerprints rather than one.
+  # The other half of a debounce, and the reason the library asks for the two
+  # together: the timer holding the last edit goes with the element, so what
+  # was typed in the last 120ms would never be sent. The editor pushes it
+  # here instead, on its way out.
+  def handle_event("flush_body", %{"document" => document}, socket) do
+    params = %{"title" => socket.assigns.form[:title].value, "body" => document}
+    changeset = socket.assigns.post |> Post.changeset(params) |> Map.put(:action, :validate)
+
+    {:noreply,
+     socket
+     |> assign_document(Ecto.Changeset.get_field(changeset, :body))
+     |> assign(:errors, document_errors(changeset))
+     |> assign_form(changeset)}
+  end
+
+  # Putting a stored document back under a mounted editor — a Discard, a
+  # reset, a moderation step. The document it sends is one the editor held
+  # earlier in the session, and it is a decision rather than an echo: the
+  # editor has to take it, edits and all.
+  def handle_event("revert_body", _params, socket) do
+    post = socket.assigns.post
+    changeset = Post.changeset(post, %{"title" => post.title, "body" => post.body})
+
+    {:noreply,
+     socket
+     |> assign_document(post.body)
+     |> assign(:errors, [])
+     |> assign_form(changeset)}
+  end
+
   def handle_event("note_locale", _params, socket) do
     {:noreply, update(socket, :note_locale, &if(&1 == :fr, do: :en, else: :fr))}
   end
@@ -306,6 +336,8 @@ defmodule DemoWeb.EditorLive do
           <.coelho_editor
             field={@form[:body]}
             document_schema={Demo.RichText.schema()}
+            debounce={120}
+            flush_event="flush_body"
             placeholder="Write something…"
             field_labels={note_field_labels(@note_locale)}
             toolbar={~w(bold italic strike code link heading heading_2 heading_3 paragraph code_block
@@ -321,6 +353,7 @@ defmodule DemoWeb.EditorLive do
           </p>
 
           <button type="submit">Save</button>
+          <button type="button" id="post-revert" phx-click="revert_body">Discard changes</button>
         </.form>
 
         <section class="pane" id="note">

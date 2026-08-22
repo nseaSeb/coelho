@@ -8,6 +8,15 @@ defmodule Coelho.HTMLWarningsTest do
     warnings
   end
 
+  describe "warnings: false" do
+    test "converts without walking the tree a second time to report on it" do
+      html = "<table><tr><td><p style=\"color:red\">kept</p></td></tr></table>"
+
+      assert {:ok, document, []} = HTML.from_html(html, Schema.default(), warnings: false)
+      assert {:ok, ^document, [_ | _]} = HTML.from_html(html, Schema.default())
+    end
+  end
+
   describe "from_html/2 warnings" do
     test "an element the schema has no rule for is reported, with a count" do
       html = "<table><tr><td>a</td></tr><tr><td>b</td></tr></table>"
