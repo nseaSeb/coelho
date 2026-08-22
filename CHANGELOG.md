@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 — 2026-08-22
 
 A security review of the whole surface — the first one — and what measuring
 things nobody had measured turned up beside it. No vulnerability was found:
@@ -65,7 +65,10 @@ constrains.
 - Serving an attachment whose filename is not valid UTF-8 — a form submitted
   as latin-1 sends `café.pdf` as bytes that are not — **raised**, turning
   every fetch of that file into a 500. The sanitiser's regex was in unicode
-  mode; in byte mode it strips them, which is all a header can carry anyway.
+  mode. Byte mode does not raise, but CI then caught what a green local run
+  could not: the same call strips the stray byte on macOS and keeps it on
+  Linux, and a header value is not the place to find out which build of PCRE
+  is installed. The bytes a filename may carry are written out now.
 - `Coelho.LiveViewTest.type/4`'s `:form` option **could never work**:
   `Phoenix.LiveViewTest.form/3` refuses a hidden input whose value differs
   from the rendered one, and an editor's field is hidden and differs by
