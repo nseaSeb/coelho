@@ -1,6 +1,6 @@
 {
   "name": "coelho",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Browser half of Coelho: builds a ProseMirror editor from the schema Elixir exports",
   "type": "module",
   "main": "js/coelho.js",

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-08-22
 
 ### The bytes are promised, and now they are written down
 
