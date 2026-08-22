@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 — 2026-08-22
 
 A placeholder written as text is not safe in a document. Text is a tree, so
 bolding half of `{{number}}` splits it across two text nodes and every
