@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-08-22
 
 What the audit of 0.9.0 left open, and what an application reported after
 running 0.10.0 in anger.
