@@ -32,6 +32,16 @@ defmodule Coelho.Ash.Type do
   attribute, because that is where Ash puts per-attribute configuration and
   where `Ash.Resource.Info` will show it.
 
+  ## Writing past the cast
+
+  Validation lives in `cast_input/2`, which is what a changeset built from
+  arguments calls. A value set on a changeset directly — `force_change_attribute`
+  and friends — is not cast, here as anywhere in Ash, and `dump_to_native/2`
+  writes what it is given. The row then renders as an error rather than as a
+  page, since `Coelho.Render` raises on a node type the schema does not
+  declare. The atomic path is not affected: `cast_atomic/2` refuses an
+  expression and routes a literal through this type's own validation.
+
   ## Keeping the column you already have
 
   `storage_type/1`, `cast_stored/2`, `cast_input/2`, `dump_to_native/2`,

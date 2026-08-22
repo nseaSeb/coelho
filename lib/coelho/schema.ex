@@ -42,13 +42,24 @@ defmodule Coelho.Schema do
   application thought about them:
 
       Coelho.Schema.new(...,
-        limits: [max_nodes: 500, max_depth: 6, max_text_length: 20_000]
+        limits: [
+          max_nodes: 500,
+          max_depth: 6,
+          max_text_length: 20_000,
+          max_attr_length: 2_000
+        ]
       )
 
   A document arrives from the browser in a hidden form field that no
   `maxlength` constrains, so an unbounded schema is an unbounded allocation
   on input that is untrusted by definition. `default_limits/0` is what a
   schema gets when it says nothing; `:infinity` lifts a bound deliberately.
+
+  `:max_text_length` counts the text a writer typed — the number the
+  editor's counter shows — and `:max_attr_length` bounds each attribute
+  value, which that count deliberately does not see. `:max_depth` applies to
+  an attribute's value as well as to the tree, for a schema declaring an
+  attribute with no validator: those accept anything JSON can express.
 
   ## Narrowing
 
@@ -77,7 +88,8 @@ defmodule Coelho.Schema do
   @type limits :: %{
           max_nodes: pos_integer() | :infinity,
           max_depth: pos_integer() | :infinity,
-          max_text_length: pos_integer() | :infinity
+          max_text_length: pos_integer() | :infinity,
+          max_attr_length: pos_integer() | :infinity
         }
 
   @type t :: %__MODULE__{
@@ -103,7 +115,12 @@ defmodule Coelho.Schema do
   # constrains, so an unbounded schema is an unbounded allocation on input
   # that is untrusted by definition. The defaults are far above any document
   # a person writes and far below what makes validation expensive.
-  @default_limits %{max_nodes: 10_000, max_depth: 100, max_text_length: 1_000_000}
+  @default_limits %{
+    max_nodes: 10_000,
+    max_depth: 100,
+    max_text_length: 1_000_000,
+    max_attr_length: 10_000
+  }
 
   defstruct top_node: :doc,
             fingerprint: 0,
@@ -797,6 +814,7 @@ defmodule Coelho.Schema do
   defp camelize("max_nodes"), do: "maxNodes"
   defp camelize("max_depth"), do: "maxDepth"
   defp camelize("max_text_length"), do: "maxTextLength"
+  defp camelize("max_attr_length"), do: "maxAttrLength"
 
   defp groups_to_json([]), do: nil
   defp groups_to_json(groups), do: Enum.map_join(groups, " ", &Atom.to_string/1)
@@ -958,7 +976,7 @@ defmodule Coelho.Schema do
     raise ArgumentError, "schema version must be a positive integer, got #{inspect(other)}"
   end
 
-  @limit_keys [:max_nodes, :max_depth, :max_text_length]
+  @limit_keys [:max_nodes, :max_depth, :max_text_length, :max_attr_length]
 
   # Public for `Coelho.Document.sanitize/3`, which takes the same keyword
   # list and has to check it the same way, and for nobody else: a schema is

@@ -35,6 +35,23 @@ if Code.ensure_loaded?(Ecto.ParameterizedType) do
         #=>    human: "block 1: unknown node type \\"script\\"",
         #=>    errors: ["content[0]: unknown node type \\"script\\""]]}]
 
+    ## Writing past the cast
+
+    Validation lives in `cast/3`, which is what a changeset built from
+    parameters calls. `Ecto.Changeset.change/2` deliberately does not cast —
+    that is its purpose in Ecto, and it applies here like anywhere else — so
+    a map put through it is written as it stands:
+
+        Ecto.Changeset.change(post, %{body: %{"type" => "nonsense"}})
+
+    is a valid changeset. Nothing checks the document, and the row then
+    renders as an error rather than as a page: `Coelho.Render` raises on a
+    node type the schema does not declare rather than emitting it, which is
+    the loud end of the two possible failures. Use `cast/3`, or hand
+    `change/2` something that has already been through
+    `Coelho.Document.validate/2` — what `Coelho.HTML.from_html/3` returns has
+    been.
+
     ## Loading
 
     Values already in the database are loaded without re-validating them.

@@ -10,6 +10,48 @@ defmodule Coelho.HTMLTest do
 
   defp round_trip(html), do: html |> import_html!() |> Coelho.to_html()
 
+  describe "how long the import takes" do
+    @tag timeout: 20_000
+    test "grows with the size of the fragment, not with its square" do
+      # The `<pre>` pre-pass was a lazy regex, and `.*?` starts its search
+      # again at every `<pre`, running to the end of the input when nothing
+      # closes it: 20 KB of unclosed `<pre>` took 346 ms, and a paste out of
+      # a word processor is a great deal more than 20 KB.
+      #
+      # A ratio rather than a duration: four times the input costs about four
+      # times the time when the work is linear, sixteen when it is the
+      # square, so the line sits halfway between.
+      # Big enough that the baseline is tens of milliseconds: at half a
+      # millisecond it was scheduler noise, and this failed once in four runs
+      # under `max_cases: 16` while passing every time in isolation — a test
+      # that cries wolf about the very thing it exists to watch.
+      small = import_time(40_000)
+      large = import_time(160_000)
+
+      ratio = large / max(small, 1)
+
+      assert ratio < 8,
+             "4x the fragment cost #{Float.round(ratio, 1)}x the time " <>
+               "(#{small}µs then #{large}µs), which is the square creeping back"
+    end
+
+    # The best of three, for the same reason: what is being measured is the
+    # shape of the work, and the fastest run is the one least polluted by
+    # everything else the machine was doing.
+    defp import_time(bytes) do
+      html = String.duplicate("<pre>", div(bytes, 5))
+
+      1..3
+      |> Enum.map(fn _ ->
+        {micro, {:ok, _document, []}} =
+          :timer.tc(fn -> Coelho.HTML.from_html(html, Schema.default(), warnings: false) end)
+
+        micro
+      end)
+      |> Enum.min()
+    end
+  end
+
   describe "blocks and marks" do
     test "maps the tags the schema declares" do
       assert round_trip("<p>Hello <strong>bold</strong> and <em>italic</em>.</p>") ==

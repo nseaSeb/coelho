@@ -51,7 +51,14 @@ jobs:
 
       - run: mix compile --warnings-as-errors
 
+      # With coverage on one of the two, where the threshold in mix.exs turns
+      # "nothing runs this line any more" into a failure rather than into a
+      # number nobody reads.
       - run: mix test
+        if: matrix.elixir != '1.19.5'
+
+      - run: mix test --cover
+        if: matrix.elixir == '1.19.5'
 
   quality:
     name: Credo and Dialyzer

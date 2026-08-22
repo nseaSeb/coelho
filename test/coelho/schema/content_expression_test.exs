@@ -8,6 +8,51 @@ defmodule Coelho.Schema.ContentExpressionTest do
     Expr.matches?(ast, children, fn name, child -> name == child or name == :block end)
   end
 
+  describe "how long it takes" do
+    @tag timeout: 20_000
+    test "grows with the number of children, not with its square" do
+      # The document's own `"block+"` over its own children is the shape that
+      # matters, and stepping the whole reachable set on every pass made the
+      # work the square of the child count: 9 990 siblings — inside every
+      # bound the shipped schema declares — took 8.6 seconds to accept, and
+      # again on every render that sanitises. Stepping only what was reached
+      # since the last pass makes it linear.
+      #
+      # Asserted as a ratio rather than as a duration: a machine's speed is
+      # not the property under test. Four times the children costs about four
+      # times the time when the work is linear, and about sixteen when it is
+      # the square — so the line is drawn halfway between, where no amount of
+      # a busy machine puts a linear run.
+      small = elapsed(2_000)
+      large = elapsed(8_000)
+
+      ratio = large / max(small, 1)
+
+      assert ratio < 8,
+             "4x the children cost #{Float.round(ratio, 1)}x the time " <>
+               "(#{small}µs then #{large}µs), which is the square creeping back"
+    end
+
+    defp elapsed(count) do
+      {:ok, ast} = Expr.parse("block+")
+      children = List.duplicate(:paragraph, count)
+
+      # The best of three: what is being measured is the shape of the work,
+      # and the fastest run is the one least polluted by everything else the
+      # machine was doing — which on a busy CI box is most of it.
+      1..3
+      |> Enum.map(fn _ ->
+        {micro, true} =
+          :timer.tc(fn ->
+            Expr.matches?(ast, children, fn name, child -> name == child or name == :block end)
+          end)
+
+        micro
+      end)
+      |> Enum.min()
+    end
+  end
+
   describe "parse/1" do
     test "parses names, sequences, choices and groups" do
       assert {:ok, {:name, :block}} = Expr.parse("block")

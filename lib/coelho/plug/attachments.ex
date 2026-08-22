@@ -351,10 +351,18 @@ if Code.ensure_loaded?(Plug) do
 
     defp sanitise(nil), do: "download"
 
+    # Without `/u`, deliberately, and it is the same lesson as the type above.
+    # A filename is whatever bytes the uploader's browser sent — a form
+    # submitted as latin-1 sends `café.pdf` as five bytes that are not valid
+    # UTF-8 — and a unicode-mode regex *raises* on those rather than failing
+    # to match, which turns every fetch of that attachment into a 500. Byte
+    # mode strips them instead, which is what a header value can carry
+    # anyway: `\w` here is ASCII, so nothing outside it survives to be
+    # quoted, escaped or newline-injected.
     defp sanitise(filename) do
       filename
       |> Path.basename()
-      |> String.replace(~r/[^\w.\- ]/u, "")
+      |> String.replace(~r/[^\w.\- ]/, "")
       |> case do
         "" -> "download"
         name -> name

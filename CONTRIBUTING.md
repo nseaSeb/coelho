@@ -7,9 +7,18 @@ moment to arrive: the decisions that are wrong are still cheap to change.
 
 ```
 mix check                                                        # format, compile, credo, dialyzer, test
+mix test --cover                                                 # and what nothing runs any more
 docker compose -f docker/compose.yml run --rm --build browsers   # the editor, in three engines, on Linux
 cd demo && mix test
 ```
+
+The coverage run has a floor in `mix.exs` and fails below it. The number is
+not the point — what it is for is the list of lines nothing has ever run, in
+`cover/`. The first time it was measured it named several functions in
+`Coelho` itself, the module every application calls first: one-line
+delegates nobody had tested, because a delegate cannot go wrong. It can
+point at the wrong function, take its arguments in the wrong order, or drop
+an option on the way through, and the compiler is content with all three.
 
 The Docker run matters more than it looks. Browser behaviour written on a
 Mac cannot be trusted until it has run on Linux — Firefox delivers neither

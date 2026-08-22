@@ -2,6 +2,92 @@
 
 ## Unreleased
 
+A security review of the whole surface — the first one — and what measuring
+things nobody had measured turned up beside it. No vulnerability was found:
+no XSS, no path traversal, no authorisation bypass, no atom built from a
+document, no hash collision that could be constructed. Six real defects were,
+and they are the release.
+
+### Two paths were quadratic
+
+- **Validating a document.** The content-expression matcher stepped its whole
+  reachable set on every pass, and that set grows by one position per pass —
+  so the work was the square of the child count *at one level*. Measured on
+  the shipped schema: 9 990 sibling paragraphs, a 210 KB document **inside
+  every bound the schema declares**, took 8.6 seconds to accept, and again on
+  every render that sanitises. It now steps only what was reached since the
+  last pass, which is equivalent because every transition distributes over
+  union. Same document: **14 ms**. Fuzzed against the old implementation over
+  20 000 random expressions and child lists — zero divergences.
+- **Importing HTML.** The `<pre>` pre-pass was a lazy regex, and `.*?` starts
+  its search again at every `<pre`, running to the end of the input when
+  nothing closes it: 20 KB of unclosed `<pre>` took 346 ms, and a paste out
+  of a word processor is a great deal more than 20 KB. A byte scanner
+  replaces it — 1.8 ms — and it fixes an old misclassification on the way,
+  where a fragment merely *beginning* with `<pre` was treated as a code
+  region.
+
+Both are guarded by tests that assert the *ratio* rather than a duration:
+four times the input costs about four times the time when the work is
+linear, sixteen when it is the square.
+
+### An attribute is bounded now — **and this one can bite an upgrade**
+
+The bounds stopped at the document's shape and its text, and an attribute is
+neither: `max_text_length` counts what a writer typed, because that is the
+number the editor's counter shows. Half a megabyte of `alt` validated in
+1.7 ms while `text_length/1` answered 1 — in the one field no `maxlength`
+constrains.
+
+- **`:max_attr_length`** (10 000 characters) is a budget spent through the
+  whole value: every character of every string, in a key as well as a value,
+  and one per element besides. A string wrapped in a list is the same string.
+- **`:max_depth`** now applies to an attribute's value too, for a schema
+  declaring an attribute with no validator — those accept anything JSON can
+  express, and ten thousand nested lists used to validate instantly.
+- **On the way out as well as in.** An attribute over the bound is dropped by
+  `sanitize/2`, and a **required** attribute dropped takes its node with it:
+  a stored image whose `src` is longer than the bound disappears from the
+  page rather than being shortened. A row written before this bound existed
+  is exactly the case to lift it for, beside `:max_text_length`:
+
+      Coelho.Document.sanitize(row.body, schema,
+        limits: [max_text_length: :infinity, max_attr_length: :infinity]
+      )
+
+### Three defects that only showed under a real input
+
+- A code block's `language` was validated as any string and rendered as
+  `class="language-#{value}"`, so a value carrying spaces contributed class
+  names of its own choosing. It is one token now, validated **and** clamped
+  at render — the same pair the heading level already had, because a stored
+  row was written under whatever schema was in force then.
+- Serving an attachment whose filename is not valid UTF-8 — a form submitted
+  as latin-1 sends `café.pdf` as bytes that are not — **raised**, turning
+  every fetch of that file into a 500. The sanitiser's regex was in unicode
+  mode; in byte mode it strips them, which is all a header can carry anyway.
+- `Coelho.LiveViewTest.type/4`'s `:form` option **could never work**:
+  `Phoenix.LiveViewTest.form/3` refuses a hidden input whose value differs
+  from the rendered one, and an editor's field is hidden and differs by
+  definition — that is what typing is. It now raises with what to do
+  instead (pass the form's other fields as `:params`, nested the way the
+  form nests them). Found by making the demo use the helper the library
+  ships for other people's tests, which nothing had ever used.
+
+### Measured for the first time
+
+- **Coverage**, with a floor in `mix.exs` and `mix test --cover` in CI. The
+  number is not the point; the list of lines nothing had ever run is. It
+  named `Coelho` itself at 76.9 % — `canonical/1`, `sanitize/3`,
+  `text_length/1`, `to_safe_html/2`: one-line delegates nobody had tested,
+  because a delegate cannot go wrong. It can point at the wrong function,
+  swap two arguments, or drop an option on the way through.
+- **`migrate/2` was run end to end** for the first time: a document written
+  under one schema, refused by the next, migrated, accepted, rendered — and
+  refused when replayed.
+- **`hash/2` says what `nil` means.** Five shapes of empty document answer
+  it; they draw different pages. `nil == nil` is not "the same document".
+
 ### What may become a toolbar command, written down
 
 The list of node commands has been called closed twice and opened twice —

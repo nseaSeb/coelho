@@ -57,6 +57,19 @@ defmodule Coelho.TestHelpersTest do
     end
   end
 
+  describe "type/4" do
+    test "says what to do rather than raising from inside LiveView" do
+      # `:form` was documented and could not work: `form/3` refuses a hidden
+      # input whose value differs from the rendered one, and an edit differs
+      # by definition. It failed as `value for hidden "post[body]" must be
+      # one of […]`, from inside LiveView, naming nothing an application
+      # could act on.
+      assert_raise ArgumentError, ~r/no longer takes :form/, fn ->
+        Coelho.LiveViewTest.type(:view, "post[body]", %{"type" => "doc"}, form: "#post-form")
+      end
+    end
+  end
+
   describe "params/3" do
     # The nesting is what a browser posts and what Plug.Conn.Query reads back;
     # getting it wrong shows up as "the form ignored the change", which says

@@ -406,9 +406,21 @@ const run = async () => {
 
     await test("an address the browser would execute is refused", async () => {
       await typeInEditor(page, "tempting");
+
+      // Wait for the round trip *before* opening the field. A transaction
+      // that changes the document closes it — deliberately, since the
+      // positions the link was aimed at have moved — so a server answer
+      // landing between the click and the Enter closes the field and the
+      // Enter then finds nothing pending. That is what this check saw once
+      // as "the field stays open" being false, and it is a race in the
+      // test rather than in the editor: the writer's own keystroke would
+      // close it just the same, and should.
+      await paneEventually(page, "stored", "tempting");
+
       await focusEditor(page);
       await selectAll(page);
       await page.click('[data-coelho-command="link"]');
+      await page.waitForSelector(LINK_INPUT, { state: "visible" });
       await page.fill(LINK_INPUT, "javascript:alert(1)");
       await page.keyboard.press("Enter");
       await settle(page);

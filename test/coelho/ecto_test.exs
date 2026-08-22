@@ -35,6 +35,31 @@ defmodule Coelho.EctoTest do
   defp paragraph(text),
     do: %{"type" => "paragraph", "content" => [%{"type" => "text", "text" => text}]}
 
+  describe "what casting refuses" do
+    # Coverage said these clauses had never run, and each of them is a shape
+    # a form can post: an empty field, a number, a list.
+    test "an empty string is nothing, not an invalid document" do
+      assert {:ok, nil} = Ecto.Type.cast(type(), "")
+    end
+
+    test "anything that is not a document or a string is refused" do
+      for value <- [1, [], true, {:tuple, :ish}] do
+        assert :error == cast_shape(value) or match?({:error, _}, cast_shape(value))
+      end
+    end
+
+    test "the column it stores in is a map" do
+      assert Ecto.Type.type(type()) == :map
+    end
+
+    defp type,
+      do:
+        {:parameterized,
+         {Coelho.Ecto.Type, Coelho.Ecto.Type.init(document_schema: Coelho.Schema.default())}}
+
+    defp cast_shape(value), do: Ecto.Type.cast(type(), value)
+  end
+
   describe "casting" do
     test "accepts a document map and normalises it" do
       changeset =

@@ -2,6 +2,7 @@ defmodule DemoWeb.EditorLiveTest do
   use DemoWeb.ConnCase
 
   import Phoenix.LiveViewTest
+  import Coelho.LiveViewTest
 
   test "renders the editor and every server-side derivation of the document", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/")
@@ -38,6 +39,40 @@ defmodule DemoWeb.EditorLiveTest do
 
     assert html =~ "typed by hand"
     assert html =~ "&lt;p&gt;typed by hand&lt;/p&gt;"
+  end
+
+  test "an edit driven through the helper the library ships", %{conn: conn} do
+    # `Coelho.LiveViewTest` exists so an application does not write the three
+    # lines above at every call site — JSON encoding, parameter nesting, and
+    # the form selector. Nothing used it, which for a module we hand people
+    # to write *their* tests with is the wrong way round.
+    {:ok, view, _html} = live(conn, "/")
+
+    document = %{
+      "type" => "doc",
+      "content" => [
+        %{
+          "type" => "paragraph",
+          "content" => [%{"type" => "text", "text" => "through the helper"}]
+        }
+      ]
+    }
+
+    # The other fields ride along in `:params`, nested the way the form nests
+    # them — `%{"title" => …}` at the top level never reaches
+    # `handle_event("validate", %{"post" => params}, …)` and the changeset
+    # then falls back to what it already held, which is a test passing for
+    # the wrong reason.
+    html =
+      type(view, "post[body]", document, params: %{"post" => %{"title" => "given by the test"}})
+
+    assert html =~ "through the helper"
+    assert html =~ "given by the test"
+
+    # And read back the way an application asserts on what the server holds:
+    # normalised, so it is the document the server would store rather than
+    # the bytes the browser happened to send.
+    assert document(view, "post[body]") == document
   end
 
   test "a document outside the schema is reported rather than stored", %{conn: conn} do

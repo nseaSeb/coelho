@@ -37,26 +37,35 @@ if Code.ensure_loaded?(Phoenix.LiveViewTest) do
     ## Options
 
       * `:event` — the `phx-change` event to send, `"validate"` by default
-      * `:form` — a selector, to go through the form rather than through the
-        event. Use this when the change has to carry the form's other fields:
-        `form: "#page-form"`
-      * `:params` — extra parameters merged in, for a change the application
-        expects to arrive with company
+      * `:params` — the form's other fields, merged into the parameters as a
+        browser would send them, which means **nested the way the form nests
+        them**: `params: %{"post" => %{"title" => "t"}}`, not
+        `%{"title" => "t"}`. A changeset wanting a title reports the *title*
+        when a change arrives without one, so this is how the document under
+        test stays the thing under test — and a title merged at the top level
+        never reaches `handle_event("validate", %{"post" => params}, …)` at
+        all
 
+    There used to be a `:form` option here, sending the change through
+    `Phoenix.LiveViewTest.form/3` instead. It cannot work for this field and
+    never could: `form/3` refuses a **hidden** input whose value differs from
+    the one that was rendered, and an editor's field is hidden and differs by
+    definition — that is what typing is. It raised
+    `value for hidden "post[body]" must be one of […]` at every call. Pass
+    the other fields through `:params`.
     """
     @spec type(term(), name(), map(), keyword()) :: String.t()
     def type(view, name, document, opts \\ []) when is_map(document) do
       params = params(name, document, Keyword.get(opts, :params, %{}))
 
-      case Keyword.fetch(opts, :form) do
-        {:ok, selector} ->
-          view
-          |> Phoenix.LiveViewTest.form(selector, params)
-          |> Phoenix.LiveViewTest.render_change()
-
-        :error ->
-          Phoenix.LiveViewTest.render_change(view, Keyword.get(opts, :event, "validate"), params)
+      if Keyword.has_key?(opts, :form) do
+        raise ArgumentError,
+              "type/4 no longer takes :form — `Phoenix.LiveViewTest.form/3` refuses a hidden " <>
+                "input whose value differs from the rendered one, which is every edit. " <>
+                "Pass the form's other fields as `params: %{...}` instead"
       end
+
+      Phoenix.LiveViewTest.render_change(view, Keyword.get(opts, :event, "validate"), params)
     end
 
     @doc """

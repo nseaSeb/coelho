@@ -99,16 +99,33 @@ defmodule Coelho.Schema.ContentExpression do
 
   # Each extra iteration is optional, so the reachable set only grows. It is
   # bounded by the number of children, hence the fixpoint always terminates.
-  defp repeat_until_stable(_ast, positions, _array, _length, _fun, 0), do: positions
+  #
+  # Only the positions reached *since the last pass* are stepped from, and
+  # that is what makes this linear rather than quadratic. Stepping the whole
+  # set each time re-asks the same question of every position already
+  # answered, and the set grows by one position per pass on the shape that
+  # matters — `"block+"` over a document's own children — so the work was the
+  # square of the child count. Measured on the shipped schema before the
+  # change: 500 siblings 21 ms, 1 000 74 ms, 2 000 295 ms, 9 990 **8.6 s** —
+  # for a document inside every bound the schema declares, and paid again on
+  # every render that sanitises.
+  #
+  # Sound because every transition here distributes over union: a position's
+  # successors depend on that position alone, so `step(A ∪ B)` is
+  # `step(A) ∪ step(B)` and a position stepped once has nothing left to give.
+  defp repeat_until_stable(ast, positions, array, length, fun, remaining),
+    do: grow(ast, positions, positions, array, length, fun, remaining)
 
-  defp repeat_until_stable(ast, positions, array, length, fun, remaining) do
-    grown = MapSet.union(positions, step(ast, positions, array, length, fun))
+  defp grow(_ast, positions, _frontier, _array, _length, _fun, 0), do: positions
 
-    if MapSet.equal?(grown, positions) do
+  defp grow(ast, positions, frontier, array, length, fun, remaining) do
+    if MapSet.size(frontier) == 0 do
       positions
     else
+      fresh = ast |> step(frontier, array, length, fun) |> MapSet.difference(positions)
       remaining = if remaining == :infinity, do: :infinity, else: remaining - 1
-      repeat_until_stable(ast, grown, array, length, fun, remaining)
+
+      grow(ast, MapSet.union(positions, fresh), fresh, array, length, fun, remaining)
     end
   end
 
