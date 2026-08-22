@@ -263,6 +263,12 @@ defmodule Coelho.Schema.Default do
   # today's renderer, so the clamp stays. Every renderer below follows the
   # same rule: nothing read out of a stored document is trusted to be well
   # typed or safe.
+  #
+  # The 1 below is this schema's own `:level` default, and it has to be: a
+  # render function is handed the node, never the schema. A schema that
+  # redeclares `heading` with another default has to bring its own render
+  # with it — the browser reads the exported default and would draw a level
+  # this prints as another. See `Coelho.Render.attr/3`.
   @doc false
   def heading_tag(node) do
     level =

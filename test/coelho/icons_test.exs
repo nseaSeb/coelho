@@ -18,6 +18,14 @@ defmodule Coelho.IconsTest do
       end
     end
 
+    test "leaves a heading naming its level to its words" do
+      # Six drawings of an H differing by a numeral are six buttons nobody
+      # can tell apart at 20px; "Heading 3" is read at a glance.
+      refute Icons.icon("heading_3")
+      assert Icons.label("heading_3") == "Heading 3"
+      assert Icons.label("heading_7") == "heading_7"
+    end
+
     test "answers nothing for a command it does not know" do
       # A mark an application added, which then shows its label as text.
       refute Icons.icon("highlight")

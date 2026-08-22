@@ -20,6 +20,11 @@ defmodule Coelho.Icons do
 
   A command with no icon here falls back to its label as text, which is what
   a command an application added does until it is given one.
+
+  A heading naming its level — `heading_3`, beside `heading` — is deliberately
+  one of those: six drawings of an H differing by a numeral are six buttons
+  nobody can tell apart at 20px, where "Heading 3" is read at a glance. An
+  application that wants a drawing there passes its own through `:icons`.
   """
 
   @stroke ~s(viewBox="0 0 24 24" fill="none" stroke="currentColor" ) <>
@@ -139,6 +144,7 @@ defmodule Coelho.Icons do
   What a command is called in English, or its own name where nothing is.
   """
   @spec label(String.t()) :: String.t()
+  def label("heading_" <> level) when level in ~w(1 2 3 4 5 6), do: "Heading " <> level
   def label(command) when is_binary(command), do: Map.get(@labels, command, command)
 
   defp svg(paths) do

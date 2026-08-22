@@ -372,14 +372,77 @@ const run = async () => {
       assert.equal(await linkedFragments(page).then((f) => f.length), 0, "nothing was linked");
     });
 
-    await test("a heading is a heading, with its level", async () => {
+    await test("a heading is a heading, at the level its schema calls default", async () => {
+      // The button used to write `level: 2` from a constant of its own while
+      // the schema declared 1 — and since an attribute at its default is not
+      // stored, the editor drew an h1 and the page printed an h2, with
+      // nothing anywhere saying so. It reads the schema now.
       await typeInEditor(page, "a title");
       await page.click('[data-coelho-command="heading"]');
 
       const [block] = (await stored(page)).content;
       assert.equal(block.type, "heading");
-      assert.equal(block.attrs.level, 2);
-      assert.match(await paneEventually(page, "html", "<h2>"), /<h2>a title<\/h2>/);
+      assert.equal(block.attrs?.level ?? 1, 1);
+      assert.match(await paneEventually(page, "html", "<h1>"), /<h1>a title<\/h1>/);
+    });
+
+    await test("a heading button that names its level makes that level", async () => {
+      await typeInEditor(page, "a section");
+      await page.click('[data-coelho-command="heading_3"]');
+
+      const [block] = (await stored(page)).content;
+      assert.equal(block.type, "heading");
+      assert.equal(block.attrs.level, 3);
+      assert.match(await paneEventually(page, "html", "<h3>"), /<h3>a section<\/h3>/);
+
+      // Pressed for its own level and for no other, which is what lets a
+      // second click turn the block back into a paragraph rather than
+      // re-levelling it — the behaviour a single `heading` button could not
+      // give a document whose headings are not all the same level.
+      assert.equal(
+        await page.getAttribute('[data-coelho-command="heading_3"]', "aria-pressed"),
+        "true"
+      );
+      assert.equal(
+        await page.getAttribute('[data-coelho-command="heading"]', "aria-pressed"),
+        "false"
+      );
+
+      await page.click('[data-coelho-command="heading_3"]');
+      await settle(page);
+
+      const [back] = (await stored(page)).content;
+      assert.equal(back.type, "paragraph");
+    });
+
+    await test("re-levelling a heading keeps what the click said nothing about", async () => {
+      // `setBlockType` builds the new block from the attributes it is given
+      // and defaults every other one, so a centred heading used to come back
+      // straightened — a normal one-click gesture quietly losing an
+      // attribute the writer set on purpose.
+      await typeInEditor(page, "centred");
+      await page.click('[data-coelho-command="heading_2"]');
+      await page.click('[data-coelho-command="align_center"]');
+      await settle(page);
+
+      const [centred] = (await stored(page)).content;
+      assert.equal(centred.attrs.align, "center");
+
+      await page.click('[data-coelho-command="heading_3"]');
+      await settle(page);
+
+      const [levelled] = (await stored(page)).content;
+      assert.equal(levelled.attrs.level, 3);
+      assert.equal(levelled.attrs.align, "center", "the alignment did not survive re-levelling");
+
+      // And out the other side: a heading turned back into a paragraph keeps
+      // it too, since the paragraph declares the same attribute.
+      await page.click('[data-coelho-command="heading_3"]');
+      await settle(page);
+
+      const [plain] = (await stored(page)).content;
+      assert.equal(plain.type, "paragraph");
+      assert.equal(plain.attrs.align, "center");
     });
 
     await test("a block button undoes what it did", async () => {

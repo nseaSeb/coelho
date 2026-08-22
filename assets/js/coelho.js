@@ -635,11 +635,22 @@ const plainBlock = (state) => {
 // simply not applicable once it has been applied — `setBlockType` answers
 // false for a block that is already that type — so the button disables
 // itself and there is no way back to a paragraph.
+// `setBlockType` builds the new block from the attributes it is given and
+// lets every other one fall back to its default, so re-levelling a centred
+// heading used to straighten it. Given a function it is handed each block in
+// turn, which is how the ones the click says nothing about survive it —
+// `setAlign` keeps them the same way, by spreading `node.attrs`. A name the
+// new type does not declare is dropped by ProseMirror rather than refused,
+// so a heading's level does not follow it into a paragraph.
+const keeping = (attrs) => (node) => ({ ...node.attrs, ...attrs });
+
 const toggleBlock = (type, attrs) => (state, dispatch, view) => {
-  if (!blockActive(state, type, attrs)) return setBlockType(type, attrs)(state, dispatch, view);
+  if (!blockActive(state, type, attrs)) {
+    return setBlockType(type, keeping(attrs))(state, dispatch, view);
+  }
 
   const plain = plainBlock(state);
-  return Boolean(plain) && setBlockType(plain)(state, dispatch, view);
+  return Boolean(plain) && setBlockType(plain, keeping(null))(state, dispatch, view);
 };
 
 const toggleWrap = (type) => (state, dispatch, view) =>
@@ -656,6 +667,19 @@ const toggleList = (type, itemType) => (state, dispatch, view) =>
 // standard list rather than asking the schema: an exported attribute carries
 // no validator, and a value the server would refuse must not be settable.
 const ALIGN_COMMAND = /^align_(left|center|right|justify)$/;
+
+// A heading button may name the level it makes: `heading_3` is to `heading`
+// what `align_center` is to an alignment — the value baked into the name,
+// so the toolbar can carry one button per level and each says which it is.
+const HEADING_COMMAND = /^heading_([1-6])$/;
+
+// The level a bare `heading` button applies, read off the schema rather than
+// written here a second time. Validation drops an attribute equal to its
+// default, so a heading stored without a level *is* the schema's default —
+// and a constant of our own disagreeing with it is an editor drawing one
+// thing while the page renders another, with nothing anywhere saying so.
+const headingLevel = (type, options) =>
+  Number(options.level ?? type?.spec?.attrs?.level?.default ?? 1);
 
 const alignable = (node) => "align" in (node.type.spec.attrs ?? {});
 
@@ -763,7 +787,7 @@ const commandFor = (name, schema, options) => {
         return true;
       };
     case "heading":
-      return nodes.heading && toggleBlock(nodes.heading, { level: Number(options.level ?? 2) });
+      return nodes.heading && toggleBlock(nodes.heading, { level: headingLevel(nodes.heading, options) });
     case "paragraph":
       return nodes.paragraph && setBlockType(nodes.paragraph);
     case "code_block":
@@ -793,6 +817,12 @@ const commandFor = (name, schema, options) => {
       // application writing a line of JavaScript.
       const align = ALIGN_COMMAND.exec(name);
       if (align) return setAlign(align[1]);
+
+      const heading = HEADING_COMMAND.exec(name);
+      if (heading) {
+        return nodes.heading && toggleBlock(nodes.heading, { level: Number(heading[1]) });
+      }
+
       return marks[name] ? toggleMark(marks[name]) : null;
     }
   }
@@ -914,7 +944,7 @@ const commandActive = (state, name, options) => {
       return marks.link ? markActive(state, marks.link) : false;
     case "heading":
       return nodes.heading
-        ? blockActive(state, nodes.heading, { level: Number(options.level ?? 2) })
+        ? blockActive(state, nodes.heading, { level: headingLevel(nodes.heading, options) })
         : false;
     case "paragraph":
     case "code_block":
@@ -923,6 +953,16 @@ const commandActive = (state, name, options) => {
     case "ordered_list":
       return nodes[name] ? blockActive(state, nodes[name]) : false;
     default: {
+      // A heading button naming its level reads as pressed inside a heading
+      // of that level and no other, which is what lets a second click turn
+      // the block back into a paragraph rather than re-levelling it.
+      const heading = HEADING_COMMAND.exec(name);
+      if (heading) {
+        return nodes.heading
+          ? blockActive(state, nodes.heading, { level: Number(heading[1]) })
+          : false;
+      }
+
       // An alignment button reads as pressed when every alignable block of
       // the selection carries the value — compared through `alignOf`, the
       // same lens the command sets through, so pressed and enabled cannot

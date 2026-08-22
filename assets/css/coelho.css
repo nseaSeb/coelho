@@ -23,11 +23,20 @@
   --coelho-accent: #2563eb;
   --coelho-danger: #dc2626;
   --coelho-icon: 20px;
+  --coelho-command-pad: 6px;
   --coelho-radius: 6px;
   --coelho-gap: 8px;
   --coelho-pad: 12px;
   --coelho-height: auto;
   --coelho-max-height: none;
+
+  /* Where the counter sits. It is a flex item of this column like the
+   * toolbar and the editing area, so an application moves it by order
+   * rather than by re-stating the rule: `2` puts it under the area it
+   * counts, and `--coelho-counter-inset: 0` takes it back to the left
+   * edge. The defaults are what the editor did before they existed. */
+  --coelho-counter-order: 0;
+  --coelho-counter-inset: auto;
 
   color: var(--coelho-text);
   display: flex;
@@ -55,7 +64,7 @@
   font: inherit;
   justify-content: center;
   line-height: 1;
-  padding: 6px;
+  padding: var(--coelho-command-pad);
 }
 
 /* A command that draws shows an icon; one with none shows its label, and
@@ -65,7 +74,7 @@
  * drawings this library ships, for an application that wants to style them
  * apart from its own. */
 .coelho-command:not(:has(svg, img)) {
-  padding: 6px 10px;
+  padding: var(--coelho-command-pad) calc(var(--coelho-command-pad) + 4px);
 }
 
 /* The shipped drawings are stroked in currentColor, so they take the
@@ -148,7 +157,8 @@
 .coelho-counter {
   color: var(--coelho-muted);
   font-size: 0.875em;
-  margin-inline-start: auto;
+  margin-inline-start: var(--coelho-counter-inset);
+  order: var(--coelho-counter-order);
 }
 
 .coelho-counter-max::before {

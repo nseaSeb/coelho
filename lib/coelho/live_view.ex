@@ -439,7 +439,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
       doc:
         "commands to show, in order; an empty list hides the toolbar. Any mark the " <>
           "schema declares is a command, as are `align_left`, `align_center`, " <>
-          "`align_right` and `align_justify` where a node declares `align`"
+          "`align_right` and `align_justify` where a node declares `align`, and " <>
+          "`heading_1` to `heading_6` where its `:level` accepts the number — " <>
+          "`heading` on its own makes the level the schema calls default"
     )
 
     attr(:labels, :map,
@@ -491,12 +493,39 @@ if Code.ensure_loaded?(Phoenix.Component) do
       doc: "an `%Phoenix.LiveView.UploadConfig{}`; enables dropping and pasting files"
     )
 
+    attr(:debounce, :integer,
+      default: nil,
+      doc: """
+      `phx-debounce` in milliseconds for the hidden input the document travels
+      in. Without it every keystroke ships the whole document and the server
+      decodes and validates it again — the cost that matters on a long
+      document beside a live preview. LiveView reads the attribute off the
+      element that emits the event and walks no ancestors, so it cannot be
+      given from the outside: neither `:rest`, which lands on the root, nor
+      the enclosing form reaches the input.
+
+      Milliseconds and nothing else. LiveView's `"blur"` waits for a blur
+      event on the element carrying the attribute, and a `type="hidden"` input
+      never blurs — the change would be held for the life of the page.
+
+      Pair it with `:flush_event`: a debounce still holding the last edit when
+      the element goes loses it, and that is what the flush is for.
+
+      One interaction to measure before shipping both: on a form that also
+      carries an `auto_upload`, a debounce still pending on this field was
+      observed to stop the change event that starts the upload from taking
+      effect — in all three engines, on the demo. Uploads and a debounced
+      field on the same form want checking together
+      """
+    )
+
     attr(:placeholder, :string, default: nil)
     attr(:class, :string, default: nil)
     attr(:rest, :global)
 
     def coelho_editor(assigns) do
       schema = assigns.document_schema || Schema.default()
+      validate_debounce!(assigns.debounce)
       {name, value, input_id} = input_for!(assigns)
       toolbar = Enum.filter(assigns.toolbar, &supported?(schema, &1))
 
@@ -600,9 +629,33 @@ if Code.ensure_loaded?(Phoenix.Component) do
           phx-update="ignore"
         ></div>
         <.live_file_input :if={@upload} upload={@upload} class="coelho-file-input" />
-        <input type="hidden" name={@input_name} id={@input_id} value={@value_json} />
+        <input
+          type="hidden"
+          name={@input_name}
+          id={@input_id}
+          value={@value_json}
+          phx-debounce={@debounce}
+        />
       </div>
       """
+    end
+
+    # `attr` checks the type where the value is a literal in a template, and
+    # says nothing about one computed at runtime — which is where a `"blur"`
+    # read out of config would arrive. It cannot work here: LiveView waits for
+    # a blur event on the element carrying the attribute, a hidden input never
+    # blurs, and the editor would go quiet for the life of the page with
+    # nothing in the console. Refused rather than rendered.
+    defp validate_debounce!(nil), do: :ok
+
+    defp validate_debounce!(milliseconds) when is_integer(milliseconds) and milliseconds >= 0,
+      do: :ok
+
+    defp validate_debounce!(other) do
+      raise ArgumentError,
+            "debounce takes milliseconds, got #{inspect(other)}. LiveView's \"blur\" waits " <>
+              "for a blur event on the element carrying it, and the input the document " <>
+              "travels in is hidden, so it never blurs"
     end
 
     # A form field carries its own name, value and id. Without one they have
@@ -748,6 +801,21 @@ if Code.ensure_loaded?(Phoenix.Component) do
           :error -> false
         end
       end)
+    end
+
+    # A heading that names its level, the way an alignment names its value.
+    # Kept when the schema declares `heading` and its `:level` accepts the
+    # number — asked of the attribute's own validator, so a schema allowing
+    # two levels shows two buttons and not six.
+    @levels ~w(1 2 3 4 5 6)
+
+    defp supported?(schema, "heading_" <> level) when level in @levels do
+      with {:ok, name} <- Schema.resolve_node_name(schema, "heading"),
+           %{attrs: %{level: attr}} <- Schema.node_spec(schema, name) do
+        Coelho.Schema.Attr.validate(attr.validate, String.to_integer(level)) == :ok
+      else
+        _no -> false
+      end
     end
 
     defp supported?(schema, command) when command in @node_commands do

@@ -1,7 +1,7 @@
 defmodule Coelho.EditorOptionsTest do
   use ExUnit.Case, async: true
 
-  import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
+  import Phoenix.LiveViewTest, only: [render_component: 2, rendered_to_string: 1]
 
   alias Coelho.{LiveView, Schema}
 
@@ -25,6 +25,7 @@ defmodule Coelho.EditorOptionsTest do
         icons: %{},
         field_labels: %{},
         maxlength: nil,
+        debounce: nil,
         flush_event: nil,
         flush_token: nil,
         upload: nil,
@@ -98,6 +99,110 @@ defmodule Coelho.EditorOptionsTest do
       html = editor(%{name: "a[b]", maxlength: 20})
 
       assert html =~ ~r/id="[^"]*-counter" class="coelho-counter" phx-update="ignore"/
+    end
+  end
+
+  describe "the debounce" do
+    test "is rendered on the input the document travels in" do
+      # LiveView reads `phx-debounce` off the element that emits the event and
+      # walks no ancestors, so the root and the enclosing form are both out of
+      # reach: this attribute is the only way an application can space out the
+      # round trip a long document makes on every keystroke.
+      html = editor(%{name: "post[body]", value: paragraph("x"), debounce: 300})
+
+      assert html =~ ~r/<input[^>]*type="hidden"[^>]*phx-debounce="300"/ or
+               html =~ ~r/<input[^>]*phx-debounce="300"[^>]*type="hidden"/
+    end
+
+    test "is milliseconds and nothing else" do
+      # LiveView's `"blur"` waits for a blur event on the element carrying the
+      # attribute, and a hidden input never blurs — the change would be held
+      # for the life of the page. The attribute is typed so that saying it is
+      # a mistake made at the call site rather than a page that goes quiet.
+      assert_raise ArgumentError, ~r/debounce/, fn ->
+        render_component(&LiveView.coelho_editor/1, %{
+          name: "post[body]",
+          value: paragraph("x"),
+          debounce: "blur"
+        })
+      end
+    end
+
+    test "is absent when nothing asked for one" do
+      html = editor(%{name: "post[body]", value: paragraph("x")})
+
+      refute html =~ "phx-debounce"
+    end
+  end
+
+  describe "a heading that names its level" do
+    test "is a button of its own, saying which level it makes" do
+      html = editor(%{name: "post[body]", value: paragraph("x"), toolbar: ~w(heading heading_3)})
+
+      assert html =~ ~s(data-coelho-command="heading_3")
+      assert html =~ ~s(aria-label="Heading 3")
+      assert html =~ ~s(data-coelho-command="heading")
+    end
+
+    test "takes its own label" do
+      html =
+        editor(%{
+          name: "post[body]",
+          value: paragraph("x"),
+          toolbar: ~w(heading_3),
+          labels: %{"heading_3" => "Sous-titre"}
+        })
+
+      assert html =~ ~s(aria-label="Sous-titre")
+    end
+
+    test "is dropped when the schema's own level refuses it" do
+      # Filtered by the attribute's validator, like an alignment: a schema
+      # allowing two levels shows two buttons, not six.
+      narrowed =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [content: "text*", group: "block", render: {"p", []}],
+            heading: [
+              content: "text*",
+              group: "block",
+              attrs: [level: [default: 1, validate: {:one_of, [1, 2]}]],
+              render: {"h2", []}
+            ]
+          ]
+        )
+
+      html =
+        editor(%{
+          name: "post[body]",
+          value: paragraph("x"),
+          document_schema: narrowed,
+          toolbar: ~w(heading_2 heading_3)
+        })
+
+      assert html =~ ~s(data-coelho-command="heading_2")
+      refute html =~ ~s(data-coelho-command="heading_3")
+    end
+
+    test "is dropped by a schema with no heading at all" do
+      plain =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [content: "text*", group: "block", render: {"p", []}]
+          ]
+        )
+
+      html =
+        editor(%{
+          name: "post[body]",
+          value: paragraph("x"),
+          document_schema: plain,
+          toolbar: ~w(heading_2)
+        })
+
+      refute html =~ "data-coelho-command=\"heading"
     end
   end
 
