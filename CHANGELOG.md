@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.13.0 — 2026-08-22
+
+### The bytes are promised, and now they are written down
+
+A property says a document normalises the same way twice. Nothing said it
+normalises the same way this month as last month — and that is what a stored
+hash compares, what an ETag is built from, and what a diff between two
+revisions of a page shows.
+
+`test/fixtures/corpus.json` holds fifteen documents with the canonical form,
+the hash, the rendered HTML, the inline HTML and the extracted text they
+produce today. A change to any of them arrives as a diff to read rather than
+as a page that stopped matching in somebody's production. Regenerating is
+deliberate — `mix run priv/corpus/write.exs` — and the diff is the report.
+
+Nothing about the library changed for this. It is a promise being written
+down where it can be checked.
+
+### Four functions leave the documentation
+
+`Coelho.Schema.empty/1`, `json/1`, `parse_tags/1` and `attr_keys/1` were
+added in 0.9.0 and announced as public. They exist for this library's own
+paths — validation asking a spec for its attribute names, the import asking
+which tags it parses — and an application has better answers to the same
+questions: **`Coelho.empty/1`** for the empty document, **`to_json/1`** for
+the export as a term, and `spec.attrs` for what a spec declares. They are
+`@doc false` now: still callable, no longer promised. `Coelho.LiveView.node_commands/0`
+goes the same way — it exists so the two halves can be checked against each
+other.
+
+### The browser packages are installed the way the application installs them
+
+`mix coelho.install` read `npm` into every project. It now reads the
+lockfile — `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `package-lock.json`,
+in `assets/` or at the root — and runs that one, falling back to npm, which
+is what a freshly generated Phoenix application has. Installing with one
+manager into a project that uses another leaves two layouts of
+`node_modules` in one application, and the one that breaks is whichever
+esbuild does not resolve through — a failure that surfaces inside the hook
+at mount, a long way from its cause.
+
 ## 0.12.0 — 2026-08-22
 
 A placeholder written as text is not safe in a document. Text is a tree, so

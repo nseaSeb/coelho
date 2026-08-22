@@ -530,36 +530,33 @@ defmodule Coelho.Schema do
   @spec node_spec(t(), atom()) :: NodeSpec.t() | nil
   def node_spec(%__MODULE__{} = schema, name), do: Map.get(schema.nodes, name)
 
-  @doc """
-  The empty document of this schema.
-
-  Derived when the schema is built. A `%Coelho.Schema{}` put together by hand
-  never went through that, so it is derived on the spot rather than answering
-  `nil` from a function that promises a document — the same reading the other
-  derived fields get through `parse_tags/1` and `attr_keys/1`.
-  """
+  # `Coelho.empty/1` is where this is asked for; here it is the reading of a
+  # derived field, kept honest for a schema built by hand rather than by
+  # `new/1` — which never went through the derivation and would answer `nil`
+  # from a function that promises a document.
+  @doc false
   @spec empty(t()) :: map()
   def empty(%__MODULE__{empty: nil} = schema), do: build_empty(schema)
   def empty(%__MODULE__{empty: empty}), do: empty
 
-  @doc """
-  This schema's JSON export, as the editor receives it.
-  """
+  # The export already encoded, which the editor component puts on the
+  # element. `to_json/1` is the one a consumer wants: the term, not the
+  # bytes this library happens to send.
+  @doc false
   @spec json(t()) :: String.t()
   def json(%__MODULE__{json: nil} = schema), do: schema |> to_json() |> JSON.encode!()
   def json(%__MODULE__{json: json}), do: json
 
-  @doc """
-  The HTML tags this schema imports at all.
-  """
+  # Asked by the import, of every element no rule matched, to tell "no rule
+  # covers this tag" from "a rule covered it and refused what it carried".
+  @doc false
   @spec parse_tags(t()) :: MapSet.t(String.t())
   def parse_tags(%__MODULE__{parse_tags: nil} = schema), do: build_parse_tags(schema)
   def parse_tags(%__MODULE__{parse_tags: tags}), do: tags
 
-  @doc """
-  The attribute names a node or mark spec answers to, as the strings a
-  document is written in.
-  """
+  # Asked by validation, of every node and mark of every document. A
+  # consumer with a spec in hand reads `spec.attrs`, which says more.
+  @doc false
   @spec attr_keys(NodeSpec.t() | MarkSpec.t()) :: MapSet.t(String.t())
   def attr_keys(%{attr_keys: nil, attrs: attrs}),
     do: MapSet.new(attrs, fn {name, _spec} -> Atom.to_string(name) end)

@@ -397,6 +397,31 @@ defmodule Coelho.InstallTest do
       assert output =~ "npm install --prefix assets"
       assert output =~ "prosemirror-state@"
     end
+
+    test "are installed with the manager the application already uses", %{tmp_dir: tmp_dir} do
+      # Installing with npm into an application that uses pnpm leaves two
+      # layouts of node_modules in one project, and the one that breaks is
+      # whichever esbuild does not resolve through — which surfaces inside
+      # the hook at mount, a long way from the cause.
+      app(tmp_dir)
+      File.write!(Path.join(tmp_dir, "assets/pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
+
+      assert install(tmp_dir) =~ "pnpm --dir assets add"
+    end
+
+    test "are installed with the manager named at the project root", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+      File.write!(Path.join(tmp_dir, "yarn.lock"), "")
+
+      assert install(tmp_dir) =~ "yarn --cwd assets add"
+    end
+
+    test "fall back to npm, which is what a generated application has", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+
+      assert File.cd!(tmp_dir, fn -> Mix.Tasks.Coelho.Install.installer() end) ==
+               {"npm", "npm install --prefix assets"}
+    end
   end
 
   describe "--dry-run" do
