@@ -1,5 +1,86 @@
 # Changelog
 
+## Unreleased
+
+Three things an application could not reach from outside `coelho_editor/1`,
+reported from a settings screen with a live preview beside the editor and a
+document allowed twenty thousand characters.
+
+### The round trip can be spaced out
+
+- **`:debounce`** renders `phx-debounce` on the hidden input the document
+  travels in. Without it every keystroke ships the whole document and the
+  server decodes and validates it again, which is what a long document
+  beside a live preview pays per character. It could not be given from
+  outside: LiveView reads the attribute off the element that emits and walks
+  no ancestors, so neither `:rest` — which lands on the root — nor the
+  enclosing form reaches the input, and a hook writing the attribute has it
+  patched away by the next render.
+- Milliseconds and nothing else. LiveView's `"blur"` waits for a blur event
+  on the element carrying the attribute and a hidden input never blurs, so
+  the change would be held for the life of the page; the component refuses
+  anything that is not a number rather than rendering an editor that goes
+  quiet.
+- Name `:flush_event` beside it: a debounce still holding the last edit when
+  the element leaves the page loses it, and the flush is what carries it out.
+- One interaction, measured and left open: on a form that also carries an
+  `auto_upload`, a debounce still pending on the field was observed to stop
+  the change event that starts the upload from taking effect, in all three
+  browser engines. The demo therefore uploads without one. Check the pair
+  together before relying on it.
+
+### A toolbar button can name the level it makes
+
+- **`heading_1` to `heading_6`**, beside `heading` — the value baked into the
+  name, the way `align_center` already carries its own. They are filtered
+  against the schema like everything else, so a `:level` that accepts two
+  levels shows two buttons; they take their own entry in `:labels` and
+  `:icons`; and each reads as pressed inside a heading of its own level and
+  no other, so a second click turns the block back into a paragraph rather
+  than re-levelling it. Before this, a toolbar could only ever make one
+  level, and clicking it on a heading of another level silently re-levelled
+  that heading.
+- A level button shows its words rather than a drawing unless an application
+  passes one: six H's differing by a numeral are six buttons nobody can tell
+  apart at 20px.
+
+### The two heading defaults agreed to disagree
+
+- The schema declared `level: [default: 1, …]` and the hook's button wrote
+  `level: 2` from a constant of its own. Since validation drops an attribute
+  equal to its default, a heading made by that button stored no level at
+  all — so the editor drew an `h1` and every renderer reading the schema's
+  default printed one, while the button suggested `h2`. Reported by an
+  application whose HTML and PDF renderers had been aligned on 2, shipping a
+  WYSIWYG that lied.
+- The hook now reads `level`'s default off the exported schema. There is no
+  second constant to keep in step, and **`heading` on its own makes the
+  level the schema calls default** — `h1` for the shipped schema, where it
+  used to make an `h2`. An application that wants another level names it:
+  `heading_2`.
+- `Coelho.Render.attr/3` says that the default to pass is the schema's own,
+  and `Coelho.Schema.Default`'s heading render says which default it is
+  written for.
+
+### A block keeps what the click said nothing about
+
+- Toggling a block built the new one from the attributes the command named
+  and let every other one fall back to its default, so re-levelling a centred
+  heading straightened it and turning it back into a paragraph did the same.
+  The block's own attributes are carried across now, the way `setAlign` has
+  always carried them. It mattered less when a toolbar had one heading
+  button and no gesture that re-levels.
+
+### Two layout decisions become an application's
+
+- `--coelho-command-pad` (`6px`) sizes the room around a toolbar icon, so a
+  button can be made to fit a settings panel's other controls without
+  overriding the rule.
+- `--coelho-counter-order` (`0`) and `--coelho-counter-inset` (`auto`) place
+  the counter: it is a flex item of the editor's column, so `2` puts it
+  under the area it counts and `0` takes it back to the left edge. Nothing
+  moves for an application that says nothing.
+
 ## 0.9.0 — 2026-08-22
 
 An audit for leaks, wasted work and duplication, and what it found. The BEAM

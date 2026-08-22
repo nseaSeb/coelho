@@ -308,8 +308,8 @@ defmodule DemoWeb.EditorLive do
             document_schema={Demo.RichText.schema()}
             placeholder="Write something…"
             field_labels={note_field_labels(@note_locale)}
-            toolbar={~w(bold italic strike code link heading paragraph code_block blockquote
-                 bullet_list ordered_list horizontal_rule caption
+            toolbar={~w(bold italic strike code link heading heading_2 heading_3 paragraph code_block
+                 blockquote bullet_list ordered_list horizontal_rule caption
                  align_left align_center align_right align_justify undo redo)}
             upload={@uploads.attachment}
           />

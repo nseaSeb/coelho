@@ -390,6 +390,15 @@ defmodule Coelho.Render do
   `Coelho.Document.canonical/1` for why — so a renderer must supply the
   default rather than read the key and hope. This is the one place that
   knows the shape of `"attrs"`.
+
+  The default to pass is **the schema's**, not one chosen here: a heading
+  stored with no `"level"` is a heading at whatever `:level` declares as its
+  default, and a renderer answering something else prints a document the
+  editor drew differently. Where the schema is at hand, read it from there
+  rather than writing the number twice:
+
+      level = Render.attr(node, "level", Schema.node_spec(schema, :heading).attrs.level.default)
+
   """
   @spec attr(map(), String.t(), term()) :: term()
   def attr(node, name, default \\ nil) do

@@ -394,6 +394,45 @@ attribute rather than writing `"left"` — the two look the same, and
 `Coelho.hash/2` must not tell apart documents that differ only in which
 buttons the writer happened to click.
 
+A command may name what it applies, the way an alignment does. `heading`
+makes the level its schema declares as the default; `heading_2` and
+`heading_3` make theirs, and each reads as pressed only inside a heading of
+its own level, so clicking one on a heading of another level re-levels it
+rather than toggling it away:
+
+```heex
+<.coelho_editor field={@form[:body]}
+  toolbar={~w(bold italic link heading_2 heading_3 bullet_list)} />
+```
+
+They are filtered against the schema like everything else — a schema whose
+`:level` accepts two levels shows two buttons — and they take their own
+entry in `:labels` and `:icons`. A level button shows its words rather than
+a drawing unless you pass one: six H's differing by a numeral are six
+buttons nobody can tell apart at 20px.
+
+Every keystroke ships the document to the server, which decodes and
+validates it. On a long document beside a live preview that is worth
+spacing out, and the hidden input takes a `phx-debounce` through
+`:debounce` — LiveView reads that attribute off the element that emits, so
+neither the form around the editor nor `:rest` on its root can give it one.
+Milliseconds and nothing else: LiveView's `"blur"` waits for a blur event on
+the element carrying the attribute, and a hidden input never blurs, so the
+component refuses it rather than rendering an editor that goes quiet:
+
+```heex
+<.coelho_editor field={@form[:body]} debounce={300} flush_event="flush" />
+```
+
+Name `:flush_event` beside it. A debounce still holding the last edit when
+the element leaves the page loses it, and the flush is what carries it out.
+
+One interaction to measure before shipping both: on a form that also carries
+an `auto_upload`, a debounce still pending on the field was observed to stop
+the change event that starts the upload from taking effect — in all three
+browser engines. The demo therefore uploads without one. Check the pair
+together on your own form before relying on it.
+
 In `assets/js/app.js`:
 
 ```js
@@ -534,16 +573,31 @@ and keeps every token it declared:
 Any value turns the automatic switch off; `dark` also asks for the dark
 palette whatever the machine prefers.
 
-Two properties are worth knowing about before the first long document:
+A few properties are worth knowing about before the first long document:
 
 | Property | Default | What |
 | --- | --- | --- |
 | `--coelho-max-height` | `none` | the editor grows to here and scrolls after it |
 | `--coelho-height` | `auto` | fixes it outright |
+| `--coelho-icon` | `20px` | the size of a toolbar drawing |
+| `--coelho-command-pad` | `6px` | the room around it, so a button fits a panel's other controls |
+| `--coelho-counter-order` | `0` | where the counter sits: `2` puts it under the area it counts |
+| `--coelho-counter-inset` | `auto` | `0` takes it back to the left edge |
 
-Without either, an editor grows with its text — and several thousand
-characters of terms and conditions push the buttons that save them off the
-bottom of the screen.
+Without one of the first two, an editor grows with its text — and several
+thousand characters of terms and conditions push the buttons that save them
+off the bottom of the screen. The last four are there because a toolbar
+button and a counter are the two things that have to sit among an
+application's own controls rather than beside them:
+
+```css
+.coelho {
+  --coelho-icon: 16px;
+  --coelho-command-pad: 5px;
+  --coelho-counter-order: 2;
+  --coelho-counter-inset: 0;
+}
+```
 
 Copy it instead if you would rather own it. The demo imports it and overrides
 two properties, which is the whole of its editor styling.
