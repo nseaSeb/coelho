@@ -76,6 +76,8 @@ defmodule Coelho.Schema do
   @type t :: %__MODULE__{
           top_node: atom(),
           fingerprint: non_neg_integer(),
+          json: String.t() | nil,
+          empty: map() | nil,
           version: pos_integer() | nil,
           limits: limits(),
           nodes: %{optional(atom()) => NodeSpec.t()},
@@ -84,7 +86,9 @@ defmodule Coelho.Schema do
           mark_order: [atom()],
           groups: %{optional(atom()) => MapSet.t(atom())},
           node_names: %{optional(String.t()) => atom()},
-          mark_names: %{optional(String.t()) => atom()}
+          mark_names: %{optional(String.t()) => atom()},
+          mark_ranks: %{optional(atom()) => non_neg_integer()},
+          parse_tags: MapSet.t(String.t()) | nil
         }
 
   # Bounds every document is held to, whether or not the application thought
@@ -96,6 +100,8 @@ defmodule Coelho.Schema do
 
   defstruct top_node: :doc,
             fingerprint: 0,
+            json: nil,
+            empty: nil,
             version: nil,
             limits: @default_limits,
             nodes: %{},
@@ -104,7 +110,13 @@ defmodule Coelho.Schema do
             mark_order: [],
             groups: %{},
             node_names: %{},
-            mark_names: %{}
+            mark_names: %{},
+            mark_ranks: %{},
+            # Derived in `stamp/1`, like `:json` and `:empty`: a MapSet
+            # literal as a struct default is an opaque term built outside the
+            # module that owns it, which is exactly what Dialyzer's opacity
+            # check is for.
+            parse_tags: nil
 
   @doc """
   The bounds a schema is given when it does not set its own.
@@ -136,21 +148,115 @@ defmodule Coelho.Schema do
       nodes: nodes,
       marks: marks,
       node_order: Enum.map(node_decls, &elem(&1, 0)),
-      mark_order: Enum.map(mark_decls, &elem(&1, 0)),
-      groups: build_groups(nodes),
-      node_names: Map.new(nodes, fn {name, _} -> {Atom.to_string(name), name} end),
-      mark_names: Map.new(marks, fn {name, _} -> {Atom.to_string(name), name} end)
+      mark_order: Enum.map(mark_decls, &elem(&1, 0))
     }
 
+    schema = derive(schema)
     validate_schema!(schema)
     stamp(schema)
   end
 
-  # Exporting a schema and hashing it costs a few microseconds, which is
-  # nothing once and a great deal on a path that runs per keystroke and per
-  # render. It is settled here, where a schema is built, because a schema
-  # never changes afterwards.
-  defp stamp(schema), do: %{schema | fingerprint: schema |> to_json() |> :erlang.phash2()}
+  # The fields that are a pure function of `nodes` and `marks`, and that
+  # `validate_schema!` reads — so they are settled before it, where the rest
+  # of the derivations in `stamp/1` come after. Written here rather than
+  # again in each of `new/1`, `extend/2` and `restrict/2`, which is how the
+  # three came to be three copies of the same four lines.
+  defp derive(schema) do
+    %{
+      schema
+      | groups: build_groups(schema.nodes),
+        node_names: Map.new(schema.nodes, fn {name, _} -> {Atom.to_string(name), name} end),
+        mark_names: Map.new(schema.marks, fn {name, _} -> {Atom.to_string(name), name} end)
+    }
+  end
+
+  # Exporting a schema, hashing it, encoding it, and every table derived from
+  # it costs a few microseconds, which is nothing once and a great deal on a
+  # path that runs per keystroke and per render. It is all settled here,
+  # where a schema is built, because a schema never changes afterwards — and
+  # here rather than in each of `new/1`, `extend/2` and `restrict/2`, which
+  # is what makes the three agree by construction.
+  #
+  # A cache keyed by the schema would be the other way to spend this once,
+  # and it is the wrong one: an application building a schema per request
+  # would grow it without bound. A value that carries its own derivations is
+  # collected with the schema it belongs to.
+  defp stamp(schema) do
+    exported = to_json(schema)
+
+    %{
+      schema
+      | fingerprint: :erlang.phash2(exported),
+        json: JSON.encode!(exported),
+        empty: build_empty(schema),
+        mark_ranks: schema.mark_order |> Enum.with_index() |> Map.new(),
+        parse_tags: build_parse_tags(schema),
+        nodes: Map.new(schema.nodes, fn {name, spec} -> {name, stamp_attr_keys(spec)} end),
+        marks: Map.new(schema.marks, fn {name, spec} -> {name, stamp_attr_keys(spec)} end)
+    }
+  end
+
+  # The names a node or mark answers to, as the strings a document is written
+  # in. Validation asks this of every node instance, and the answer is a
+  # property of the spec.
+  defp stamp_attr_keys(spec),
+    do: %{spec | attr_keys: MapSet.new(spec.attrs, fn {name, _} -> Atom.to_string(name) end)}
+
+  # Which HTML tags the schema imports at all — asked of every element the
+  # import does not match, to tell "no rule covers this tag" from "a rule
+  # covered it and refused what it carried".
+  defp build_parse_tags(schema) do
+    for spec <- Map.values(schema.nodes) ++ Map.values(schema.marks),
+        {tag, _extract} <- spec.parse,
+        into: MapSet.new(),
+        do: tag
+  end
+
+  # The empty document of this schema, which every seeded form, every
+  # sanitised-away document and every editor rendering an empty field asks
+  # for. The child is derived from the top node's content expression rather
+  # than assumed to be a paragraph, so a schema calling its block node
+  # something else still gets a document its own validation accepts.
+  defp build_empty(schema) do
+    top = node_spec(schema, schema.top_node)
+    document = %{"type" => Atom.to_string(schema.top_node)}
+
+    case empty_child(schema, top) do
+      nil -> document
+      child -> Map.put(document, "content", [%{"type" => Atom.to_string(child)}])
+    end
+  end
+
+  defp empty_child(_schema, %NodeSpec{content: nil}), do: nil
+
+  defp empty_child(schema, %NodeSpec{content: content}) do
+    matches? = fn children ->
+      ContentExpression.matches?(content, children, &instance_of?(schema, &1, &2))
+    end
+
+    if matches?.([]) do
+      nil
+    else
+      Enum.find(schema.node_order, fn name ->
+        spec = node_spec(schema, name)
+        usable_empty?(schema, spec) and matches?.([name])
+      end)
+    end
+  end
+
+  # A candidate is only usable if it is itself valid while empty: picking a
+  # list item for a "list_item+" top node, or a mention that requires a
+  # user id, would build a document that fails validation on the very next
+  # line — and seed a new record form that is invalid before the user types.
+  defp usable_empty?(schema, %NodeSpec{} = spec) do
+    childless?(schema, spec) and Enum.all?(spec.attrs, fn {_name, attr} -> not attr.required end)
+  end
+
+  defp childless?(_schema, %NodeSpec{content: nil}), do: true
+
+  defp childless?(schema, %NodeSpec{content: content}) do
+    ContentExpression.matches?(content, [], &instance_of?(schema, &1, &2))
+  end
 
   @doc """
   A stable number identifying this schema's exported shape.
@@ -249,12 +355,10 @@ defmodule Coelho.Schema do
         nodes: nodes,
         marks: marks,
         node_order: append_new(schema.node_order, Keyword.keys(node_decls)),
-        mark_order: append_new(schema.mark_order, Keyword.keys(mark_decls)),
-        groups: build_groups(nodes),
-        node_names: Map.new(nodes, fn {name, _} -> {Atom.to_string(name), name} end),
-        mark_names: Map.new(marks, fn {name, _} -> {Atom.to_string(name), name} end)
+        mark_order: append_new(schema.mark_order, Keyword.keys(mark_decls))
     }
 
+    extended = derive(extended)
     validate_schema!(extended)
     stamp(extended)
   end
@@ -334,11 +438,10 @@ defmodule Coelho.Schema do
         nodes: nodes,
         marks: marks,
         node_order: Enum.filter(schema.node_order, &Map.has_key?(nodes, &1)),
-        mark_order: Enum.filter(schema.mark_order, &Map.has_key?(marks, &1)),
-        groups: build_groups(nodes),
-        node_names: Map.new(nodes, fn {name, _} -> {Atom.to_string(name), name} end),
-        mark_names: Map.new(marks, fn {name, _} -> {Atom.to_string(name), name} end)
+        mark_order: Enum.filter(schema.mark_order, &Map.has_key?(marks, &1))
     }
+
+    restricted = derive(restricted)
 
     try do
       validate_schema!(restricted)
@@ -398,10 +501,18 @@ defmodule Coelho.Schema do
   editor happened to add its marks.
   """
   @spec mark_index(t(), atom()) :: non_neg_integer()
-  def mark_index(%__MODULE__{mark_order: order}, name) do
-    case Enum.find_index(order, &(&1 == name)) do
-      nil -> length(order)
-      index -> index
+  def mark_index(%__MODULE__{mark_ranks: ranks, mark_order: order}, name) do
+    case Map.fetch(ranks, name) do
+      {:ok, index} ->
+        index
+
+      # A miss is either a mark this schema does not declare — which ranks
+      # last — or a schema that never went through the build, whose ranks are
+      # empty and whose order is still the truth. Reading the order settles
+      # both, and a miss is rare enough to pay for it: ranking every mark the
+      # same is a document that stops normalising to the same bytes.
+      :error ->
+        Enum.find_index(order, &(&1 == name)) || length(order)
     end
   end
 
@@ -410,6 +521,98 @@ defmodule Coelho.Schema do
   """
   @spec node_spec(t(), atom()) :: NodeSpec.t() | nil
   def node_spec(%__MODULE__{} = schema, name), do: Map.get(schema.nodes, name)
+
+  @doc """
+  The empty document of this schema.
+
+  Derived when the schema is built. A `%Coelho.Schema{}` put together by hand
+  never went through that, so it is derived on the spot rather than answering
+  `nil` from a function that promises a document — the same reading the other
+  derived fields get through `parse_tags/1` and `attr_keys/1`.
+  """
+  @spec empty(t()) :: map()
+  def empty(%__MODULE__{empty: nil} = schema), do: build_empty(schema)
+  def empty(%__MODULE__{empty: empty}), do: empty
+
+  @doc """
+  This schema's JSON export, as the editor receives it.
+  """
+  @spec json(t()) :: String.t()
+  def json(%__MODULE__{json: nil} = schema), do: schema |> to_json() |> JSON.encode!()
+  def json(%__MODULE__{json: json}), do: json
+
+  @doc """
+  The HTML tags this schema imports at all.
+  """
+  @spec parse_tags(t()) :: MapSet.t(String.t())
+  def parse_tags(%__MODULE__{parse_tags: nil} = schema), do: build_parse_tags(schema)
+  def parse_tags(%__MODULE__{parse_tags: tags}), do: tags
+
+  @doc """
+  The attribute names a node or mark spec answers to, as the strings a
+  document is written in.
+  """
+  @spec attr_keys(NodeSpec.t() | MarkSpec.t()) :: MapSet.t(String.t())
+  def attr_keys(%{attr_keys: nil, attrs: attrs}),
+    do: MapSet.new(attrs, fn {name, _spec} -> Atom.to_string(name) end)
+
+  def attr_keys(%{attr_keys: keys}), do: keys
+
+  @doc """
+  The spec of the node a document node names, or `:error`.
+
+  The question every walk of a document asks first, and the one place the
+  three steps it takes live: the `"type"` has to be there and be a string, it
+  has to name something this schema declares, and the answer is that
+  declaration. Written out at the call site — which it was, in six of them —
+  each copy gets to disagree about what a missing type means.
+
+      iex> {:ok, spec} = Coelho.Schema.spec_of(Coelho.Schema.default(), %{"type" => "paragraph"})
+      iex> spec.name
+      :paragraph
+
+      iex> Coelho.Schema.spec_of(Coelho.Schema.default(), %{"type" => "marquee"})
+      :error
+
+  """
+  @spec spec_of(t(), term()) :: {:ok, NodeSpec.t()} | :error
+  def spec_of(%__MODULE__{} = schema, %{"type" => type}), do: fetch_node_spec(schema, type)
+  def spec_of(%__MODULE__{}, _node), do: :error
+
+  @doc """
+  The spec of a node type named as it is written in a document, or `:error`.
+  """
+  @spec fetch_node_spec(t(), term()) :: {:ok, NodeSpec.t()} | :error
+  def fetch_node_spec(%__MODULE__{} = schema, type) do
+    with {:ok, name} <- resolve_node_name(schema, type),
+         %NodeSpec{} = spec <- node_spec(schema, name) do
+      {:ok, spec}
+    else
+      _unknown -> :error
+    end
+  end
+
+  @doc """
+  The spec of a mark type named as it is written in a document, or `:error`.
+  """
+  @spec fetch_mark_spec(t(), term()) :: {:ok, MarkSpec.t()} | :error
+  def fetch_mark_spec(%__MODULE__{} = schema, type) do
+    with {:ok, name} <- resolve_mark_name(schema, type),
+         %MarkSpec{} = spec <- mark_spec(schema, name) do
+      {:ok, spec}
+    else
+      _unknown -> :error
+    end
+  end
+
+  @doc """
+  Whether a node's `:marks` list admits a mark by name.
+
+  `:all` is the default and admits everything; a list admits what it names.
+  """
+  @spec mark_allowed?(:all | [atom()], atom()) :: boolean()
+  def mark_allowed?(:all, _name), do: true
+  def mark_allowed?(allowed, name) when is_list(allowed), do: name in allowed
 
   @doc """
   Looks up a mark spec by name, returning `nil` when unknown.

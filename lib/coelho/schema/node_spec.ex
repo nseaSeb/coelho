@@ -25,6 +25,10 @@ defmodule Coelho.Schema.NodeSpec do
     * `:to_text` — what the node contributes to the plain text extraction,
       when that is not simply its children
     * `:parse` — HTML this node is imported from, see `Coelho.HTML`
+    * `:attr_keys` — the attribute names as the strings a document is written
+      in, derived from `:attrs` when the schema is built. Validation asks
+      this of every node instance, and building it there would be a set per
+      node of every document.
 
   """
 
@@ -50,7 +54,8 @@ defmodule Coelho.Schema.NodeSpec do
           render: render(),
           render_inline: render(),
           to_text: String.t() | (map() -> iodata()) | nil,
-          parse: [Coelho.HTML.rule()]
+          parse: [Coelho.HTML.rule()],
+          attr_keys: MapSet.t(String.t()) | nil
         }
 
   defstruct [
@@ -68,6 +73,7 @@ defmodule Coelho.Schema.NodeSpec do
     render: nil,
     render_inline: nil,
     to_text: nil,
-    parse: []
+    parse: [],
+    attr_keys: nil
   ]
 end

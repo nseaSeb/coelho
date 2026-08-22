@@ -109,6 +109,57 @@ defmodule Coelho.RenderTest do
     end
   end
 
+  describe "the attributes of an element" do
+    test "a spec's class comes after what its render already put there" do
+      # The bytes of every rendered document depend on this: a class moved
+      # from the end of the attribute list to the front is a different
+      # document to anything comparing HTML — a snapshot, an ETag, a diff.
+      built =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [
+              content: "text*",
+              group: "block",
+              class: "prose",
+              render: {"p", [{"id", "x"}]}
+            ]
+          ]
+        )
+
+      document = doc([paragraph([text("hi")])])
+      {:ok, document} = Document.validate(document, built)
+
+      assert Render.to_html(document, built) == ~s(<p id="x" class="prose">hi</p>)
+    end
+  end
+
+  describe "iodata a render function hands back" do
+    test "an improper iolist is rendered, not refused" do
+      # `["" | inner]` is valid iodata, and an application's render is free
+      # to build one — asking whether a child came to nothing must accept
+      # everything iodata can be.
+      built =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [
+              content: "text*",
+              group: "block",
+              render_inline: &__MODULE__.improper_iolist/2
+            ]
+          ]
+        )
+
+      document = doc([paragraph([text("hi")])])
+      {:ok, document} = Document.validate(document, built)
+
+      assert Render.to_inline_html(document, built) == "hi"
+    end
+  end
+
+  def improper_iolist(_node, inner), do: ["" | inner]
+
   describe "trusting the schema only so far" do
     test "never builds a tag name out of an attribute value" do
       # A row written under a looser schema still renders through today's

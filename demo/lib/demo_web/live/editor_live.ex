@@ -52,6 +52,7 @@ defmodule DemoWeb.EditorLive do
      |> assign(:note_open, true)
      |> assign(:note_generation, 1)
      |> assign(:note_locale, :fr)
+     |> assign(:note_highlight, false)
      |> assign_form(Post.changeset(post, %{}))}
   end
 
@@ -76,6 +77,15 @@ defmodule DemoWeb.EditorLive do
   # carries two fingerprints rather than one.
   def handle_event("note_locale", _params, socket) do
     {:noreply, update(socket, :note_locale, &if(&1 == :fr, do: :en, else: :fr))}
+  end
+
+  # A schema changed under an editor that is already mounted. The vocabulary
+  # is the application's to change — a mark added because a document type
+  # gained one — and the editor has to follow without being remounted: the
+  # container is `phx-update="ignore"`, so only the fingerprint on the
+  # element says anything happened.
+  def handle_event("note_schema", _params, socket) do
+    {:noreply, update(socket, :note_highlight, &(not &1))}
   end
 
   def handle_event("note_toggle", _params, socket) do
@@ -136,6 +146,20 @@ defmodule DemoWeb.EditorLive do
 
   # The upload channel is LiveView's; what to do with the bytes is the
   # application's. Coelho only wants the node to insert.
+  # Declared in Elixir and nowhere else: `render: {"mark", []}` is the whole
+  # declaration, and the editor draws it from that — no `toDOM` written in
+  # JavaScript, which is the path an application takes when it adds a mark
+  # of its own.
+  @note_highlighted Coelho.Schema.extend(Demo.RichText.schema(),
+                      marks: [highlight: [render: {"mark", []}]]
+                    )
+
+  defp note_schema(true), do: @note_highlighted
+  defp note_schema(false), do: Demo.RichText.schema()
+
+  defp note_toolbar(true), do: ~w(bold italic link highlight)
+  defp note_toolbar(false), do: ~w(bold italic link)
+
   defp handle_progress(:attachment, entry, socket) do
     if entry.done? do
       # The callback has to answer {:ok, term} or LiveView raises and takes the
@@ -316,6 +340,9 @@ defmodule DemoWeb.EditorLive do
           <button type="button" id="note-locale" phx-click="note_locale">
             {if @note_locale == :fr, do: "English", else: "Français"}
           </button>
+          <button type="button" id="note-schema" phx-click="note_schema">
+            {if @note_highlight, do: "Plain schema", else: "Add highlight"}
+          </button>
 
           <%!-- No phx-change at all: this editor reports on the way out and
                 at no other time, which is the shape a debounced form takes
@@ -326,8 +353,8 @@ defmodule DemoWeb.EditorLive do
             <.coelho_editor
               name="note[body]"
               value={@note}
-              document_schema={Demo.RichText.schema()}
-              toolbar={~w(bold italic link)}
+              document_schema={note_schema(@note_highlight)}
+              toolbar={note_toolbar(@note_highlight)}
               labels={note_labels(@note_locale)}
               field_labels={note_field_labels(@note_locale)}
               maxlength={200}

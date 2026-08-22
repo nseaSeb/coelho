@@ -187,6 +187,13 @@ defmodule Coelho.Storage do
   defp elem_or({:error, _reason}), do: :error
   defp elem_or(_other), do: :error
 
+  # Reading is all or nothing: the whole object comes back as one binary, on
+  # the heap of whichever process asked. `Coelho.Plug.Attachments` serves
+  # from `path/2` where the storage has one — `send_file` streams and the
+  # bytes never reach the VM — and falls back to this only for a storage that
+  # has no local file, where N concurrent downloads hold N copies of the
+  # object at once. A storage fronting large objects should implement
+  # `redirect_url/3` and let the client fetch them from the bucket.
   @spec read(t(), key()) :: {:ok, binary()} | {:error, term()}
   def read(%module{} = storage, key), do: module.read(storage, key)
 

@@ -275,44 +275,9 @@ defmodule Coelho do
   else still gets a document its own `validate/2` accepts.
   """
   @spec empty(Schema.t()) :: map()
-  def empty(schema \\ Schema.default()) do
-    top = Schema.node_spec(schema, schema.top_node)
-    document = %{"type" => Atom.to_string(schema.top_node)}
-
-    case empty_child(schema, top) do
-      nil -> document
-      child -> Map.put(document, "content", [%{"type" => Atom.to_string(child)}])
-    end
-  end
-
-  defp empty_child(_schema, %Schema.NodeSpec{content: nil}), do: nil
-
-  defp empty_child(schema, %Schema.NodeSpec{content: content}) do
-    matches? = fn children ->
-      Schema.ContentExpression.matches?(content, children, &Schema.instance_of?(schema, &1, &2))
-    end
-
-    if matches?.([]) do
-      nil
-    else
-      Enum.find(schema.node_order, fn name ->
-        spec = Schema.node_spec(schema, name)
-        usable_empty?(schema, spec) and matches?.([name])
-      end)
-    end
-  end
-
-  # A candidate is only usable if it is itself valid while empty: picking a
-  # list item for a "list_item+" top node, or a mention that requires a
-  # user id, would build a document that fails validation on the very next
-  # line — and seed a new record form that is invalid before the user types.
-  defp usable_empty?(schema, %Schema.NodeSpec{} = spec) do
-    childless?(schema, spec) and Enum.all?(spec.attrs, fn {_name, attr} -> not attr.required end)
-  end
-
-  defp childless?(_schema, %Schema.NodeSpec{content: nil}), do: true
-
-  defp childless?(schema, %Schema.NodeSpec{content: content}) do
-    Schema.ContentExpression.matches?(content, [], &Schema.instance_of?(schema, &1, &2))
-  end
+  # Derived when the schema is built, not here: this is asked for on every
+  # render of an empty editor and by every sanitisation that ends with
+  # nothing left, and the derivation walks the node order matching content
+  # expressions.
+  def empty(schema \\ Schema.default()), do: Schema.empty(schema)
 end
