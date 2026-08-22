@@ -86,6 +86,66 @@ defmodule Coelho.SchemaTest do
     end
   end
 
+  describe "editor_text" do
+    defp variable(decl) do
+      Schema.new(
+        nodes: [
+          doc: [content: "paragraph+"],
+          paragraph: [content: "inline*", render: {"p", []}],
+          variable: [{:group, "inline"}, {:inline, true}, {:void, true} | decl]
+        ]
+      )
+    end
+
+    test "is exported so the browser can draw a node that has no content" do
+      schema =
+        variable(attrs: [label: [default: nil]], render: {"span", []}, editor_text: :label)
+
+      [_name, exported] =
+        schema |> Schema.to_json() |> Map.fetch!("nodes") |> Enum.find(&(hd(&1) == "variable"))
+
+      assert exported["editorText"] == "label"
+      assert exported["atom"] == true
+    end
+
+    test "must name an attribute the node declares" do
+      # Caught here rather than discovered as an empty chip in a browser,
+      # which is a variable nobody can see and nobody can tell from a bug in
+      # their own template.
+      assert_raise ArgumentError, ~r/editor_text of :variable names :nowhere/, fn ->
+        variable(attrs: [label: [default: nil]], render: {"span", []}, editor_text: :nowhere)
+      end
+    end
+
+    test "needs a node with no content of its own" do
+      # A node that holds content draws it, and the label would take the
+      # place of the hole it draws it in: empty on screen, whole in storage,
+      # and nothing said about it.
+      assert_raise ArgumentError, ~r/editor_text of :chapter needs `void: true`/, fn ->
+        Schema.new(
+          nodes: [
+            doc: [content: "chapter+"],
+            chapter: [
+              content: "text*",
+              attrs: [label: [default: nil]],
+              render: {"section", []},
+              editor_text: :label
+            ]
+          ]
+        )
+      end
+    end
+
+    test "is absent from the export when nothing asked for it" do
+      schema = variable(attrs: [label: [default: nil]], render: {"span", []})
+
+      [_name, exported] =
+        schema |> Schema.to_json() |> Map.fetch!("nodes") |> Enum.find(&(hd(&1) == "variable"))
+
+      refute Map.has_key?(exported, "editorText")
+    end
+  end
+
   test "injects a text node when the declaration omits it" do
     schema = Schema.new(nodes: [doc: [content: "text*"]])
 

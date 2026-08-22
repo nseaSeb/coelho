@@ -373,6 +373,37 @@ defmodule Coelho.DocumentTest do
     end
   end
 
+  describe "characters a person types that are not one code point" do
+    # An emoji is where a length in "characters" stops being obvious, and the
+    # editor and the server have to answer the same number: one counts to
+    # show it, the other counts to refuse. A family is one grapheme made of
+    # seven code points; a flag is one made of two.
+    @family "👨‍👩‍👧"
+    @flag "🇫🇷"
+
+    test "are counted as one, the way the browser counts them" do
+      assert Document.text_length(doc([paragraph([text(@family)])])) == 1
+      assert Document.text_length(doc([paragraph([text(@flag)])])) == 1
+      assert Document.text_length(doc([paragraph([text("a" <> @family <> "b")])])) == 3
+    end
+
+    test "are never cut in half by a bound" do
+      # Cutting inside a grapheme leaves a lone zero-width joiner or half a
+      # surrogate pair: what the reader gets is a tofu box, and what the
+      # writer gets is no way to understand why.
+      long = doc([paragraph([text(String.duplicate(@family, 3))])])
+
+      for limit <- 1..3 do
+        cut = Document.sanitize(long, schema(), limits: [max_text_length: limit])
+        kept = get_in(cut, ["content", Access.at(0), "content", Access.at(0), "text"]) || ""
+
+        assert String.valid?(kept)
+        assert kept == String.duplicate(@family, limit)
+        assert Document.text_length(cut) == limit
+      end
+    end
+  end
+
   describe "adjacent text" do
     test "runs carrying the same marks are merged" do
       document =

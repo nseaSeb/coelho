@@ -206,6 +206,121 @@ defmodule Coelho.EditorOptionsTest do
     end
   end
 
+  describe "inserting what the schema declares" do
+    defp with_variable do
+      Schema.extend(Schema.default(),
+        nodes: [
+          variable: [
+            group: "inline",
+            inline: true,
+            void: true,
+            attrs: [
+              name: [required: true, validate: {:one_of, ~w(number due_date)}],
+              label: [default: nil, validate: {:nullable, :string}]
+            ],
+            render: {"span", [{"class", "variable"}]},
+            editor_text: :label
+          ]
+        ]
+      )
+    end
+
+    defp toolbar(entry, schema \\ nil) do
+      editor(%{
+        name: "post[body]",
+        value: paragraph("x"),
+        document_schema: schema || with_variable(),
+        toolbar: [entry]
+      })
+    end
+
+    test "a node entry carries the node, its attributes and its own words" do
+      html =
+        toolbar(
+          {"insert",
+           node: :variable, attrs: %{name: "number", label: "{{number}}"}, label: "Invoice number"}
+        )
+
+      assert html =~ ~s(data-coelho-command="insert")
+      assert html =~ ~s(data-coelho-node="variable")
+      assert html =~ ~s(aria-label="Invoice number")
+      # JSON rather than one attribute per name: an attribute is a string,
+      # and a variable keyed by a number has to arrive as a number.
+      assert html =~ "&quot;name&quot;:&quot;number&quot;"
+    end
+
+    test "a text entry carries the text" do
+      html = toolbar({"insert", text: "🎉", label: "Party popper"})
+
+      assert html =~ ~s(data-coelho-text="🎉")
+      assert html =~ ~s(aria-label="Party popper")
+      refute html =~ "data-coelho-node"
+    end
+
+    test "a node the schema does not declare is not offered" do
+      refute toolbar({"insert", node: :nowhere, label: "Nowhere"}) =~
+               "data-coelho-command=\"insert"
+    end
+
+    test "a node that is not an inline atom is not offered" do
+      # The verb has no decision to make about an atom. A block has several,
+      # which is why the node commands are a closed list in the first place.
+      refute toolbar({"insert", node: :paragraph, label: "A block"}) =~
+               "data-coelho-command=\"insert"
+    end
+
+    test "an attribute the node would refuse is not offered" do
+      # Asked of the attribute's own validator, like an alignment or a
+      # heading level: a button that writes what the server refuses is a
+      # button that loses what the writer typed.
+      refute toolbar({"insert", node: :variable, attrs: %{name: "nowhere"}, label: "Refused"}) =~
+               "data-coelho-command=\"insert"
+
+      refute toolbar(
+               {"insert", node: :variable, attrs: %{unknown: "x", name: "number"}, label: "?"}
+             ) =~
+               "data-coelho-command=\"insert"
+    end
+
+    test "a required attribute left out is not offered" do
+      refute toolbar({"insert", node: :variable, label: "Nameless"}) =~
+               "data-coelho-command=\"insert"
+    end
+
+    test "an entry with its own words left out says what it puts in" do
+      # `nil` reaching the label lookup used to take the whole render down
+      # with it, and an entry with no `:label` is a legal one.
+      assert toolbar({"insert", text: "\u2014"}) =~ ~s(aria-label="\u2014")
+
+      assert toolbar({"insert", node: :variable, attrs: %{name: "number"}}) =~
+               ~s(aria-label="variable")
+    end
+
+    test "an entry naming neither a node nor text is not offered" do
+      # `nil` is an atom, so a guard asking for one let this through to a
+      # lookup for a key that is not there.
+      refute toolbar({"insert", label: "Nothing"}) =~ "data-coelho-command=\"insert"
+      refute toolbar({"insert", []}) =~ "data-coelho-command=\"insert"
+    end
+
+    test "attributes given as a keyword list say the same thing as a map" do
+      # Judged the same way on the way in, so they have to encode the same
+      # way on the way out — a list of tuples is not an object to `JSON`.
+      html = toolbar({"insert", node: :variable, attrs: [name: "number"], label: "V"})
+
+      assert html =~ "&quot;name&quot;:&quot;number&quot;"
+    end
+
+    test "the bare name is not a command" do
+      # It names a verb and says nothing about what to insert. Refused, so a
+      # schema declaring a *mark* called `insert` does not get a button that
+      # can only ever be disabled.
+      marked = Schema.extend(with_variable(), marks: [insert: [render: {"ins", []}]])
+
+      refute toolbar("insert", marked) =~ "data-coelho-command=\"insert"
+    end
+  end
+
   describe "the flush" do
     test "carries the event and the application's own token" do
       html = editor(%{name: "a[b]", flush_event: "flush", flush_token: 7})

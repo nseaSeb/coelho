@@ -556,6 +556,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
         |> assign(:value_json, value_json(value, schema))
         |> assign(:count, initial_count(value))
         |> assign(:toolbar, toolbar)
+        |> assign(:buttons, Enum.map(toolbar, &button(&1, assigns.labels, assigns.icons)))
 
       ~H"""
       <div
@@ -582,18 +583,21 @@ if Code.ensure_loaded?(Phoenix.Component) do
           phx-update="ignore"
         >
           <button
-            :for={command <- @toolbar}
+            :for={button <- @buttons}
             type="button"
             class="coelho-command"
-            data-coelho-command={command}
-            title={label(@labels, command)}
-            aria-label={label(@labels, command)}
+            data-coelho-command={button.command}
+            data-coelho-node={button.node}
+            data-coelho-attrs={button.attrs}
+            data-coelho-text={button.text}
+            title={button.label}
+            aria-label={button.label}
           >
             <%!-- The icon, or the label as text where there is none — a
                   button showing neither would be a button nobody can read.
                   `title` and `aria-label` carry the words either way, so the
                   tooltip and the screen reader say the same thing. --%>
-            {icon(@icons, @labels, command)}
+            {button.icon}
           </button>
 
           <span
@@ -709,6 +713,58 @@ if Code.ensure_loaded?(Phoenix.Component) do
       Map.get_lazy(labels, command, fn -> Coelho.Icons.label(command) end)
     end
 
+    # What a button carries, worked out once rather than four times in the
+    # template. A named command carries its name and nothing else; an
+    # insertion carries what it puts in — the node and its attributes, or the
+    # text — and says its own words, because six variables are six buttons
+    # differing only in those, and a key into `:labels` built out of them
+    # would be a key nobody can read.
+    defp button(command, labels, icons) when is_binary(command) do
+      %{
+        command: command,
+        node: nil,
+        attrs: nil,
+        text: nil,
+        label: label(labels, command),
+        icon: icon(icons, labels, command)
+      }
+    end
+
+    defp button({"insert", opts}, labels, icons) do
+      node = Keyword.get(opts, :node)
+      text = Keyword.get(opts, :text)
+      attrs = Keyword.get(opts, :attrs)
+      said = Keyword.get(opts, :label) || insert_label(labels, node, text)
+
+      %{
+        command: "insert",
+        node: node && to_string(node),
+        # Travels as JSON on a DOM attribute, which is how the browser gets a
+        # number back as a number: an attribute is a string, and a variable
+        # keyed by an integer id would arrive as `"7"` and build a node the
+        # server then refuses.
+        attrs: attrs && JSON.encode!(named_attrs(attrs)),
+        text: text,
+        label: said,
+        icon: Keyword.get(opts, :icon) || Map.get(icons, "insert") || said
+      }
+    end
+
+    # An entry with no words of its own: the node's name, or the text it puts
+    # in, which for an emoji is the button anyone would have drawn anyway.
+    defp insert_label(labels, nil, text) when is_binary(text), do: Map.get(labels, text, text)
+
+    defp insert_label(labels, node, _text) when not is_nil(node),
+      do: label(labels, to_string(node))
+
+    defp insert_label(_labels, _node, _text), do: "insert"
+
+    # A keyword list and a map say the same thing here, and only one of them
+    # encodes: `[name: "number"]` is a list of tuples to `JSON`, which raises
+    # rather than writing an object.
+    defp named_attrs(attrs) when is_map(attrs), do: attrs
+    defp named_attrs(attrs) when is_list(attrs), do: Map.new(attrs)
+
     # The application's icon wins over the shipped one, and a command with
     # neither shows its label. A label is text and is escaped; an icon is
     # markup and is not, which is why it has to arrive already safe.
@@ -783,6 +839,30 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     defp supported?(_schema, command) when command in @always, do: true
 
+    # `insert` names a verb, not a thing: on its own it says nothing about
+    # what to put in, and the hook has nothing to run. Refused here so that a
+    # schema declaring a *mark* called `insert` — which the fallthrough below
+    # would otherwise offer — does not render a button that can only ever be
+    # disabled.
+    defp supported?(_schema, "insert"), do: false
+
+    # Text goes in whatever the schema says — an emoji, a dash, a
+    # non-breaking space are characters, not vocabulary.
+    defp supported?(schema, {"insert", opts}) when is_list(opts) do
+      case {Keyword.get(opts, :text), Keyword.get(opts, :node)} do
+        {text, _node} when is_binary(text) ->
+          true
+
+        # `nil` is an atom, so an entry naming neither would have reached
+        # `insertable?` and died looking for a key that is not there.
+        {nil, node} when (is_atom(node) and not is_nil(node)) or is_binary(node) ->
+          insertable?(schema, opts)
+
+        _neither ->
+          false
+      end
+    end
+
     # The four the hook has a command for, and no more. Matching every name
     # beginning with `align_` would take two names away from the marks: a
     # mark called `align_terms` would be tested against a validator that
@@ -825,6 +905,40 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     defp supported?(schema, command) do
       match?({:ok, _}, Schema.resolve_mark_name(schema, command))
+    end
+
+    # A node is insertable when the schema declares it, when it is the one
+    # shape this verb has no decision to make about — inline and void — and
+    # when the attributes the entry names are ones the node would accept.
+    # The last is what stops a toolbar from offering a chip the server will
+    # refuse the moment it is written.
+    defp insertable?(schema, opts) do
+      node = opts |> Keyword.fetch!(:node) |> to_string()
+      given = opts |> Keyword.get(:attrs, %{}) |> named_attrs()
+
+      case Schema.fetch_node_spec(schema, node) do
+        {:ok, %{inline: true, void: true, attrs: attrs}} -> attrs_fit?(attrs, given)
+        _other -> false
+      end
+    end
+
+    defp attrs_fit?(attrs, given) do
+      named = Map.new(given, fn {name, value} -> {to_string(name), value} end)
+
+      Enum.all?(attrs, fn {name, attr} ->
+        case Map.fetch(named, to_string(name)) do
+          {:ok, value} -> Coelho.Schema.Attr.validate(attr.validate, value) == :ok
+          :error -> not attr.required
+        end
+      end) and
+        Enum.all?(named, fn {name, _value} -> Map.has_key?(attrs, safe_atom(attrs, name)) end)
+    end
+
+    # Only names the spec already declares are resolved, so a stray key in a
+    # toolbar entry is a button that does not appear rather than an atom the
+    # schema never heard of.
+    defp safe_atom(attrs, name) do
+      Enum.find(Map.keys(attrs), fn declared -> to_string(declared) == name end)
     end
   end
 end

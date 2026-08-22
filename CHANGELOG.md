@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.12.0 — 2026-08-22
+
+A placeholder written as text is not safe in a document. Text is a tree, so
+bolding half of `{{number}}` splits it across two text nodes and every
+substitution downstream stops matching — silently, with the writer seeing a
+bold placeholder and the reader receiving one. The answer is not to
+substitute more cleverly: it is for a variable to stop being a pattern in
+text and become a node nothing can split. The schema half of that already
+worked; putting one in did not.
+
+### A toolbar entry can insert what the schema declares
+
+```elixir
+toolbar={
+  ~w(bold italic link) ++
+    [
+      {"insert", node: :variable, attrs: %{name: "number", label: "{{number}}"},
+       label: "Invoice number"},
+      {"insert", text: "🎉", label: "Party popper"}
+    ]
+}
+```
+
+- The entry carries the node and its attributes, and says its own words:
+  six variables are six buttons differing only in an attribute, and a key
+  into `:labels` built out of one would be a key nobody can read. `:icon`
+  the same way.
+- Filtered against the schema like every other command: the node has to be
+  declared, it has to be **inline and void**, and the attributes the entry
+  names have to be ones the node would accept, asked of their own
+  validators. A button that writes what the server refuses is a button that
+  loses what the writer typed.
+- The node commands stay a closed list, and for the reason they always did:
+  a block needs a decision about what happens to the selection and to what
+  surrounds it, and every kind of block needs a different one. An atom needs
+  none — `inline: true, void: true` *is* the verb. That is what makes this a
+  command the hook knows rather than a door onto arbitrary node types.
+- `text:` puts characters in instead — an emoji, an em dash, a non-breaking
+  space. The attributes travel as JSON on a DOM attribute, so a variable
+  keyed by a number arrives as a number rather than as `"7"`.
+
+### A void node can show what it stands for
+
+`editor_text:` names the attribute the **editor** draws inside a node that
+has no content of its own, exported with the rest of the schema:
+
+```elixir
+variable: [
+  group: "inline", inline: true, void: true,
+  attrs: [name: [...], label: [...]],
+  render: {"span", [{"data-variable", ""}]},
+  editor_text: :label
+]
+```
+
+The value is passed to ProseMirror as a text child rather than interpolated
+into the spec, so what a writer put in an attribute cannot become an element.
+The page gets whatever `:render` says, which is where the value is
+substituted. Naming an attribute the node does not declare, or asking for
+this on a node that holds content, raises when the schema is built rather
+than drawing an empty chip in somebody's browser.
+
+### Emoji, and anything else that is one character made of several
+
+Nothing changed here, which is the point — it is now pinned by tests. Text is
+counted in grapheme clusters on both sides, so a family emoji is one
+character in the editor's counter, one against `:max_text_length`, and
+`Coelho.Document.sanitize/2` never cuts one in half.
+
+### Said out loud
+
+`Coelho.Ash.Type` documents how to keep the `:string` column a field already
+lives in: override `storage_type/1`, encode in `dump_to_native/2`, decode in
+`cast_stored/2`, and put the fallback for rows that still hold plain text
+inside the type — the one place every reader goes through by construction
+rather than by discipline. Found by an application reading the
+`defoverridable` list, which is not where a feature that ships instead of
+waiting should have to be found.
+
 ## 0.11.0 — 2026-08-22
 
 What the audit of 0.9.0 left open, and what an application reported after

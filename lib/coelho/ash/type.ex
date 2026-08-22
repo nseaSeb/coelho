@@ -32,6 +32,51 @@ defmodule Coelho.Ash.Type do
   attribute, because that is where Ash puts per-attribute configuration and
   where `Ash.Resource.Info` will show it.
 
+  ## Keeping the column you already have
+
+  `storage_type/1`, `cast_stored/2`, `cast_input/2`, `dump_to_native/2`,
+  `cast_atomic/2` and `constraints/0` are all overridable, which is what lets
+  a field that is already a `:string` column become a document without a
+  migration: encode on the way down, decode on the way up, and put the
+  fallback for rows that still hold plain text inside the type — the one
+  place every reader goes through by construction rather than by discipline.
+
+      defmodule MyApp.RichText.Type do
+        use Coelho.Ash.Type
+
+        @impl true
+        def storage_type(_constraints), do: :string
+
+        @impl true
+        def dump_to_native(value, constraints) do
+          case super(value, constraints) do
+            # A column that never holds NULL is a column `is_nil/1` never
+            # finds and `allow_nil?` never catches: `JSON.encode!(nil)` is
+            # the four characters "null", not the absence of a value.
+            {:ok, nil} -> {:ok, nil}
+            {:ok, document} -> {:ok, JSON.encode!(document)}
+            other -> other
+          end
+        end
+
+        @impl true
+        def cast_stored(value, constraints) when is_binary(value) do
+          # Decoding *succeeding* is not enough: "123", "true" and "null" are
+          # valid JSON, so a legacy row holding one of them would be read as
+          # a number rather than as the text somebody typed — and land as an
+          # empty document with nothing said about it. A document is a map.
+          case JSON.decode(value) do
+            {:ok, document} when is_map(document) -> super(document, constraints)
+            _not_a_document -> super(MyApp.RichText.from_plain_text(value), constraints)
+          end
+        end
+
+        def cast_stored(value, constraints), do: super(value, constraints)
+      end
+
+  Validation still runs on the way in: what is overridden is where the bytes
+  go, never whether the document is one.
+
   ## Constraints
 
     * `:document_schema` — required, the `Coelho.Schema` to validate against

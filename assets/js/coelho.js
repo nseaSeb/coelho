@@ -251,6 +251,40 @@ const warn = (message) => {
 // page carrying the last one's attributes.
 const declaredDOM = (renderDOM) => () => [...renderDOM];
 
+// A void node has no content, so a chip standing for a variable or a mention
+// would draw empty. `editorText` names the attribute whose value goes inside
+// it, and the value is passed to ProseMirror as a *string child* rather than
+// interpolated into the spec — a DOMOutputSpec's children are text nodes, not
+// markup, so what a writer put in an attribute cannot become an element.
+//
+// The browser's business alone: what the page carries is the node's `:render`
+// on the server, which is free to print the value the variable stands for.
+const withEditorText = (spec, attr) => {
+  if (!attr || !spec.toDOM) return spec;
+
+  const toDOM = spec.toDOM;
+
+  return {
+    ...spec,
+    toDOM: (node, ...rest) => {
+      const drawn = toDOM(node, ...rest);
+      const label = node.attrs?.[attr];
+
+      if (!Array.isArray(drawn) || label === null || label === undefined) return drawn;
+
+      const [tag, attrs, ...children] = drawn;
+      const text = String(label);
+
+      // A hole — 0 — is ProseMirror's mark for "children go here", and a node
+      // that has none cannot carry one. Where the spec left room, the label
+      // takes it; where it did not, it goes at the end.
+      return typeof attrs === "object" && attrs !== null && !Array.isArray(attrs)
+        ? [tag, attrs, ...children.filter((child) => child !== 0), text]
+        : [tag, ...[attrs, ...children].filter((child) => child !== 0 && child !== undefined), text];
+    }
+  };
+};
+
 const declaredParse = (parseDOM) =>
   parseDOM.map(([tag, attrs]) =>
     Object.keys(attrs).length === 0 ? { tag } : { tag, getAttrs: () => attrs }
@@ -295,7 +329,7 @@ const toOrderedMap = (pairs, dom, kind, without = []) => {
   let map = OrderedMap.from({});
 
   for (const [name, spec] of pairs) {
-    const { editorAttrs, attrRenderAs, renderDOM, parseDOM, ...rest } = spec;
+    const { editorAttrs, editorText, attrRenderAs, renderDOM, parseDOM, ...rest } = spec;
     const declared = dom[name] ?? {};
     const toDOM = drawing(name, kind, spec, declared, without);
     const drawn = {
@@ -309,7 +343,9 @@ const toOrderedMap = (pairs, dom, kind, without = []) => {
     // and not merely the same set.
     const built = withAttrRenderAs(drawn, attrRenderAs);
 
-    map = map.addToEnd(name, withEditorAttrs(built, editorAttrs, name, kind));
+    const labelled = withEditorText(built, editorText);
+
+    map = map.addToEnd(name, withEditorAttrs(labelled, editorAttrs, name, kind));
   }
 
   return map;
@@ -786,10 +822,62 @@ const setAlign = (value) => (state, dispatch) => {
   return true;
 };
 
+// Whether a node type can go where the cursor is, asked of the document
+// rather than assumed: an inline node has no business inside a code block,
+// and a button that answers "no" is greyed out rather than silently doing
+// nothing.
+const canInsert = (state, type) => {
+  const { $from } = state.selection;
+
+  for (let depth = $from.depth; depth >= 0; depth -= 1) {
+    const index = $from.index(depth);
+
+    if ($from.node(depth).canReplaceWith(index, index, type)) return true;
+  }
+
+  return false;
+};
+
+// Putting a declared inline void node — a variable, a mention, a date — or a
+// piece of text at the cursor. One verb, and the reason it can be one where
+// the block commands cannot: a block needs a decision about what happens to
+// the selection and to what surrounds it, and every kind of block needs a
+// different one. An atom needs none. `inline: true, void: true` in the schema
+// *is* the verb, which is what makes this a command the hook knows rather
+// than a door onto arbitrary node types.
+const insertCommand = (schema, options) => {
+  if (options.coelhoText !== undefined) {
+    return (state, dispatch) => {
+      if (dispatch) dispatch(state.tr.insertText(options.coelhoText).scrollIntoView());
+      return true;
+    };
+  }
+
+  // `hasOwn`, never `in` or a bare lookup: `schema.nodes` is an object, so
+  // `constructor` and `toString` resolve through its prototype and would hand
+  // back a function to build a node out of.
+  const named = options.coelhoNode;
+  const type = named && Object.hasOwn(schema.nodes, named) ? schema.nodes[named] : null;
+
+  if (!type || !type.isInline || !type.isAtom) return null;
+
+  const attrs = options.coelhoAttrs ? JSON.parse(options.coelhoAttrs) : null;
+
+  return (state, dispatch) => {
+    if (!canInsert(state, type)) return false;
+    if (dispatch) dispatch(state.tr.replaceSelectionWith(type.create(attrs)).scrollIntoView());
+
+    return true;
+  };
+};
+
 const commandFor = (name, schema, options) => {
   const { nodes, marks } = schema;
 
   switch (name) {
+    case "insert":
+      return insertCommand(schema, options);
+
     case "link":
       // Asked whether it *could* run — which is what the toolbar does on
       // every selection change — it must not go and open anything.
@@ -960,6 +1048,10 @@ const commandActive = (state, name, options) => {
   const { nodes, marks } = state.schema;
 
   switch (name) {
+    // An action rather than a state, like undo: there is nothing for a chip
+    // already in the document to make a button look pressed about.
+    case "insert":
+      return null;
     case "link":
       return marks.link ? markActive(state, marks.link) : false;
     case "heading":
@@ -1014,7 +1106,9 @@ const cachedCommandFor = (name, schema, options) => {
     commandCache.set(schema, byName);
   }
 
-  const key = `${name}|${options.level ?? ""}`;
+  const key = `${name}|${options.level ?? ""}|${options.coelhoNode ?? ""}|${
+    options.coelhoAttrs ?? ""
+  }|${options.coelhoText ?? ""}`;
   if (byName.has(key)) return byName.get(key);
 
   const command = commandFor(name, schema, options);
