@@ -72,7 +72,8 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     The hooks it is written against are the contract either way: `.coelho` on
     the root, `.coelho-toolbar` and `.coelho-command` (with `aria-pressed`
-    and `disabled`), `.coelho-link` and `.coelho-link-input`,
+    and `disabled`, and `.coelho-icon` on the drawing inside it),
+    `.coelho-link` and `.coelho-link-input`,
     `.coelho-counter` (gaining `coelho-over` past the limit),
     `.coelho-content`, and on the editor's own element the class
     `coelho-empty` while the document has no text, plus `data-placeholder`
@@ -335,6 +336,31 @@ if Code.ensure_loaded?(Phoenix.Component) do
     application bumps when it cancels, the flush puts back exactly what was
     just thrown away.
 
+    ## What the buttons show
+
+    An icon, drawn by `Coelho.Icons`, with the command's name as its tooltip
+    and its accessible name — so a pointer and a screen reader are told the
+    same thing. The names are English until `:labels` says otherwise, and a
+    command the library does not draw shows its label as text instead, which
+    is what one an application added does until it is given an icon:
+
+        <.coelho_editor
+          field={@form[:body]}
+          toolbar={~w(bold italic highlight)}
+          icons={%{"highlight" => MyApp.Icons.highlight()}}
+        />
+
+    An icon has to arrive already safe — a `~H` sigil, `Phoenix.HTML.raw/1`,
+    or a `{:safe, iodata}` — because it is rendered as markup rather than
+    escaped. A plain string is escaped like any other text and shows as tag
+    soup in the button, which is the right way round: markup is what an
+    application states, never what it happens to hold.
+
+    An icon is sized by the `--coelho-icon` custom property, whether it is
+    the library's or the application's — the stylesheet asks for an `svg` or
+    an `img` inside the button rather than for a class, so one supplied
+    without `.coelho-icon` is sized all the same.
+
     ## What the field says
 
     The link and caption field carries three strings, and they are English
@@ -420,7 +446,20 @@ if Code.ensure_loaded?(Phoenix.Component) do
       default: %{},
       doc:
         "command to label, for a toolbar that has to speak the reader's language. " <>
-          "Changing them on a mounted editor redraws the toolbar"
+          "The label is the button's tooltip and its accessible name; anything " <>
+          "left out keeps its English. Changing them on a mounted editor redraws " <>
+          "the toolbar"
+    )
+
+    attr(:icons, :map,
+      default: %{},
+      doc: """
+      command to icon, replacing what `Coelho.Icons` draws — one of them, or
+      all. Each has to be safe markup already (a `~H` sigil,
+      `Phoenix.HTML.raw/1`, `{:safe, iodata}`), since it is rendered rather
+      than escaped; a plain string is escaped and shows as tag soup. A
+      command with no icon on either side shows its label as text
+      """
     )
 
     attr(:field_labels, :map,
@@ -476,7 +515,10 @@ if Code.ensure_loaded?(Phoenix.Component) do
           # field lives inside the toolbar, and a language switched
           # mid-session has to reach them too.
           toolbar != [] &&
-            fingerprint({schema.fingerprint, toolbar, assigns.labels, assigns.field_labels})
+            fingerprint(
+              {schema.fingerprint, toolbar, assigns.labels, assigns.field_labels,
+               icons_fingerprint(assigns.icons)}
+            )
         )
         |> assign(:value_json, value_json(value, schema))
         |> assign(:count, initial_count(value))
@@ -511,9 +553,14 @@ if Code.ensure_loaded?(Phoenix.Component) do
             type="button"
             class="coelho-command"
             data-coelho-command={command}
-            aria-label={Map.get(@labels, command, command)}
+            title={label(@labels, command)}
+            aria-label={label(@labels, command)}
           >
-            {Map.get(@labels, command, command)}
+            <%!-- The icon, or the label as text where there is none — a
+                  button showing neither would be a button nobody can read.
+                  `title` and `aria-label` carry the words either way, so the
+                  tooltip and the screen reader say the same thing. --%>
+            {icon(@icons, @labels, command)}
           </button>
 
           <span
@@ -596,6 +643,36 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     defp field_labels(labels) do
       JSON.encode!(Map.new(labels, fn {key, value} -> {to_string(key), value} end))
+    end
+
+    # English until an application says otherwise, like the field's own
+    # words, and for the same reason: a tooltip reading `bullet_list` is
+    # worse than no tooltip.
+    defp label(labels, command) do
+      Map.get_lazy(labels, command, fn -> Coelho.Icons.label(command) end)
+    end
+
+    # The application's icon wins over the shipped one, and a command with
+    # neither shows its label. A label is text and is escaped; an icon is
+    # markup and is not, which is why it has to arrive already safe.
+    defp icon(icons, labels, command) do
+      case Map.get(icons, command) do
+        nil -> Coelho.Icons.icon(command) || label(labels, command)
+        icon -> icon
+      end
+    end
+
+    # The drawings themselves, not the names of the commands they belong to:
+    # an application swapping one icon for another on a command it already
+    # had would otherwise leave the toolbar's id where it was, and a subtree
+    # LiveView is told to ignore keeps the icon it was born with. Rendered
+    # in order to be compared, because the markup is what changed.
+    defp icons_fingerprint(icons) when map_size(icons) == 0, do: nil
+
+    defp icons_fingerprint(icons) do
+      Map.new(icons, fn {command, icon} ->
+        {command, icon |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()}
+      end)
     end
 
     defp fingerprint(term) do

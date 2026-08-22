@@ -813,6 +813,49 @@ marks: [highlight: [class: "hl hl-gradient", render: {"mark", []}]]
 
 `:editor_attrs` carries DOM attributes for the editor alone.
 
+## What the toolbar shows
+
+An icon per command, drawn by `Coelho.Icons` — line drawings written for the
+library, stroked in `currentColor` so they take the button's colour in every
+state, and sized by the `--coelho-icon` custom property. The command's name
+is the button's tooltip *and* its accessible name, so a pointer and a screen
+reader are told the same thing.
+
+Those names are English until you say otherwise, and `:labels` is where you
+say it:
+
+```heex
+<.coelho_editor
+  field={@form[:body]}
+  labels={%{"bold" => gettext("Bold"), "bullet_list" => gettext("Bulleted list")}}
+/>
+```
+
+Changing them on a mounted editor redraws the toolbar, so a language switched
+mid-session reaches the buttons — and the field beside them, through
+`:field_labels`.
+
+A command the library does not draw — a mark your application added — shows
+its label as text until you give it an icon:
+
+```heex
+<.coelho_editor
+  field={@form[:body]}
+  toolbar={~w(bold italic highlight)}
+  icons={%{"highlight" => MyApp.Icons.highlight()}}
+/>
+```
+
+`:icons` replaces one drawing or all of them. Each has to be safe markup
+already — a `~H` sigil, `Phoenix.HTML.raw/1`, or a `{:safe, iodata}` — since
+it is rendered rather than escaped. A plain string is escaped like any other
+text and shows as tag soup in the button, which is the right way round:
+markup is what you state, never what you happen to hold.
+
+Yours is sized by `--coelho-icon` like the shipped ones: the stylesheet asks
+for an `svg` or an `img` inside the button rather than for a class, so it
+needs no `.coelho-icon` of its own.
+
 An *attribute* can say how its own value reaches the DOM, with `:render_as`
 — also applied on both sides, and also declared once:
 

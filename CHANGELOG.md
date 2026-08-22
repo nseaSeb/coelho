@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### The toolbar draws
+
+- An icon per command, from the new `Coelho.Icons` — line drawings written
+  for the library rather than taken from an icon set, so there is nothing to
+  attribute and no second visual identity arriving with the dependency. They
+  are stroked in `currentColor`, so they take the button's colour in every
+  state the stylesheet already draws, and sized by a new `--coelho-icon`
+  custom property.
+- The command's name is now the button's `title` *and* its `aria-label`, so
+  a pointer and a screen reader are told the same thing. It used to be the
+  button's visible text.
+- Those names are English by default, like the field's own words and for the
+  same reason: a tooltip reading `bullet_list` is worse than no tooltip.
+  `:labels` still overrides them, still redraws the toolbar when it changes,
+  and still reaches the field beside it through `:field_labels` — the
+  translation path did not need anything new.
+- `:icons` replaces one drawing or all of them. A command the library does
+  not draw — a mark an application added — shows its label as text, which is
+  what it did before an icon existed.
+
 ## 0.6.0 — 2026-08-21
 
 The third layer. A formatting exists end to end when the schema can carry

@@ -22,6 +22,7 @@
   --coelho-raised: #f4f4f5;
   --coelho-accent: #2563eb;
   --coelho-danger: #dc2626;
+  --coelho-icon: 20px;
   --coelho-radius: 6px;
   --coelho-gap: 8px;
   --coelho-pad: 12px;
@@ -42,14 +43,37 @@
 }
 
 .coelho-command {
+  align-items: center;
   background: var(--coelho-surface);
   border: 1px solid var(--coelho-border);
   border-radius: var(--coelho-radius);
   color: inherit;
   cursor: pointer;
+  display: inline-flex;
   font: inherit;
+  justify-content: center;
   line-height: 1;
+  padding: 6px;
+}
+
+/* A command that draws shows an icon; one with none shows its label, and
+ * needs the room a word takes. Asked of the element rather than of a class,
+ * so an icon an application supplies is sized and spaced like the shipped
+ * ones without having to carry `.coelho-icon` — that class is on the
+ * drawings this library ships, for an application that wants to style them
+ * apart from its own. */
+.coelho-command:not(:has(svg, img)) {
   padding: 6px 10px;
+}
+
+/* The shipped drawings are stroked in currentColor, so they take the
+ * button's colour in every state the rules below give it — pressed,
+ * disabled, hovered. */
+.coelho-command svg,
+.coelho-command img {
+  display: block;
+  height: var(--coelho-icon);
+  width: var(--coelho-icon);
 }
 
 .coelho-command:hover:not(:disabled) {
