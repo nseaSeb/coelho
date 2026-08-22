@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-08-22
 
 The other half of 0.6.0. A mark an application added could be stored,
 validated and rendered, and 0.6.0 gave it a toolbar button — but nothing
