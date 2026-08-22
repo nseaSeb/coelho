@@ -781,20 +781,26 @@ const run = async () => {
         "the toolbar did not act on Enter",
         "return doc.content.flatMap((b) => b.content ?? []).some((n) => n.marks?.some((m) => m.type === 'bold'))"
       );
-
       // And it says what it is and what state it is in, which is what a
-      // screen reader has to go on.
-      const described = await page.$$eval("[data-coelho-command]", (buttons) =>
-        buttons.every(
-          (button) =>
-            (button.getAttribute("aria-label") ?? "").length > 0 &&
-            (button.hasAttribute("aria-pressed") || button.dataset.coelhoCommand === "undo" ||
-              button.dataset.coelhoCommand === "redo" ||
-              button.dataset.coelhoCommand === "caption")
-        )
+      // screen reader has to go on. A command that *does* something rather
+      // than turning something on has no state to report and says nothing,
+      // which is the whole set below — anything else missing `aria-pressed`
+      // is a toggle that stopped answering.
+      const actions = ["undo", "redo", "caption", "horizontal_rule"];
+
+      const unnamed = await page.$$eval("[data-coelho-command]", (buttons, actions) =>
+        buttons
+          .filter(
+            (button) =>
+              (button.getAttribute("aria-label") ?? "").length === 0 ||
+              (!button.hasAttribute("aria-pressed") &&
+                !actions.includes(button.dataset.coelhoCommand))
+          )
+          .map((button) => button.dataset.coelhoCommand),
+        actions
       );
 
-      assert.ok(described, "every command is named, and says whether it is in force");
+      assert.deepEqual(unnamed, [], "every command is named, and says whether it is in force");
     });
 
     await test("a link can be made without touching the mouse at all", async () => {
@@ -875,13 +881,16 @@ const run = async () => {
     await test("the toolbar speaks the language it was given", async () => {
       // The commands are not words. An application with readers who do not
       // speak English has to be able to say so, without rebuilding the
-      // toolbar itself.
-      const label = await page.textContent('#note_body-editor [data-coelho-command="bold"]');
+      // toolbar itself. The button shows an icon, so the words live in the
+      // tooltip and the accessible name — and both must say the same thing.
+      const button = '#note_body-editor [data-coelho-command="bold"]';
 
-      assert.equal(label.trim(), "Gras");
-      assert.equal(
-        await page.getAttribute('#note_body-editor [data-coelho-command="bold"]', "aria-label"),
-        "Gras"
+      assert.equal(await page.getAttribute(button, "title"), "Gras");
+      assert.equal(await page.getAttribute(button, "aria-label"), "Gras");
+      assert.equal((await page.textContent(button)).trim(), "");
+      assert.ok(
+        await page.isVisible(`${button} svg.coelho-icon`),
+        "the button draws an icon rather than its name"
       );
     });
 
@@ -1032,9 +1041,10 @@ const run = async () => {
       await page.click("#note-locale");
       await settle(page);
 
-      // The buttons.
+      // The buttons, which say their words in the tooltip now that they
+      // draw an icon.
       assert.equal(
-        (await page.textContent('#note_body-editor [data-coelho-command="bold"]')).trim(),
+        await page.getAttribute('#note_body-editor [data-coelho-command="bold"]', "title"),
         "Bold"
       );
 

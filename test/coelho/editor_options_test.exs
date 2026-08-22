@@ -22,6 +22,7 @@ defmodule Coelho.EditorOptionsTest do
         schema_id: nil,
         toolbar: ~w(bold link),
         labels: %{},
+        icons: %{},
         field_labels: %{},
         maxlength: nil,
         flush_event: nil,
@@ -117,17 +118,69 @@ defmodule Coelho.EditorOptionsTest do
   end
 
   describe "toolbar labels" do
-    test "default to the command name" do
-      assert editor(%{name: "a[b]", toolbar: ~w(bold)}) =~ ~s(aria-label="bold")
+    test "default to English, and are the tooltip as well as the name" do
+      # A button showing an icon says nothing on its own. The label is what
+      # both a pointer and a screen reader are told, so they say the same
+      # thing — and `bullet_list` would be worse than saying nothing.
+      html = editor(%{name: "a[b]", toolbar: ~w(bold bullet_list)})
+
+      assert html =~ ~s(title="Bold")
+      assert html =~ ~s(aria-label="Bold")
+      assert html =~ ~s(title="Bulleted list")
     end
 
     test "are the application's when it has a translator" do
       html = editor(%{name: "a[b]", toolbar: ~w(bold link), labels: %{"bold" => "Gras"}})
 
       assert html =~ ~s(aria-label="Gras")
-      assert html =~ "Gras"
-      # Untranslated commands keep their name rather than disappearing.
-      assert html =~ ~s(aria-label="link")
+      assert html =~ ~s(title="Gras")
+      # Untranslated commands keep their English rather than disappearing.
+      assert html =~ ~s(aria-label="Link")
+    end
+
+    test "an icon of the application's replaces the one the library draws" do
+      html =
+        editor(%{
+          name: "a[b]",
+          toolbar: ~w(bold italic),
+          icons: %{"bold" => {:safe, ~s(<svg class="mine"></svg>)}}
+        })
+
+      assert html =~ ~s(<svg class="mine">)
+      # And only that one: the rest keep theirs.
+      assert html =~ ~s(<svg class="coelho-icon")
+    end
+
+    test "changing a drawing redraws the toolbar, though the commands did not move" do
+      # The toolbar's id is its fingerprint, and the toolbar is a subtree
+      # LiveView is told to ignore — so a fingerprint over the command names
+      # alone would leave an editor showing the icon it was born with.
+      one =
+        editor(%{name: "a[b]", toolbar: ~w(bold), icons: %{"bold" => {:safe, "<svg id='a'/>"}}})
+
+      two =
+        editor(%{name: "a[b]", toolbar: ~w(bold), icons: %{"bold" => {:safe, "<svg id='b'/>"}}})
+
+      assert toolbar_version(one) != toolbar_version(two)
+    end
+
+    test "name a command the library never heard of after itself" do
+      schema =
+        Coelho.Schema.extend(Coelho.Schema.default(),
+          marks: [highlight: [render: {"mark", []}, parse: ["mark"]]]
+        )
+
+      html =
+        editor(%{
+          name: "a[b]",
+          document_schema: schema,
+          toolbar: ~w(highlight)
+        })
+
+      assert html =~ ~s(title="highlight")
+      # And with no icon to draw, it shows the label rather than nothing.
+      assert html =~ ~r{aria-label="highlight">\s*highlight\s*</button>}
+      refute html =~ "coelho-icon"
     end
   end
 
