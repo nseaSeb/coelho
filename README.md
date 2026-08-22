@@ -340,7 +340,9 @@ that judging the length stays the application's to do, with the whole
 document in hand to do it on:
 
 ```elixir
-Coelho.sanitize(post.body, schema, limits: [max_text_length: :infinity])
+Coelho.sanitize(post.body, schema,
+  limits: [max_text_length: :infinity, max_attr_length: :infinity]
+)
 ```
 
 ## Rendering somewhere other than a web page
@@ -399,12 +401,22 @@ restricted schema never accepts a document its parent would reject. Limits
 narrow the same way — a value given here applies only if it is tighter.
 
 Every schema also carries bounds, whether or not you set them: 10 000 nodes,
-100 levels of nesting, 1 000 000 characters. A document arrives in a hidden
-form field that no `maxlength` constrains.
+100 levels of nesting, 1 000 000 characters of text, and 10 000 characters
+per attribute value. A document arrives in a hidden form field that no
+`maxlength` constrains.
 
 ```elixir
-Coelho.Schema.new(..., limits: [max_nodes: 500, max_depth: 6, max_text_length: 20_000])
+Coelho.Schema.new(...,
+  limits: [max_nodes: 500, max_depth: 6, max_text_length: 20_000, max_attr_length: 2_000]
+)
 ```
+
+`:max_text_length` counts what a writer typed, because that is the number
+the editor's counter shows — which is why an attribute needs a bound of its
+own. Without one, half a megabyte of `alt` text posts straight past a
+million-character limit while the counter reads 1. `:max_depth` covers an
+attribute's value too, for a schema declaring an attribute with no
+validator: those accept anything JSON can express.
 
 ## Editing it
 
@@ -457,6 +469,24 @@ They are filtered against the schema like everything else — a schema whose
 entry in `:labels` and `:icons`. A level button shows its words rather than
 a drawing unless you pass one: six H's differing by a numeral are six
 buttons nobody can tell apart at 20px.
+
+### What a toolbar command is
+
+Four kinds, and the list is not arbitrary:
+
+| Kind | Examples | Where it comes from |
+| --- | --- | --- |
+| A mark | `bold`, and any mark your schema declares | the schema, whatever it declares |
+| A block | `heading`, `blockquote`, `bullet_list` | a closed list: each kind of block takes its own verb |
+| A value | `align_center`, `heading_3` | the value in the name, checked against the attribute's validator |
+| An act | `undo`, `link`, `caption`, `{"insert", …}` | one verb, nothing for the schema to decide |
+
+Every one of them is filtered by asking your schema rather than a list kept
+beside it, so a button is rendered only where its command can run and only
+with a value the server would accept. What is *not* a command — a menu, a
+picker, a suggestion list filtered as you type — has a seam instead: an
+event, `Coelho.LiveView.insert_node/3`, a node view. `CONTRIBUTING.md` has
+the rule in full, and what it refuses.
 
 ### A variable, and anything else that must not be split
 

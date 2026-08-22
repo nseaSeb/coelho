@@ -148,7 +148,7 @@ defmodule Coelho.Schema.Default do
           content: "text*",
           group: "block",
           marks: :none,
-          attrs: [language: [default: nil, validate: {:nullable, :string}]],
+          attrs: [language: [default: nil, validate: {:nullable, &__MODULE__.language/1}]],
           render: &__MODULE__.render_code_block/2,
           parse: ["pre"]
         ],
@@ -280,12 +280,38 @@ defmodule Coelho.Schema.Default do
     "h" <> Integer.to_string(level)
   end
 
+  # The name of a language, and not a list of classes. `language-` is a
+  # prefix a stylesheet and a highlighter both look for, so whatever follows
+  # it lands in the `class` attribute of every code block on the page: a
+  # value carrying a space contributes class names of its own choosing —
+  # whatever the application's stylesheet happens to attach to them.
+  #
+  # Wide enough for the names that exist: `c++`, `f#`, `objective-c`,
+  # `html+erb`. Narrow enough to be one token.
+  @language ~r/\A[A-Za-z0-9_+#.-]{1,32}\z/
+
+  @doc false
+  def language(value) when is_binary(value) do
+    if Regex.match?(@language, value),
+      do: :ok,
+      else: {:error, "must be the name of a language, without spaces"}
+  end
+
+  def language(_value), do: {:error, "must be a string"}
+
   @doc false
   def render_code_block(node, inner) do
+    # Clamped here as well as validated, for the same reason `heading_tag/1`
+    # clamps its level: what is already stored was written under whatever
+    # schema was in force then, and it is today's renderer that puts it on
+    # the page.
     class =
       case attr(node, "language", nil) do
-        language when is_binary(language) -> "language-" <> language
-        _ -> nil
+        language when is_binary(language) ->
+          if Regex.match?(@language, language), do: "language-" <> language
+
+        _other ->
+          nil
       end
 
     Coelho.Render.tag("pre", [], Coelho.Render.tag("code", [{"class", class}], inner))

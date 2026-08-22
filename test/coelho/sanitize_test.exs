@@ -15,6 +15,40 @@ defmodule Coelho.SanitizeTest do
 
   defp valid?(document), do: match?({:ok, _}, Document.validate(document, schema()))
 
+  describe "an attribute over the bound, on the way out" do
+    test "is dropped, and a required one takes its node with it" do
+      # Which is why `:max_attr_length` belongs beside `:max_text_length` in
+      # the list a read path lifts: a row written before the bound existed
+      # loses the image rather than the caption.
+      long = String.duplicate("y", 20_000)
+
+      document =
+        doc([
+          paragraph([
+            text("kept"),
+            %{"type" => "image", "attrs" => %{"src" => "/a.png", "alt" => long}}
+          ]),
+          paragraph([%{"type" => "image", "attrs" => %{"src" => "/" <> long}}])
+        ])
+
+      cut = Document.sanitize(document, schema())
+      types = cut |> Map.get("content") |> Enum.flat_map(&Map.get(&1, "content", []))
+
+      assert Enum.any?(types, &(&1["type"] == "image" and &1["attrs"]["alt"] == nil)) or
+               Enum.all?(types, &(&1["type"] != "image"))
+
+      assert Coelho.Document.to_text(cut, schema()) =~ "kept"
+
+      # And lifted, both images stay — the one whose alt is long and the one
+      # whose src is.
+      lifted = Document.sanitize(document, schema(), limits: [max_attr_length: :infinity])
+      kept = lifted |> Map.get("content") |> Enum.flat_map(&Map.get(&1, "content", []))
+
+      assert Enum.count(kept, &(&1["type"] == "image")) == 2
+      assert Enum.any?(kept, &(&1["attrs"]["alt"] == long))
+    end
+  end
+
   describe "what it keeps" do
     test "a document that already validates comes back normalised and unchanged" do
       {:ok, document} = Document.validate(doc([paragraph([text("hello")])]), schema())

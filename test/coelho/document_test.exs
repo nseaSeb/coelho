@@ -373,6 +373,145 @@ defmodule Coelho.DocumentTest do
     end
   end
 
+  describe "what an attribute may carry" do
+    # The bounds used to stop at the document's shape and its text, and an
+    # attribute is neither — `max_text_length` counts what the writer typed,
+    # because that is the number the editor's counter shows. Measured before
+    # this bound existed: half a megabyte of `alt` validated in 1.7 ms while
+    # `text_length/1` answered 1, in the one field no `maxlength` constrains.
+    test "a string is held to max_attr_length" do
+      document =
+        doc([
+          paragraph([
+            text("x"),
+            %{
+              "type" => "image",
+              "attrs" => %{"src" => "/a.png", "alt" => String.duplicate("y", 20_000)}
+            }
+          ])
+        ])
+
+      assert {:error, [error | _]} = Document.validate(document, schema())
+      assert error.message =~ "more than 10000 characters"
+      assert error.path == ["content", 0, "content", 1, "attrs", "alt"]
+    end
+
+    test "the bound can be lifted or tightened like any other" do
+      document =
+        doc([
+          paragraph([
+            text("x"),
+            %{
+              "type" => "image",
+              "attrs" => %{"src" => "/a.png", "alt" => String.duplicate("y", 40)}
+            }
+          ])
+        ])
+
+      tight = Schema.extend(schema(), limits: [max_attr_length: 10])
+
+      assert {:ok, _} = Document.validate(document, schema())
+      assert {:error, _} = Document.validate(document, tight)
+
+      # And lifted the way `sanitize/3` lifts one, for a path that is reading
+      # rather than writing.
+      lifted = Schema.extend(schema(), limits: [max_attr_length: :infinity])
+
+      assert {:ok, _} = Document.validate(document, lifted)
+    end
+
+    test "a string wrapped in a structure is held to the same bound" do
+      # A budget spent through the whole value, not a check on what happens
+      # to sit at the top of it: an attribute the schema leaves unvalidated
+      # accepts anything JSON can express, so half a megabyte in a
+      # one-element list is the same half megabyte.
+      for value <- [
+            [String.duplicate("x", 20_000)],
+            %{"a" => %{"b" => String.duplicate("x", 20_000)}},
+            # In a key, which is a string somebody chose just as much as a
+            # value is — and which reading only the values walked straight
+            # past.
+            %{String.duplicate("x", 20_000) => 1},
+            List.duplicate("x", 20_000)
+          ] do
+        assert {:error, [error | _]} = Document.validate(widget(value), free_schema())
+        assert error.message =~ "more than 10000 characters"
+      end
+
+      assert {:ok, _} = Document.validate(widget(["small", %{"a" => "b"}]), free_schema())
+    end
+
+    test "a lifted bound spends nothing and refuses nothing" do
+      # `:infinity` used to reach an arithmetic with no answer for it, and
+      # every attribute holding a list crashed the validation it was supposed
+      # to pass.
+      free =
+        Schema.extend(free_schema(), limits: [max_depth: :infinity, max_attr_length: :infinity])
+
+      assert {:ok, _} = Document.validate(widget([String.duplicate("x", 50_000)]), free)
+      assert {:ok, _} = Document.validate(widget(Enum.reduce(1..500, "leaf", &[&2, &1])), free)
+    end
+
+    defp free_schema do
+      Schema.new(
+        nodes: [
+          doc: [content: "widget+"],
+          widget: [
+            group: "block",
+            void: true,
+            attrs: [config: [default: nil]],
+            render: {"div", []}
+          ]
+        ]
+      )
+    end
+
+    defp widget(config) do
+      %{"type" => "doc", "content" => [%{"type" => "widget", "attrs" => %{"config" => config}}]}
+    end
+
+    test "a structure is held to max_depth, wherever the schema allows one" do
+      # An attribute whose schema declares no validator accepts anything JSON
+      # can express, and ten thousand nested lists used to validate in no
+      # time at all — then be stored, hashed and encoded.
+      free =
+        Schema.new(
+          nodes: [
+            doc: [content: "widget+"],
+            widget: [
+              group: "block",
+              void: true,
+              attrs: [config: [default: nil]],
+              render: {"div", []}
+            ]
+          ]
+        )
+
+      deep = Enum.reduce(1..10_000, "leaf", fn _, acc -> [acc] end)
+      shallow = %{"a" => [1, 2, %{"b" => "c"}]}
+
+      assert {:error, [error | _]} =
+               Document.validate(
+                 %{
+                   "type" => "doc",
+                   "content" => [%{"type" => "widget", "attrs" => %{"config" => deep}}]
+                 },
+                 free
+               )
+
+      assert error.message =~ "nested more than"
+
+      assert {:ok, _} =
+               Document.validate(
+                 %{
+                   "type" => "doc",
+                   "content" => [%{"type" => "widget", "attrs" => %{"config" => shallow}}]
+                 },
+                 free
+               )
+    end
+  end
+
   describe "characters a person types that are not one code point" do
     # An emoji is where a length in "characters" stops being obvious, and the
     # editor and the server have to answer the same number: one counts to

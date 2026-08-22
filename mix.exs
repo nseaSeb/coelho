@@ -1,7 +1,7 @@
 defmodule Coelho.MixProject do
   use Mix.Project
 
-  @version "0.13.0"
+  @version "0.14.0"
   @source_url "https://github.com/nseaSeb/coelho"
 
   def project do
@@ -19,6 +19,11 @@ defmodule Coelho.MixProject do
         flags: [:error_handling, :extra_return, :missing_return, :unknown]
       ],
       docs: docs(),
+      # A floor rather than a target: what coverage is good for is naming the
+      # lines nothing has ever run, and it found several in the module every
+      # consumer calls first. The number is where the suite stands, so a
+      # change that stops running something says so.
+      test_coverage: [threshold: 92],
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       aliases: aliases()

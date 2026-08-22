@@ -160,6 +160,58 @@ defmodule Coelho.RenderTest do
 
   def improper_iolist(_node, inner), do: ["" | inner]
 
+  describe "a code block's language" do
+    defp code_block(language) do
+      doc([
+        %{
+          "type" => "code_block",
+          "attrs" => %{"language" => language},
+          "content" => [text("x")]
+        }
+      ])
+    end
+
+    test "is the name of one, and names that exist are names" do
+      for language <- ~w(elixir c++ f# objective-c html+erb) do
+        assert {:ok, _} = Document.validate(code_block(language), schema())
+      end
+    end
+
+    test "is refused when it would contribute classes of its own" do
+      # `language-` is a prefix a stylesheet and a highlighter look for, so
+      # whatever follows it lands in the class attribute of every code block
+      # on the page. A value carrying a space is a value choosing class
+      # names — whatever the application's stylesheet attaches to them.
+      assert {:error, [error | _]} =
+               Document.validate(code_block("foo evil-class another"), schema())
+
+      assert error.message =~ "without spaces"
+    end
+
+    test "is clamped at render, for a row written under a looser schema" do
+      # What is stored was written under whatever was in force then, and it
+      # is today's renderer that puts it on the page — the same reason the
+      # heading level is clamped rather than trusted.
+      loose =
+        Schema.extend(schema(),
+          nodes: [
+            code_block: [
+              content: "text*",
+              group: "block",
+              marks: :none,
+              attrs: [language: [default: nil, validate: {:nullable, :string}]],
+              render: &Coelho.Schema.Default.render_code_block/2,
+              parse: ["pre"]
+            ]
+          ]
+        )
+
+      {:ok, stored} = Document.validate(code_block("foo evil-class another"), loose)
+
+      assert Render.to_html(stored, schema()) == "<pre><code>x</code></pre>"
+    end
+  end
+
   describe "trusting the schema only so far" do
     test "never builds a tag name out of an attribute value" do
       # A row written under a looser schema still renders through today's

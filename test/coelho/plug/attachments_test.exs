@@ -107,6 +107,9 @@ defmodule Coelho.Plug.AttachmentsTest do
     end
   end
 
+  def latin1_metadata(_key),
+    do: %{content_type: "application/pdf", filename: <<"caf", 0xE9, ".pdf">>}
+
   def metadata("image"), do: %{content_type: "image/png", filename: "a.png"}
   def metadata("svg"), do: %{content_type: "image/svg+xml", filename: "a.svg"}
   def metadata("html"), do: %{content_type: "text/html", filename: ~s(ev"il name.html)}
@@ -186,6 +189,75 @@ defmodule Coelho.Plug.AttachmentsTest do
 
     test "a key shaped to escape the root is refused", %{options: options} do
       assert %{status: 403} = get("/attachments/..?expires=1&signature=x", options)
+    end
+  end
+
+  describe "a key that tries to leave the storage" do
+    # The test adapter splits the path without decoding it, where Cowboy and
+    # Bandit decode each segment — so `%2e%2e%2f` reaches a real application
+    # as one segment holding `../`, and never reaches this suite that way.
+    # The path is set directly here to exercise what production sees, with a
+    # genuine signature so the key is what is being tested and not the
+    # signature.
+    defp traversing(key, options) do
+      %{expires: expires, signature: signature} = signed_parts(key)
+
+      :get
+      |> conn("/attachments/x?expires=#{expires}&signature=#{signature}")
+      |> Map.put(:path_info, ["attachments" | String.split(key, "/")])
+      |> Plugged.call(options)
+    end
+
+    defp signed_parts(key) do
+      url = signed(key)
+      %{"expires" => expires, "signature" => signature} = URI.decode_query(URI.parse(url).query)
+
+      %{expires: expires, signature: signature}
+    end
+
+    @tag :tmp_dir
+    test "is refused however it is spelled", %{tmp_dir: tmp_dir, options: options} do
+      outside = tmp_dir |> Path.join("..") |> Path.expand() |> Path.join("secret.txt")
+      File.write!(outside, "secret")
+      on_exit(fn -> File.rm(outside) end)
+
+      # Two answers are safe, and which one comes back says where it was
+      # stopped. A key holding a separator becomes several segments, and the
+      # plug serves only what sits *directly* under its mount point, so it
+      # declines the request entirely and the connection passes through
+      # untouched — status `nil`. A key that stays one segment reaches the
+      # storage, whose own validation refuses it.
+      for key <- ["../secret.txt", "../../secret.txt", "/etc/passwd", "..", "a\0b", "..\\secret"] do
+        conn = traversing(key, options)
+
+        assert conn.status in [nil, 403, 404], "#{inspect(key)} answered #{conn.status}"
+        refute (conn.resp_body || "") =~ "secret"
+      end
+    end
+
+    @tag :tmp_dir
+    test "one segment holding what a decoded %2e%2e%2f becomes is refused by the storage",
+         %{tmp_dir: tmp_dir, options: options} do
+      # The single-segment case is the one the mount-point check does not
+      # answer, so it is the one the storage has to: `..%2fsecret.txt`
+      # reaches a real application as one segment reading `../secret.txt`.
+      outside = tmp_dir |> Path.join("..") |> Path.expand() |> Path.join("secret.txt")
+      File.write!(outside, "secret")
+      on_exit(fn -> File.rm(outside) end)
+
+      %{expires: expires, signature: signature} = signed_parts("../secret.txt")
+
+      conn =
+        :get
+        |> conn("/attachments/x?expires=#{expires}&signature=#{signature}")
+        |> Map.put(:path_info, ["attachments", "../secret.txt"])
+        |> Plugged.call(options)
+
+      # 403 rather than 404: the storage answers `{:error, :invalid_key}` for
+      # a key it will not touch, and only the storage can tell an unusable
+      # key from a missing one.
+      assert conn.status == 403
+      refute conn.resp_body =~ "secret"
     end
   end
 
@@ -312,6 +384,37 @@ defmodule Coelho.Plug.AttachmentsTest do
 
       assert conn.status == 404
       assert get_resp_header(conn, "content-disposition") == []
+    end
+  end
+
+  describe "a filename that is not valid UTF-8" do
+    @tag :tmp_dir
+    test "is stripped rather than raising", %{storage: storage, tmp_dir: _tmp_dir} do
+      # A form submitted as latin-1 sends `café.pdf` as bytes that are not
+      # valid UTF-8. A unicode-mode regex *raises* on those rather than
+      # failing to match, which turns every fetch of that attachment into a
+      # 500 — the same failure the content type was already defended against.
+      key = store(storage, "latin")
+
+      options =
+        Plugged.init(
+          at: "/attachments",
+          storage: storage,
+          secret: {__MODULE__, :secret, []},
+          metadata: {__MODULE__, :latin1_metadata, []}
+        )
+
+      conn = get(signed(key), options)
+
+      assert conn.status == 200
+      assert [disposition] = get_resp_header(conn, "content-disposition")
+      assert disposition == ~s(attachment; filename="caf.pdf")
+
+      # Byte for byte, because "it looks right" is what let a stray 0xE9
+      # through on Linux while it was stripped on macOS — the same call, the
+      # same Elixir, a different build of the regex engine underneath.
+      assert String.valid?(disposition)
+      refute disposition =~ <<0xE9>>
     end
   end
 

@@ -235,20 +235,79 @@ defmodule Coelho.HTML do
   defp mark_separators(html) do
     html
     |> String.replace([@separator, @fence], "")
-    |> then(&Regex.split(~r{(<pre\b.*?</pre>)}is, &1, include_captures: true))
-    |> Enum.map_join(fn part ->
-      if String.starts_with?(String.downcase(part), "<pre") do
-        # A code block that is only whitespace is a code block: the parser
-        # would drop the node and it would come back empty, so the run is
-        # fenced rather than replaced, keeping it to the character.
+    |> pre_parts()
+    |> Enum.map_join(fn
+      # A code block that is only whitespace is a code block: the parser
+      # would drop the node and it would come back empty, so the run is
+      # fenced rather than replaced, keeping it to the character.
+      {:pre, part} ->
         Regex.replace(~r{>(\s+)<}u, part, ">" <> @fence <> "\\1" <> @fence <> "<")
-      else
-        # The `<` has to open a tag: a `>` and a `<` either side of whitespace
-        # inside an attribute value are just characters.
+
+      # The `<` has to open a tag: a `>` and a `<` either side of whitespace
+      # inside an attribute value are just characters.
+      {:text, part} ->
         Regex.replace(~r{>(\s+)<(?=[a-zA-Z/!])}u, part, ">" <> @separator <> "<")
-      end
     end)
   end
+
+  # The `<pre>` regions of a fragment, found by scanning for them.
+  #
+  # This was a lazy regex — `~r{(<pre\b.*?</pre>)}is` — and `.*?` starts its
+  # search again at every `<pre`, running to the end of the input whenever
+  # nothing closes it. That is the square of the input in the number of
+  # openings: 20 KB of unclosed `<pre>` took 346 ms, and a paste out of a
+  # word processor is a great deal more than 20 KB.
+  #
+  # The case variants are written out rather than lowercasing the fragment
+  # first, because downcasing can change how many bytes a character takes —
+  # and every offset here indexes the original.
+  @pre_open for p <- ~w(p P), r <- ~w(r R), e <- ~w(e E), do: "<" <> p <> r <> e
+  @pre_close for p <- ~w(p P), r <- ~w(r R), e <- ~w(e E), do: "</" <> p <> r <> e <> ">"
+
+  defp pre_parts(html), do: pre_parts(html, 0, byte_size(html), [])
+
+  defp pre_parts(_html, from, size, acc) when from >= size, do: Enum.reverse(acc)
+
+  defp pre_parts(html, from, size, acc) do
+    case opening(html, from, size) do
+      nil ->
+        Enum.reverse([{:text, binary_part(html, from, size - from)} | acc])
+
+      open ->
+        acc = if open > from, do: [{:text, binary_part(html, from, open - from)} | acc], else: acc
+        close = closing(html, open, size)
+
+        pre_parts(html, close, size, [{:pre, binary_part(html, open, close - open)} | acc])
+    end
+  end
+
+  # `<pre` and not `<pretty`: the tag name ends where the word does, which is
+  # what the `\b` in the regex said.
+  defp opening(html, from, size) do
+    case :binary.match(html, @pre_open, scope: {from, size - from}) do
+      :nomatch ->
+        nil
+
+      {at, length} ->
+        after_name = at + length
+
+        if after_name < size and word_byte?(:binary.at(html, after_name)),
+          do: opening(html, after_name, size),
+          else: at
+    end
+  end
+
+  # An opening nothing closes runs to the end, which is what a lazy regex
+  # that never matched would have left as one part anyway.
+  defp closing(html, open, size) do
+    case :binary.match(html, @pre_close, scope: {open, size - open}) do
+      {at, length} -> at + length
+      :nomatch -> size
+    end
+  end
+
+  defp word_byte?(byte),
+    do: byte in ?a..?z or byte in ?A..?Z or byte in ?0..?9 or byte == ?_
 
   # Floki is optional, so it is called through `apply/3`: a direct call would
   # warn at compile time in every application that does not use this path,

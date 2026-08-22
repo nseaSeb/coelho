@@ -16,6 +16,119 @@ defmodule Coelho.CanonicalTest do
     document
   end
 
+  describe "what an empty document hashes to" do
+    test "every shape of nothing answers nil, and nothing else does" do
+      # They draw different pages and they are one digest, which is the
+      # documented meaning of `nil`: nothing was agreed to. An application
+      # comparing digests has to decide what an absent one means before it
+      # compares — so the set is written down here rather than discovered.
+      # `doc([])` is left out on purpose: the shipped schema's `"block+"`
+      # refuses it, so it is not a document this library ever hands back.
+      empties = [
+        doc([paragraph([])]),
+        doc([%{"type" => "horizontal_rule"}]),
+        doc([paragraph([%{"type" => "hard_break"}, %{"type" => "hard_break"}])]),
+        doc([
+          %{
+            "type" => "bullet_list",
+            "content" => [%{"type" => "list_item", "content" => [paragraph([])]}]
+          }
+        ])
+      ]
+
+      for document <- empties do
+        {:ok, valid} = Document.validate(document, schema())
+        assert Document.hash(valid) == nil, "#{inspect(document)} was not empty"
+      end
+
+      {:ok, word} = Document.validate(doc([paragraph([text("a")])]), schema())
+
+      assert is_binary(Document.hash(word))
+    end
+  end
+
+  describe "what the encoder does with every kind of value" do
+    # The canonical encoder is the foundation of `hash/2`, and coverage said
+    # its clauses for `true`, `false`, `nil`, a float and a control character
+    # had never been run by anything. A document holding one of those is not
+    # exotic: any schema declaring a boolean attribute writes one, and a
+    # writer who pastes from a terminal writes the other.
+    defp odd_schema do
+      Schema.new(
+        nodes: [
+          doc: [content: "block+"],
+          paragraph: [content: "text*", group: "block", render: {"p", []}],
+          widget: [
+            group: "block",
+            void: true,
+            attrs: [
+              on: [default: nil, validate: :boolean],
+              ratio: [default: nil],
+              note: [default: nil]
+            ],
+            render: {"div", []}
+          ]
+        ]
+      )
+    end
+
+    defp widget(attrs) do
+      %{"type" => "doc", "content" => [%{"type" => "widget", "attrs" => attrs}]}
+    end
+
+    test "writes booleans, nulls and numbers as JSON says, not as Elixir prints them" do
+      {:ok, document} = Document.validate(widget(%{"on" => true, "ratio" => 1.5}), odd_schema())
+      canonical = Document.canonical(document)
+
+      assert canonical =~ ~s("on":true)
+      assert canonical =~ ~s("ratio":1.5)
+      refute canonical =~ "Elixir"
+    end
+
+    test "tells a false apart from a null, and a number from its text" do
+      hashes =
+        for value <- [true, false, nil, 1, 1.0, "1"] do
+          {:ok, document} = Document.validate(widget(%{"ratio" => value}), odd_schema())
+          Document.hash(document)
+        end
+
+      # `nil` is the attribute's default and is dropped, so it hashes as the
+      # widget with no attributes at all — every other value is its own
+      # document and must be its own digest. `1` and `1.0` included: a
+      # renderer told to print one would not print the other.
+      assert length(Enum.uniq(hashes)) == 6
+    end
+
+    test "escapes the characters a JSON string may not carry literally" do
+      text = "a\tb\rc\nd" <> <<1>> <> "e"
+
+      {:ok, document} =
+        Document.validate(
+          %{
+            "type" => "doc",
+            "content" => [
+              %{"type" => "paragraph", "content" => [%{"type" => "text", "text" => text}]}
+            ]
+          },
+          odd_schema()
+        )
+
+      canonical = Document.canonical(document)
+
+      assert canonical =~ "\\t"
+      assert canonical =~ "\\r"
+      assert canonical =~ "\\n"
+      assert canonical =~ "\\u0001"
+      # And what comes back out is what went in: the escaping is reversible,
+      # which is what makes the digest a digest of the document.
+      assert JSON.decode!(canonical)["content"]
+             |> hd()
+             |> Map.fetch!("content")
+             |> hd()
+             |> Map.fetch!("text") == text
+    end
+  end
+
   describe "mark order" do
     test "the same fragment normalises the same however the marks were added" do
       bold = %{"type" => "bold"}

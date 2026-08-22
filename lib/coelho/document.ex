@@ -241,12 +241,21 @@ defmodule Coelho.Document do
   reading is a different question: what is already stored is stored, and
   cutting it to fit on the way to the page loses text nobody asked to lose.
 
-      Coelho.Document.sanitize(row.body, schema, limits: [max_text_length: :infinity])
+      Coelho.Document.sanitize(row.body, schema,
+        limits: [max_text_length: :infinity, max_attr_length: :infinity]
+      )
 
   So an application that wants the structure cleaned and the length left
   alone says so here, instead of keeping a second schema per field to
   sanitise against. Judging the length itself is then its own to do, with
   the whole document in hand to do it on.
+
+  `:max_attr_length` belongs in that list for the same reason and bites
+  differently: an attribute over the bound is *dropped*, and a **required**
+  attribute dropped takes its node with it — a stored image whose `src` is
+  longer than the bound disappears from the page rather than being shortened.
+  A row written before the bound existed, or under a schema that set it
+  higher, is exactly the case to lift it for.
 
   """
   @spec sanitize(term(), Schema.t(), keyword()) :: map()
@@ -396,9 +405,16 @@ defmodule Coelho.Document do
       "00dc4439f0dcbb463ab186b5b8f81b68e50d70a7b1e3538b86a13e532a17a65d"
 
   A document is *empty* when it holds no text and no node carrying
-  attributes — an empty paragraph, or a top node with no children. Note that
-  a document whose only content is a horizontal rule counts as empty by that
-  rule: it has nothing to agree to.
+  attributes, and `nil` is what every such document answers — an empty
+  paragraph, a top node with no children, a document whose only content is a
+  horizontal rule, three hard breaks in a row, an empty bullet with an empty
+  item. They are different documents and they draw different pages; as
+  digests they are one thing, which is "nothing was agreed to".
+
+  So `nil == nil` is not "the same document": an application comparing a
+  stored digest with a fresh one has to decide what an absent digest means
+  before it compares. Any document with a word in it has a digest of its
+  own, and no empty one can collide with it.
 
   Hash a validated document, for the reason `canonical/1` gives.
   """
@@ -919,7 +935,7 @@ defmodule Coelho.Document do
     with {:ok, type} <- fetch_type(node, schema, rpath),
          %NodeSpec{} = spec <- Schema.node_spec(schema, type) do
       unknown_errors = unknown_key_errors(node, @node_keys, rpath)
-      {attrs, attr_errors} = validate_attrs(node, spec, rpath)
+      {attrs, attr_errors} = validate_attrs(node, spec, schema.limits, rpath)
       {text, text_errors} = validate_text(node, spec, rpath)
       {marks, mark_errors} = validate_marks(node, spec, allowed_marks, schema, rpath)
       {content, content_errors} = validate_content(node, spec, schema, rpath, depth)
@@ -961,7 +977,7 @@ defmodule Coelho.Document do
     end
   end
 
-  defp validate_attrs(node, spec, rpath) do
+  defp validate_attrs(node, spec, limits, rpath) do
     %{attrs: specs} = spec
     known = Schema.attr_keys(spec)
     given = Map.get(node, "attrs", %{})
@@ -976,7 +992,8 @@ defmodule Coelho.Document do
             not MapSet.member?(known, key),
             do: error([key, "attrs" | rpath], "unknown attribute #{inspect(key)}")
 
-      {attrs, errors} = Enum.reduce(specs, {%{}, []}, &validate_attr(&1, &2, given, rpath))
+      {attrs, errors} =
+        Enum.reduce(specs, {%{}, []}, &validate_attr(&1, &2, given, limits, rpath))
 
       {attrs, unknown ++ Enum.reverse(errors)}
     else
@@ -984,16 +1001,92 @@ defmodule Coelho.Document do
     end
   end
 
-  defp validate_attr({name, %Attr{} = spec}, {attrs, errors}, given, rpath) do
+  defp validate_attr({name, %Attr{} = spec}, {attrs, errors}, given, limits, rpath) do
     key = Atom.to_string(name)
     attr_rpath = [key, "attrs" | rpath]
 
     case Map.fetch(given, key) do
-      {:ok, value} -> put_attr(attrs, errors, key, value, spec, attr_rpath)
-      :error when spec.required -> {attrs, [error(attr_rpath, "is required") | errors]}
-      :error -> {attrs, errors}
+      {:ok, value} ->
+        case within_bounds(value, limits) do
+          :ok -> put_attr(attrs, errors, key, value, spec, attr_rpath)
+          {:error, message} -> {attrs, [error(attr_rpath, message) | errors]}
+        end
+
+      :error when spec.required ->
+        {attrs, [error(attr_rpath, "is required") | errors]}
+
+      :error ->
+        {attrs, errors}
     end
   end
+
+  # The bounds used to stop at the document's shape and its text, and an
+  # attribute is neither: `max_text_length` counts what the writer typed,
+  # which is what the editor's counter shows, so it cannot also count an
+  # `alt`. Measured before this existed: half a megabyte of `alt` validated
+  # in 1.7 ms while `text_length/1` answered 1 — a bound the browser posts
+  # straight past, in the one field no `maxlength` constrains.
+  #
+  # Counted through a structure and not only at the top of one: a schema
+  # declaring an attribute with no validator accepts anything JSON can
+  # express, so the same half megabyte wrapped in a one-element list would
+  # otherwise walk straight past a bound on strings. Every character of every
+  # string counts, and so does every element — a million single characters is
+  # a million things to hold, whatever their length says.
+  defp within_bounds(value, limits) do
+    case spend(value, limits.max_attr_length, limits.max_depth) do
+      budget when is_integer(budget) or budget == :infinity ->
+        :ok
+
+      :over ->
+        {:error, "carries more than #{limits.max_attr_length} characters"}
+
+      :deep ->
+        {:error, "is nested more than #{limits.max_depth} levels deep"}
+    end
+  end
+
+  # Answers what is left of the budget, or why there is none. `:infinity`
+  # spends nothing and never runs out, which is what lifting a bound means.
+  defp spend(_value, _budget, depth) when depth != :infinity and depth < 0, do: :deep
+
+  defp spend(value, budget, _depth) when is_binary(value),
+    do: take(budget, String.length(value))
+
+  defp spend(value, budget, depth) when is_list(value) do
+    Enum.reduce_while(value, budget, &spend_child(&1, &2, depth))
+  end
+
+  # Keys as well as values: a key is a string somebody chose, and half a
+  # megabyte of it is half a megabyte to hold whichever side of the colon it
+  # sits on. Reading only the values is how "every character of every string
+  # counts" stopped being true two lines after being written.
+  defp spend(value, budget, depth) when is_map(value) do
+    Enum.reduce_while(value, budget, fn {key, child}, budget ->
+      spend_child(child, spend_key(key, budget), depth)
+    end)
+  end
+
+  defp spend(_value, budget, _depth), do: take(budget, 1)
+
+  defp spend_child(child, budget, depth) do
+    case child |> spend(take(budget, 1), deeper(depth)) do
+      left when left in [:over, :deep] -> {:halt, left}
+      left -> {:cont, left}
+    end
+  end
+
+  defp spend_key(key, budget) when is_binary(key), do: take(budget, String.length(key))
+  defp spend_key(_key, budget), do: take(budget, 1)
+
+  defp take(:infinity, _cost), do: :infinity
+  defp take(:over, _cost), do: :over
+  defp take(:deep, _cost), do: :deep
+  defp take(budget, cost) when budget - cost < 0, do: :over
+  defp take(budget, cost), do: budget - cost
+
+  defp deeper(:infinity), do: :infinity
+  defp deeper(depth), do: depth - 1
 
   # An attribute left at its default is not written. Two editors that agree
   # on what the writer typed would otherwise store different documents —
@@ -1067,7 +1160,7 @@ defmodule Coelho.Document do
          {:ok, name} <- resolve_mark(schema, type, rpath),
          :ok <- mark_allowed(allowed_marks, name, type, rpath) do
       spec = Schema.mark_spec(schema, name)
-      {attrs, errors} = validate_attrs(mark, spec, rpath)
+      {attrs, errors} = validate_attrs(mark, spec, schema.limits, rpath)
 
       case unknown_key_errors(mark, @mark_keys, rpath) ++ errors do
         [] -> {:ok, put_unless_empty(%{"type" => Atom.to_string(name)}, "attrs", attrs)}
