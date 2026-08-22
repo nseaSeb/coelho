@@ -12,6 +12,8 @@ defmodule Coelho.Schema.MarkSpec do
       with the schema and never emitted server side
     * `:render` — how the mark is turned into HTML, see `Coelho.Render`
     * `:parse` — HTML this mark is imported from, see `Coelho.HTML`
+    * `:attr_keys` — the attribute names as the strings a document is written
+      in, derived from `:attrs` when the schema is built
 
   """
 
@@ -23,8 +25,17 @@ defmodule Coelho.Schema.MarkSpec do
           class: String.t() | nil,
           editor_attrs: %{optional(String.t()) => String.t()},
           render: Coelho.Schema.NodeSpec.render(),
-          parse: [Coelho.HTML.rule()]
+          parse: [Coelho.HTML.rule()],
+          attr_keys: MapSet.t(String.t()) | nil
         }
 
-  defstruct [:name, :class, attrs: %{}, editor_attrs: %{}, render: nil, parse: []]
+  defstruct [
+    :name,
+    :class,
+    attrs: %{},
+    editor_attrs: %{},
+    render: nil,
+    parse: [],
+    attr_keys: nil
+  ]
 end

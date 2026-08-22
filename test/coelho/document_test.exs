@@ -388,6 +388,20 @@ defmodule Coelho.DocumentTest do
       assert [%{"content" => [_, %{"text" => "bc"}]}] = normalised["content"]
     end
 
+    # Merging used to re-concatenate the whole run on every pair, which is
+    # quadratic in the length of the paragraph — and a paste out of a word
+    # processor arrives as one text node per word. The assertion is the
+    # merged text; the timeout is what the shape of the work is worth.
+    @tag timeout: 10_000
+    test "a long run of adjacent nodes is merged in one pass" do
+      words = for index <- 1..2_000, do: text("w#{index} ")
+      document = doc([paragraph(words)])
+
+      assert {:ok, normalised} = Document.validate(document, schema())
+      assert [%{"content" => [%{"text" => merged}]}] = normalised["content"]
+      assert merged == Enum.map_join(1..2_000, fn index -> "w#{index} " end)
+    end
+
     test "runs carrying different marks stay apart" do
       document = doc([paragraph([text("a", [%{"type" => "bold"}]), text("b")])])
 

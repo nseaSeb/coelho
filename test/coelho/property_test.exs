@@ -13,6 +13,31 @@ defmodule Coelho.PropertyTest do
 
   # -- Properties -----------------------------------------------------------
 
+  # `escape/1` used to be five `String.replace/3` calls in a row, which is
+  # what this compares against: the single pass that replaced them has to
+  # answer exactly the same thing, including for text that escapes to itself
+  # and is handed back rather than rebuilt.
+  defp escape_in_five_passes(text) do
+    text
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&#39;")
+  end
+
+  property "escaping in one pass says what escaping in five passes said" do
+    check all(
+            text <-
+              StreamData.string(
+                Enum.concat([~c"&<>\"'", ~c"aé \n\t", [0x1F600, 0x00E9, 0x4E2D]]),
+                max_length: 60
+              )
+          ) do
+      assert Render.escape(text) == escape_in_five_passes(text)
+    end
+  end
+
   property "a document built from the schema validates against it" do
     check all(document <- document()) do
       assert {:ok, _} = Document.validate(document, schema())

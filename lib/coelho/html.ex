@@ -174,16 +174,16 @@ defmodule Coelho.HTML do
   defp collect_warnings(_tree, _schema, acc), do: acc
 
   defp match(schema, tag, attrs, children) do
-    match_node(schema, tag, attrs, children) || match_mark(schema, tag, attrs, children, :all)
+    html_attrs = Map.new(attrs)
+
+    match_node(schema, tag, html_attrs, children) ||
+      match_mark(schema, tag, html_attrs, children, :all)
   end
 
   # Told apart from an unknown element because the two call for different
   # answers: an unknown tag means the schema does not cover this markup, a
   # rejected one means it does, and refused what this element carried.
-  defp parses_tag?(schema, tag) do
-    specs = Map.values(schema.nodes) ++ Map.values(schema.marks)
-    Enum.any?(specs, fn spec -> Enum.any?(spec.parse, &match?({^tag, _extract}, &1)) end)
-  end
+  defp parses_tag?(schema, tag), do: MapSet.member?(Schema.parse_tags(schema), tag)
 
   # Whether an attribute was used cannot be read off the names that came out:
   # a rule is free to rename as it extracts, and the shipped ones do —
@@ -275,26 +275,33 @@ defmodule Coelho.HTML do
   #
   # Marks have to match to merge: the space between bold and plain text
   # belongs to one of them, and joining across the boundary would move it.
+  # The run is accumulated as iodata and collapsed once at the end, rather
+  # than re-joining and re-collapsing everything merged so far on every pair:
+  # collapsing is idempotent, so the answer is the same and the work is
+  # linear in the length of the run instead of quadratic.
   defp merge_runs(children) do
     children
     |> Enum.reduce([], fn
       %{"type" => "text"} = node, [%{"type" => "text"} = previous | rest] = acc ->
         if Map.get(node, "marks", []) == Map.get(previous, "marks", []) do
-          [%{previous | "text" => collapse(previous["text"] <> node["text"])} | rest]
+          [%{previous | "text" => [previous["text"], node["text"]]} | rest]
         else
-          [collapse_text(node) | acc]
+          [node | acc]
         end
-
-      %{"type" => "text"} = node, acc ->
-        [collapse_text(node) | acc]
 
       node, acc ->
         [node | acc]
     end)
     |> Enum.reverse()
+    |> Enum.map(&collapse_text/1)
   end
 
-  defp collapse_text(%{"text" => text} = node), do: %{node | "text" => collapse(text)}
+  defp collapse_text(%{"type" => "text", "text" => text} = node) when is_list(text),
+    do: %{node | "text" => text |> IO.iodata_to_binary() |> collapse()}
+
+  defp collapse_text(%{"type" => "text", "text" => text} = node),
+    do: %{node | "text" => collapse(text)}
+
   defp collapse_text(node), do: node
 
   defp convert_tree(text, _schema, _allowed_marks, marks) when is_binary(text) do
@@ -310,14 +317,16 @@ defmodule Coelho.HTML do
   # later, once it is known what the run sits between.
 
   defp convert_tree({tag, attrs, children}, schema, allowed_marks, marks) do
+    html_attrs = Map.new(attrs)
+
     cond do
       tag in @discarded ->
         []
 
-      node = match_node(schema, tag, attrs, children) ->
+      node = match_node(schema, tag, html_attrs, children) ->
         build_node(node, children, schema, marks)
 
-      mark = match_mark(schema, tag, attrs, children, allowed_marks) ->
+      mark = match_mark(schema, tag, html_attrs, children, allowed_marks) ->
         convert(children, schema, allowed_marks, add_mark(marks, mark))
 
       true ->
@@ -385,39 +394,37 @@ defmodule Coelho.HTML do
     end
   end
 
-  defp match_node(schema, tag, attrs, children) do
+  # `html_attrs` is a map, built once for the element: every spec of the
+  # schema is asked about it in turn, and converting the list inside that
+  # loop rebuilt the same map dozens of times per element.
+  defp match_node(schema, tag, html_attrs, children) do
     Enum.find_value(schema.node_order, fn name ->
       spec = Schema.node_spec(schema, name)
 
-      with {:ok, node_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs, children),
+      with {:ok, node_attrs} <- apply_rules(spec.parse, spec.attrs, tag, html_attrs, children),
            do: {spec, node_attrs}
     end)
   end
 
-  defp match_mark(schema, tag, attrs, children, allowed_marks) do
+  defp match_mark(schema, tag, html_attrs, children, allowed_marks) do
     Enum.find_value(schema.mark_order, fn name ->
-      if mark_allowed?(allowed_marks, name) do
-        mark_from(Schema.mark_spec(schema, name), name, tag, attrs, children)
+      if Schema.mark_allowed?(allowed_marks, name) do
+        mark_from(Schema.mark_spec(schema, name), name, tag, html_attrs, children)
       end
     end)
   end
 
-  defp mark_from(spec, name, tag, attrs, children) do
-    with {:ok, mark_attrs} <- apply_rules(spec.parse, spec.attrs, tag, attrs, children) do
+  defp mark_from(spec, name, tag, html_attrs, children) do
+    with {:ok, mark_attrs} <- apply_rules(spec.parse, spec.attrs, tag, html_attrs, children) do
       mark = %{"type" => Atom.to_string(name)}
       if mark_attrs == %{}, do: mark, else: Map.put(mark, "attrs", mark_attrs)
     end
   end
 
-  defp mark_allowed?(:all, _name), do: true
-  defp mark_allowed?(allowed, name), do: name in allowed
-
   # A rule matches only if the attributes it produces survive the schema's
   # own validators. That is what turns `<a href="javascript:…">` into an
   # unknown element — the text stays, the link does not.
   defp apply_rules(rules, specs, tag, html_attrs, children) do
-    html_attrs = Map.new(html_attrs)
-
     Enum.find_value(rules, fn
       {^tag, extract} ->
         extracted = extract_attrs(extract, html_attrs, children)
@@ -455,12 +462,29 @@ defmodule Coelho.HTML do
     |> Enum.find_value(&Map.get(named, &1))
   end
 
+  # Read by splitting rather than by matching: the property is known only at
+  # runtime, so a regex here is an interpolated sigil — `Regex.compile!` on
+  # every attribute of every element the import walks.
   defp render_as_value({:style, property}, html_attrs) do
-    pattern = ~r/(?:^|;)\s*#{Regex.escape(property)}\s*:\s*([^;]+)/i
+    wanted = String.downcase(property)
 
-    case Regex.run(pattern, Map.get(html_attrs, "style", "")) do
-      [_match, value] -> value |> String.trim() |> String.downcase()
-      nil -> nil
+    html_attrs
+    |> Map.get("style", "")
+    |> String.split(";")
+    |> Enum.find_value(fn declaration ->
+      case String.split(declaration, ":", parts: 2) do
+        [name, value] -> styled(name, value, wanted)
+        _other -> nil
+      end
+    end)
+  end
+
+  defp styled(name, value, wanted) do
+    with true <- name |> String.trim() |> String.downcase() == wanted,
+         trimmed when trimmed != "" <- value |> String.trim() |> String.downcase() do
+      trimmed
+    else
+      _no -> nil
     end
   end
 
@@ -634,10 +658,7 @@ defmodule Coelho.HTML do
   end
 
   defp inline?(child, schema) do
-    case type_of(child, schema) do
-      nil -> false
-      name -> Schema.node_spec(schema, name).inline
-    end
+    match?({:ok, %NodeSpec{inline: true}}, Schema.spec_of(schema, child))
   end
 
   defp type_of(child, schema) do

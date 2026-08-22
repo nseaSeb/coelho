@@ -17,6 +17,15 @@ defmodule Coelho.Telemetry do
   metadata of every keystroke's validation would hand every handler a copy.
   It is settled when the schema is built, so reading it costs nothing.
 
+  > #### `:key` is not a metric tag {: .warning}
+  >
+  > A storage key is unbounded — one per attachment ever stored — so tagging
+  > a `Telemetry.Metrics` definition by it creates a metric series per
+  > attachment, and the metrics backend keeps every one of them for as long
+  > as it keeps anything. It is in the metadata for a log line or a trace,
+  > where a single event carries it and is then done with it. Tag by
+  > `:storage`, which is a module name, or by `:result`.
+
   ## What it costs
 
   Nothing at all in a build without `:telemetry`: the metadata and the

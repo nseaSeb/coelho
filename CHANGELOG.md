@@ -1,5 +1,93 @@
 # Changelog
 
+## Unreleased
+
+An audit for leaks, wasted work and duplication, and what it found. The BEAM
+side had no leak to find: no ETS, no processes, no atoms built from anything
+but a schema the developer wrote. What it had was work redone on paths that
+run once per keystroke and once per render. The browser side had three real
+leaks, and a bug hiding behind one of them.
+
+### An editor that is gone stays gone
+
+- A pasted image being captured armed a fifteen-second timer that nothing
+  cancelled. It fired after the editor was destroyed, dispatched into a view
+  that no longer existed, and until it fired it held the element, the view,
+  the schema and the twenty documents the editor remembers having written.
+  Timers are cancelled on the way out, and everything that can come back
+  late asks first whether there is still an editor to come back to.
+- The fetch behind that capture could not be abandoned either. It carries an
+  `AbortController` now, aborted with the hook, and an abort is teardown
+  rather than a failure worth telling anyone about.
+- `previewUrls` grew for the lifetime of the page and never released a
+  `blob:` URL. It is bounded now, and a URL is revoked where something knows
+  it is finished with: the same key given a different one, or the
+  application saying so through the new **`clearPreviewUrl(key)`** export.
+  Never on eviction — an editor may still be showing it, and a blank image
+  is worse than a preview the map has forgotten.
+- The alignment memo was one module-level slot holding a whole editor state
+  past the teardown of the editor it came from, and — with the selection
+  listener on `document` — missing on every caret move whenever two editors
+  shared a page. It is keyed on the state itself, so it holds nothing.
+
+### A schema changed under an editor is the schema its buttons use
+
+A schema that moves while someone is writing rebuilds the view in place. The
+toolbar went on building its commands from the schema read at mount, so a
+click dispatched node and mark types belonging to a schema the current state
+had never heard of — the button did nothing, and said nothing. This is the
+path an application takes when it adds a mark of its own, so the demo grew a
+schema switch and the browser suite a check for it.
+
+### Settled once, where the schema is built
+
+Everything derived from a schema is derived when the schema is built, in the
+one place `new/1`, `extend/2` and `restrict/2` all converge on: the JSON the
+editor component used to encode on every render, the empty document, the
+mark ranks a canonical document sorts by, the tags the import recognises,
+and the attribute names validation asks of every node. Deliberately not a
+cache keyed by schema: an application building one per request would grow
+that without bound, which is the shape of leak this went looking for.
+
+- `Coelho.Schema` gained `spec_of/2`, `fetch_node_spec/2`,
+  `fetch_mark_spec/2` and `mark_allowed?/2` — the questions six walks of a
+  document each answered with their own copy of the same three steps — and
+  `json/1`, `empty/1`, `parse_tags/1` and `attr_keys/1` to read what the
+  build settled.
+- `%Coelho.Schema{}`, `%Coelho.Schema.NodeSpec{}` and
+  `%Coelho.Schema.MarkSpec{}` carry the derived fields. A schema built any
+  other way still answers: every accessor derives on the spot rather than
+  handing back `nil`, and `mark_index/2` falls back to the declaration order
+  rather than ranking every mark the same.
+
+### Less work per keystroke, per render and per import
+
+- `Coelho.Render.escape/1` escapes in one pass rather than five, and hands
+  back text that escapes to itself without copying it.
+- Adjacent text nodes are merged as iodata rather than re-concatenated pair
+  by pair — quadratic in the length of a run, and a paste out of a word
+  processor arrives as one node per word.
+- The style property behind `render_as: {:style, …}` is read by splitting
+  rather than by a regex compiled again for every attribute of every element
+  an import walks, and an element's attributes become a map once instead of
+  once per node spec and once per mark spec.
+- `Coelho.Document.sanitize/2` emits one `[:coelho, :validate]` event for
+  the whole repair instead of one per pass, up to eight.
+- Whether a rendered child came to nothing is answered at its first byte
+  rather than by measuring the whole subtree at every level.
+- In the browser: the toolbar finds its buttons once, memoises its commands
+  per schema, and compares before it writes; emptiness is asked without
+  building the document as a string; and the counter is written once per
+  frame rather than once per key.
+
+### Said rather than left to be discovered
+
+- `Coelho.Telemetry` says that `:key` is not a metric tag: a storage key is
+  unbounded, so tagging by it is one metric series per attachment.
+- `Coelho.Storage.read/2` says that it buffers the whole object, that the
+  plug prefers `path/2` where a storage has one, and that a storage fronting
+  large objects wants `redirect_url/3`.
+
 ## 0.8.0 — 2026-08-22
 
 The other half of 0.6.0. A mark an application added could be stored,

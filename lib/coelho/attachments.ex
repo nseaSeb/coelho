@@ -218,9 +218,7 @@ defmodule Coelho.Attachments do
 
   defp collect_keys(node, schema) when is_map(node) do
     own =
-      with {:ok, type} <- Map.fetch(node, "type"),
-           {:ok, name} <- Schema.resolve_node_name(schema, type),
-           %NodeSpec{attrs: %{key: %Attr{}}} <- Schema.node_spec(schema, name),
+      with {:ok, %NodeSpec{attrs: %{key: %Attr{}}}} <- Schema.spec_of(schema, node),
            key when is_binary(key) <- node |> Map.get("attrs", %{}) |> Map.get("key") do
         [key]
       else

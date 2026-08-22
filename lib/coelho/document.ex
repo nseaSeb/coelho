@@ -338,11 +338,8 @@ defmodule Coelho.Document do
   defp visible_child?(_children, _schema), do: false
 
   defp void?(node, schema) do
-    with type when is_binary(type) <- Map.get(node, "type"),
-         {:ok, name} <- Schema.resolve_node_name(schema, type),
-         %NodeSpec{void: true} = spec <- Schema.node_spec(schema, name) do
-      not punctuation?(spec)
-    else
+    case Schema.spec_of(schema, node) do
+      {:ok, %NodeSpec{void: true} = spec} -> not punctuation?(spec)
       _other -> false
     end
   end
@@ -540,8 +537,18 @@ defmodule Coelho.Document do
   # asks again; every pass strictly shrinks the document, so this terminates
   # well before the cap, and the cap is there only so that a rule we get
   # wrong later fails safe rather than spinning.
-  defp repair(document, schema, passes) do
-    case validate(document, schema) do
+  # The first pass is the sanitisation's `[:coelho, :validate]` event; the
+  # passes that follow are the repair talking to itself, and each one used to
+  # emit a span of its own — up to eight events, and eight spans' worth of
+  # metadata, for one sanitised document.
+  defp repair(document, schema, @sanitize_passes = passes),
+    do: repair(validate(document, schema), document, schema, passes)
+
+  defp repair(document, schema, passes),
+    do: repair(document |> do_validate(schema) |> answer(), document, schema, passes)
+
+  defp repair(validated, document, schema, passes) do
+    case validated do
       {:ok, document} ->
         document
 
@@ -912,7 +919,7 @@ defmodule Coelho.Document do
     with {:ok, type} <- fetch_type(node, schema, rpath),
          %NodeSpec{} = spec <- Schema.node_spec(schema, type) do
       unknown_errors = unknown_key_errors(node, @node_keys, rpath)
-      {attrs, attr_errors} = validate_attrs(node, spec.attrs, rpath)
+      {attrs, attr_errors} = validate_attrs(node, spec, rpath)
       {text, text_errors} = validate_text(node, spec, rpath)
       {marks, mark_errors} = validate_marks(node, spec, allowed_marks, schema, rpath)
       {content, content_errors} = validate_content(node, spec, schema, rpath, depth)
@@ -954,12 +961,12 @@ defmodule Coelho.Document do
     end
   end
 
-  defp validate_attrs(node, specs, rpath) do
+  defp validate_attrs(node, spec, rpath) do
+    %{attrs: specs} = spec
+    known = Schema.attr_keys(spec)
     given = Map.get(node, "attrs", %{})
 
     if is_map(given) do
-      known = MapSet.new(specs, fn {name, _} -> Atom.to_string(name) end)
-
       # Reported at the offending key rather than at `attrs`, because the
       # path is what `sanitize/2` repairs from: an error at `attrs` takes
       # every attribute on the node with it, so one stray key would cost a
@@ -1060,7 +1067,7 @@ defmodule Coelho.Document do
          {:ok, name} <- resolve_mark(schema, type, rpath),
          :ok <- mark_allowed(allowed_marks, name, type, rpath) do
       spec = Schema.mark_spec(schema, name)
-      {attrs, errors} = validate_attrs(mark, spec.attrs, rpath)
+      {attrs, errors} = validate_attrs(mark, spec, rpath)
 
       case unknown_key_errors(mark, @mark_keys, rpath) ++ errors do
         [] -> {:ok, put_unless_empty(%{"type" => Atom.to_string(name)}, "attrs", attrs)}
@@ -1090,7 +1097,7 @@ defmodule Coelho.Document do
   end
 
   defp mark_allowed(allowed_marks, name, type, rpath) do
-    if mark_allowed?(allowed_marks, name) do
+    if Schema.mark_allowed?(allowed_marks, name) do
       :ok
     else
       {:error, [error(rpath, "mark #{inspect(type)} is not allowed on this node")]}
@@ -1103,9 +1110,6 @@ defmodule Coelho.Document do
   defp add_mark(kept, mark) do
     if Enum.any?(kept, &(&1["type"] == mark["type"])), do: kept, else: [mark | kept]
   end
-
-  defp mark_allowed?(:all, _name), do: true
-  defp mark_allowed?(allowed, name) when is_list(allowed), do: name in allowed
 
   defp validate_text(node, %NodeSpec{text: true}, rpath) do
     case Map.fetch(node, "text") do
@@ -1154,12 +1158,16 @@ defmodule Coelho.Document do
   # Two adjacent text nodes carrying the same marks are one run of text; the
   # browser side merges them on the spot, so a document that kept them apart
   # would render an extra element and grow one on every round trip.
+  # The joined text is accumulated as iodata and flattened once: concatenating
+  # into the run as it grows re-copies everything merged so far, which on a
+  # paste that arrives as one text node per word is quadratic in the length
+  # of the paragraph.
   defp merge_text(children) do
     children
     |> Enum.reduce([], fn
       %{"type" => "text"} = node, [%{"type" => "text"} = previous | rest] ->
         if Map.get(node, "marks", []) == Map.get(previous, "marks", []) do
-          [%{previous | "text" => previous["text"] <> node["text"]} | rest]
+          [%{previous | "text" => [previous["text"], node["text"]]} | rest]
         else
           [node, previous | rest]
         end
@@ -1168,7 +1176,13 @@ defmodule Coelho.Document do
         [node | acc]
     end)
     |> Enum.reverse()
+    |> Enum.map(&flatten_text/1)
   end
+
+  defp flatten_text(%{"type" => "text", "text" => text} = node) when is_list(text),
+    do: %{node | "text" => IO.iodata_to_binary(text)}
+
+  defp flatten_text(node), do: node
 
   defp content_errors(%NodeSpec{content: nil}, [], _types, _schema, _rpath), do: []
 
@@ -1225,12 +1239,9 @@ defmodule Coelho.Document do
   # -- Plain text -----------------------------------------------------------
 
   defp text_iodata(node, schema) when is_map(node) do
-    with {:ok, type} <- Map.fetch(node, "type"),
-         {:ok, name} <- Schema.resolve_node_name(schema, type),
-         %NodeSpec{} = spec <- Schema.node_spec(schema, name) do
-      node_text(spec, node, schema)
-    else
-      _ -> []
+    case Schema.spec_of(schema, node) do
+      {:ok, spec} -> node_text(spec, node, schema)
+      :error -> []
     end
   end
 
@@ -1276,13 +1287,7 @@ defmodule Coelho.Document do
   end
 
   defp block?(child, schema) when is_map(child) do
-    with type when is_binary(type) <- Map.get(child, "type"),
-         {:ok, name} <- Schema.resolve_node_name(schema, type),
-         %NodeSpec{inline: false} <- Schema.node_spec(schema, name) do
-      true
-    else
-      _ -> false
-    end
+    match?({:ok, %NodeSpec{inline: false}}, Schema.spec_of(schema, child))
   end
 
   defp block?(_child, _schema), do: false

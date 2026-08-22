@@ -1079,6 +1079,51 @@ const run = async () => {
       await settle(page);
     });
 
+    await test("a schema changed under the editor is the schema its buttons use", async () => {
+      // The vocabulary moved while someone was writing: the container is
+      // `phx-update="ignore"`, so the view is rebuilt in place against the
+      // new schema. A toolbar still building its commands from the schema
+      // read at mount then dispatches node and mark types belonging to a
+      // schema this state has never heard of.
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.keyboard.type("switched");
+      await settle(page);
+
+      await page.click("#note-schema");
+      await settle(page);
+
+      // Drawn from `render: {"mark", []}` in Elixir and from nothing else —
+      // no toDOM was written for it in JavaScript.
+      await page.waitForSelector('#note_body-editor [data-coelho-command="highlight"]');
+
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.click('#note_body-editor [data-coelho-command="highlight"]');
+      await settle(page);
+
+      assert.ok(
+        (await page.innerHTML(NOTE)).includes("<mark"),
+        "the mark the new schema declares was not drawn"
+      );
+
+      // And a command the old schema also had still works, which is the half
+      // that broke silently: `bold` resolved to the mark type of the schema
+      // that is gone.
+      await focusEditor(page, NOTE);
+      await selectAll(page);
+      await page.click('#note_body-editor [data-coelho-command="bold"]');
+      await settle(page);
+
+      assert.ok(
+        (await page.innerHTML(NOTE)).includes("<strong"),
+        "bold did nothing after the schema changed"
+      );
+
+      await page.click("#note-schema");
+      await settle(page);
+    });
+
     await test("nothing threw along the way", () => {
       assert.deepEqual(errors, []);
     });

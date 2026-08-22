@@ -49,11 +49,60 @@ const readAlign = (dom) => {
   );
 };
 
-// Preview URLs live outside the document, keyed by attachment key.
+// Preview URLs live outside the document, keyed by attachment key. The map
+// belongs to the page and not to an editor: a LiveView navigation destroys
+// and remounts the hook, and the preview of an attachment inserted before
+// it has to survive that. Nothing in a document ever says a key is finished
+// with, so the map is bounded rather than pruned — past the cap the oldest
+// entry goes, and a `blob:` URL is revoked on the way out, since nothing
+// else will ever release the bytes behind it.
+const PREVIEW_LIMIT = 500;
 const previewUrls = new Map();
 
+// Revoking frees the bytes, and it is also the one thing that cannot be
+// taken back: an `<img>` still pointing at the URL goes blank. So it happens
+// only where the URL is known to be finished with — the application saying
+// so, or the same key being given a different one — and never for a URL some
+// other key is still serving.
+const releasePreview = (url) => {
+  if (typeof url !== "string" || !url.startsWith("blob:")) return;
+
+  for (const kept of previewUrls.values()) if (kept === url) return;
+
+  URL.revokeObjectURL(url);
+};
+
 export const setPreviewUrl = (key, url) => {
-  if (key && url) previewUrls.set(key, url);
+  if (!key || !url) return;
+
+  const replaced = previewUrls.get(key);
+
+  // Deleted before being set: a Map iterates in insertion order, and that
+  // is what makes a key written again the newest rather than the oldest.
+  previewUrls.delete(key);
+  previewUrls.set(key, url);
+
+  if (replaced !== undefined && replaced !== url) releasePreview(replaced);
+
+  // Past the cap the oldest entry goes, but its URL is *not* revoked: an
+  // editor mounted on a long page may still be showing it, and a blank
+  // image is worse than a preview the map no longer remembers.
+  while (previewUrls.size > PREVIEW_LIMIT) {
+    previewUrls.delete(previewUrls.keys().next().value);
+  }
+};
+
+// An application that knows an attachment is gone — deleted, or a document
+// closed for good — says so here rather than waiting for the cap. This is
+// where a `blob:` URL is released, because this is where something knows
+// nothing is showing it any more.
+export const clearPreviewUrl = (key) => {
+  if (!previewUrls.has(key)) return;
+
+  const url = previewUrls.get(key);
+
+  previewUrls.delete(key);
+  releasePreview(url);
 };
 
 export const defaultNodeDOM = {
@@ -340,26 +389,47 @@ const keyOf = (value) => (value === null || value === undefined ? "null" : Strin
 // cannot recognise it again is half a mechanism: copying a paragraph inside
 // the editor round-trips it through toDOM and parseDOM, so in class mode the
 // alignment would be lost on paste — by the editor, on its own markup.
-const attrsFromDOM = (dom, attrRenderAs) => {
-  const attrs = {};
-
-  for (const [name, how] of Object.entries(attrRenderAs)) {
+// The reverse table and the style pattern depend on the schema alone, so
+// they are built with it rather than per element: `getAttrs` runs once per
+// element per attribute on every paste, import and in-editor copy.
+const attrReaders = (attrRenderAs) =>
+  Object.entries(attrRenderAs).flatMap(([name, how]) => {
     if (how.class) {
       const named = new Map(Object.entries(how.class).map(([value, c]) => [c, value]));
-      const found = (dom.getAttribute("class") ?? "").split(/\s+/).find((c) => named.has(c));
+
+      return [{ name, named }];
+    }
+
+    if (how.style) {
+      const pattern = new RegExp(`(?:^|;)\\s*${how.style}\\s*:\\s*([^;]+)`, "i");
+
+      return [{ name, pattern, values: how.values }];
+    }
+
+    return [];
+  });
+
+const attrsFromDOM = (dom, readers) => {
+  const attrs = {};
+
+  for (const reader of readers) {
+    if (reader.named) {
+      const found = (dom.getAttribute("class") ?? "").split(/\s+/).find((c) => reader.named.has(c));
 
       // "null" is what an unset value is called on the way out, so it is
       // what it answers to on the way back.
       if (found !== undefined) {
-        const value = named.get(found);
+        const value = reader.named.get(found);
 
-        attrs[name] = value === "null" ? null : value;
+        attrs[reader.name] = value === "null" ? null : value;
       }
-    } else if (how.style) {
-      const pattern = new RegExp(`(?:^|;)\\s*${how.style}\\s*:\\s*([^;]+)`, "i");
-      const found = pattern.exec(dom.getAttribute("style") ?? "")?.[1]?.trim().toLowerCase();
+    } else {
+      const found = reader.pattern
+        .exec(dom.getAttribute("style") ?? "")?.[1]
+        ?.trim()
+        .toLowerCase();
 
-      if (how.values?.includes(found)) attrs[name] = found;
+      if (reader.values?.includes(found)) attrs[reader.name] = found;
     }
   }
 
@@ -369,8 +439,10 @@ const attrsFromDOM = (dom, attrRenderAs) => {
 // A parseDOM rule is `{tag}` or `{tag, getAttrs}`, and a `getAttrs` that
 // answers `false` is refusing the element — which must survive being
 // wrapped, or the rule would start matching what it meant to decline.
-const withParsedAttrs = (rules, attrRenderAs) =>
-  rules.map((rule) => {
+const withParsedAttrs = (rules, attrRenderAs) => {
+  const readers = attrReaders(attrRenderAs);
+
+  return rules.map((rule) => {
     if (typeof rule !== "object" || rule === null || !rule.tag) return rule;
 
     const getAttrs = rule.getAttrs;
@@ -378,7 +450,7 @@ const withParsedAttrs = (rules, attrRenderAs) =>
     return {
       ...rule,
       getAttrs: (dom) => {
-        const read = attrsFromDOM(dom, attrRenderAs);
+        const read = attrsFromDOM(dom, readers);
 
         if (!getAttrs) return read;
 
@@ -393,6 +465,7 @@ const withParsedAttrs = (rules, attrRenderAs) =>
       }
     };
   });
+};
 
 // A `getAttrs` answering `{align: null}` means "this element says nothing
 // about the alignment", not "it says there is none": spreading it over what
@@ -476,6 +549,22 @@ export const textLength = (document) => {
   if (!Array.isArray(node.content)) return 0;
 
   return node.content.reduce((total, child) => total + textLength(child), 0);
+};
+
+// Whether the document holds any text at all — the question `doc.textContent`
+// answers by building the whole thing as one string, on every keystroke, only
+// for it to be thrown away. This stops at the first character instead.
+const hasText = (doc) => {
+  let found = false;
+
+  doc.descendants((node) => {
+    if (found) return false;
+    if (node.isText && node.text.length > 0) found = true;
+
+    return !found;
+  });
+
+  return found;
 };
 
 // An editor carries the exported schema itself, or points at a
@@ -576,7 +665,14 @@ const alignable = (node) => "align" in (node.type.spec.attrs ?? {});
 // came in by import carrying "left" would offer a button that is pressed
 // and enabled at once, and rewrite the document, and its hash, for no
 // visible change.
-const alignOf = (node) => (node.attrs.align === "left" ? null : node.attrs.align);
+// `left` is what no value already looks like, so it is written as null and
+// never as "left": two documents identical to the eye must not diverge in
+// hash over which button the writer happened to click. Said once — the
+// command that sets it, the button that reads pressed, and the comparison
+// between the two all have to agree, and three copies of it did not have to.
+const canonicalAlign = (value) => (value === "left" ? null : value);
+
+const alignOf = (node) => canonicalAlign(node.attrs.align);
 
 // The outermost alignable blocks of the selection, with their positions.
 // Only the outermost: a `list_item` and its `paragraph` both declare the
@@ -588,10 +684,16 @@ const alignOf = (node) => (node.attrs.align === "left" ? null : node.attrs.align
 // toolbar asks each alignment button twice per refresh — once for its
 // pressed state, once to know whether it can run — and a refresh follows
 // every selection change, including each step of a drag.
-let alignMemo = { state: null, targets: null };
+//
+// A WeakMap and not a single slot: the selection listener is on `document`,
+// so two editors on one page refresh in turn with two different states, and
+// one slot would miss every time. It also holds nothing — a destroyed
+// editor's state and the nodes it points at go with it.
+const alignMemo = new WeakMap();
 
 const alignTargets = (state) => {
-  if (alignMemo.state === state) return alignMemo.targets;
+  const memoized = alignMemo.get(state);
+  if (memoized) return memoized;
 
   const { from, to } = state.selection;
   const targets = [];
@@ -602,7 +704,7 @@ const alignTargets = (state) => {
     return false;
   });
 
-  alignMemo = { state, targets };
+  alignMemo.set(state, targets);
 
   return targets;
 };
@@ -611,10 +713,7 @@ const setAlign = (value) => (state, dispatch) => {
   const targets = alignTargets(state);
   if (targets.length === 0) return false;
 
-  // `left` is what the default already looks like, so it is written as
-  // null, never as "left": two documents identical to the eye must not
-  // diverge in hash over which buttons the writer happened to click.
-  const applied = value === "left" ? null : value;
+  const applied = canonicalAlign(value);
 
   // Decided once for the whole selection, the way a mark button behaves:
   // everything already carries the value, so the click removes it
@@ -719,6 +818,9 @@ const markActive = (state, type) => {
   let throughout = true;
 
   state.doc.nodesBetween(from, to, (node) => {
+    // Once a text node without the mark has been seen the answer cannot
+    // change, and this runs for every mark button on every caret move.
+    if (!throughout) return false;
     if (!node.isText) return;
 
     sawText = true;
@@ -829,13 +931,43 @@ const commandActive = (state, name, options) => {
       if (align) {
         const targets = alignTargets(state);
         if (targets.length === 0) return null;
-        const value = align[1] === "left" ? null : align[1];
+        const value = canonicalAlign(align[1]);
         return targets.every((target) => alignOf(target.node) === value);
       }
       return marks[name] ? markActive(state, marks[name]) : null;
     }
   }
 };
+
+// `commandFor` is pure in `(name, schema, options.level)`, and the toolbar
+// asks it for every button on every keystroke and on every step of a caret
+// drag — so the answer is kept rather than rebuilt. Keyed by the schema
+// itself: `rebuild` makes a new one, which is exactly when the answers
+// built against the old one stop being true.
+const commandCache = new WeakMap();
+
+const cachedCommandFor = (name, schema, options) => {
+  let byName = commandCache.get(schema);
+
+  if (!byName) {
+    byName = new Map();
+    commandCache.set(schema, byName);
+  }
+
+  const key = `${name}|${options.level ?? ""}`;
+  if (byName.has(key)) return byName.get(key);
+
+  const command = commandFor(name, schema, options);
+  byName.set(key, command);
+
+  return command;
+};
+
+// The editor's plugins. Built here rather than at each of the two places
+// that make a state — mount and rebuild — because the two have to stay in
+// lockstep: a plugin added to one and not the other is a rebuild that
+// silently drops it.
+const editorPlugins = (schema) => [history(), keymap(buildKeymap(schema)), keymap(baseKeymap)];
 
 const buildKeymap = (schema) => {
   const { nodes, marks } = schema;
@@ -998,13 +1130,42 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       const input = document.getElementById(el.dataset.coelhoInput);
       const content = el.querySelector(".coelho-content");
 
-      const schema = buildSchema(readSchema(el), dom);
-      this._schema = schema;
+      // The schema in force and the two fingerprints that say when it moved,
+      // taken up together: `rebuild` does exactly this again, and a version
+      // captured in one place and not the other is an editor that never
+      // notices the next change.
+      this.adoptSchema = (built) => {
+        this._schema = built;
+        this._version = el.dataset.coelhoSchemaVersion;
+        this._toolbarVersion = el.dataset.coelhoToolbarVersion;
+
+        return built;
+      };
+
+      const schema = this.adoptSchema(buildSchema(readSchema(el), dom));
       this._input = input;
-      this._version = el.dataset.coelhoSchemaVersion;
-      this._toolbarVersion = el.dataset.coelhoToolbarVersion;
       this._written = new Set();
+      this._writtenOrder = [];
       this._pending = new Map();
+
+      // Everything the hook starts and nobody else will stop. A capture
+      // waits fifteen seconds for an upload that may never answer, and a
+      // fetch waits on someone else's host: both outlive `destroyed` by
+      // default, and both come back to a torn-down editor — dispatching on
+      // a destroyed view, and holding the document alive until they fire.
+      this._destroyed = false;
+      this._timers = new Set();
+      this._frame = null;
+      this._aborter = new AbortController();
+
+      this.later = (fn, ms) => {
+        const timer = setTimeout(() => {
+          this._timers.delete(timer);
+          if (!this._destroyed) fn();
+        }, ms);
+
+        this._timers.add(timer);
+      };
 
       this._maxlength = Number(el.dataset.coelhoMaxlength) || 0;
       this._counter = el.querySelector(".coelho-counter");
@@ -1040,15 +1201,17 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
 
       // A bounded memory of what this editor has put in the input.
       this.remember = (json) => {
+        if (this._written.has(json)) return;
+
         this._written.add(json);
-        if (this._written.size > 20) {
-          this._written.delete(this._written.values().next().value);
-        }
+        this._writtenOrder.push(json);
+
+        if (this._writtenOrder.length > 20) this._written.delete(this._writtenOrder.shift());
       };
 
       const state = EditorState.create({
         doc: parseDoc(schema, input.value) ?? schema.topNodeType.createAndFill(),
-        plugins: [history(), keymap(buildKeymap(schema)), keymap(baseKeymap)]
+        plugins: editorPlugins(schema)
       });
 
       this._view = new EditorView(content, {
@@ -1113,7 +1276,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         // container: LiveView patches an element's attributes even when it
         // spares its children, so a class set on the root or on the
         // container is undone by the next render.
-        this._view.dom.classList.toggle("coelho-empty", !this._view.state.doc.textContent);
+        this._view.dom.classList.toggle("coelho-empty", !hasText(this._view.state.doc));
         this.refreshCount(snapshot);
       };
 
@@ -1122,13 +1285,31 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // against are the same number. Counting the rendered text instead
       // would refuse a document the editor still shows as under the limit,
       // with nothing on screen to explain the gap.
+      // Counting walks the whole document and segments every text node into
+      // graphemes, which is a second full pass on a path that already runs
+      // on every keystroke. The number is for a reader, so it is written
+      // once per frame rather than once per key: the last snapshot wins.
       this.refreshCount = (snapshot) => {
         if (!this._count) return;
 
-        const length = textLength(snapshot ?? this._view.state.doc.toJSON());
+        this._countOf = snapshot;
+        if (this._frame !== null) return;
 
-        this._count.textContent = String(length);
-        this._counter?.classList.toggle("coelho-over", this._maxlength > 0 && length > this._maxlength);
+        this._frame = requestAnimationFrame(() => {
+          this._frame = null;
+          if (this._destroyed) return;
+
+          // The snapshot it was last given, or the document itself: called
+          // with nothing — which its signature allows — reading `undefined`
+          // paints a zero over a counter that was right.
+          const length = textLength(this._countOf ?? this._view.state.doc.toJSON());
+
+          this._count.textContent = String(length);
+          this._counter?.classList.toggle(
+            "coelho-over",
+            this._maxlength > 0 && length > this._maxlength
+          );
+        });
       };
 
       // A schema changed under a mounted editor used to go unnoticed: the
@@ -1145,13 +1326,11 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         const rebuilt = buildSchema(readSchema(el), dom);
         const doc = reinterpret(this._view.state.doc, this._schema, rebuilt);
 
-        this._schema = rebuilt;
-        this._version = el.dataset.coelhoSchemaVersion;
-        this._toolbarVersion = el.dataset.coelhoToolbarVersion;
+        this.adoptSchema(rebuilt);
         this._view.updateState(
           EditorState.create({
             doc,
-            plugins: [history(), keymap(buildKeymap(rebuilt)), keymap(baseKeymap)]
+            plugins: editorPlugins(rebuilt)
           })
         );
 
@@ -1169,8 +1348,12 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         return button && el.contains(button) ? button : null;
       };
 
+      // `this._view.state.schema` and not the schema read at mount: after a
+      // rebuild the two are different objects, and a command built against
+      // the old one dispatches node types the current state cannot hold.
       this.runCommand = (button) => {
-        const command = commandFor(button.dataset.coelhoCommand, schema, button.dataset);
+        const { state } = this._view;
+        const command = cachedCommandFor(button.dataset.coelhoCommand, state.schema, button.dataset);
         if (!command) return;
 
         command(this._view.state, this._view.dispatch, this._view);
@@ -1222,6 +1405,8 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this.findLinkField = () => {
         if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
 
+        this._buttons = null;
+
         this._linkZone = el.querySelector("[data-coelho-link-zone]");
         this._linkInput = el.querySelector("[data-coelho-link-input]");
         this._linkHint = el.querySelector("[data-coelho-link-hint]");
@@ -1234,9 +1419,10 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         }
       };
 
-      this._linkZone = el.querySelector("[data-coelho-link-zone]");
-      this._linkInput = el.querySelector("[data-coelho-link-input]");
-      this._linkHint = el.querySelector("[data-coelho-link-hint]");
+      // The same three lookups the toolbar's replacement goes through, and
+      // through the same function: written out here as well, the two came to
+      // disagree about which of them resets what.
+      this.findLinkField();
 
       // One field, whatever asked for it. What it does on Enter is decided
       // when it opens, because the selection is what says what to act on and
@@ -1396,26 +1582,37 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         }
       };
 
-      if (this._linkInput) {
-        this._onLinkKey = (event) => {
-          this._linkInput.setCustomValidity("");
+      // Built whatever the toolbar looks like right now: a field that only
+      // appears with a later toolbar — one command added, one language
+      // switched — would otherwise find `findLinkField` with nothing to
+      // attach, and come up with no key handler for the rest of the session.
+      this._onLinkKey = (event) => {
+        this._linkInput.setCustomValidity("");
 
-          if (event.key === "Enter") {
-            event.preventDefault();
-            this.confirmField(this._linkInput.value.trim());
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            this.closeField();
-          }
-        };
+        if (event.key === "Enter") {
+          event.preventDefault();
+          this.confirmField(this._linkInput.value.trim());
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          this.closeField();
+        }
+      };
 
-        this._linkInput.addEventListener("keydown", this._onLinkKey);
-      }
+      this._linkInput?.addEventListener("keydown", this._onLinkKey);
+
+      // Found once and kept: this runs on every keystroke and on every step
+      // of a caret drag. `findLinkField` drops the list, and it is called
+      // from the only two places where LiveView has replaced the toolbar.
+      this.toolbarButtons = () => {
+        if (!this._buttons) this._buttons = [...el.querySelectorAll("[data-coelho-command]")];
+
+        return this._buttons;
+      };
 
       this.refreshToolbar = () => {
         const { state } = this._view;
 
-        for (const button of el.querySelectorAll("[data-coelho-command]")) {
+        for (const button of this.toolbarButtons()) {
           const name = button.dataset.coelhoCommand;
           const active = commandActive(state, name, button.dataset);
 
@@ -1424,14 +1621,25 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           // the moment the selection leaves every alignable block, and a
           // kept attribute would go on announcing pressed — to a screen
           // reader above all — about a block that is no longer there.
-          if (active === null) button.removeAttribute("aria-pressed");
-          else button.setAttribute("aria-pressed", String(active));
+          //
+          // Compared before being written: a caret move that changes nothing
+          // would otherwise dirty every button's attributes, and an
+          // attribute written again is a mutation a screen reader may
+          // announce for a state that never moved.
+          const pressed = active === null ? null : String(active);
+
+          if (button.getAttribute("aria-pressed") !== pressed) {
+            if (pressed === null) button.removeAttribute("aria-pressed");
+            else button.setAttribute("aria-pressed", pressed);
+          }
 
           // A button with no command behind it — a name the schema knows
           // but the hook has no verb for — is greyed out rather than left
           // clickable and inert.
-          const command = commandFor(name, state.schema, button.dataset);
-          button.disabled = !command || !command(state, null, this._view);
+          const command = cachedCommandFor(name, state.schema, button.dataset);
+          const disabled = !command || !command(state, null, this._view);
+
+          if (button.disabled !== disabled) button.disabled = disabled;
         }
       };
 
@@ -1439,6 +1647,10 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // attachment it has just stored, a mention it has just resolved, an
       // embed. The node is the server's, built against the same schema.
       this.insertNode = (nodeJSON, preview, { focus = true } = {}) => {
+        // A node can arrive after the editor is gone: a server round trip,
+        // or a capture giving up. There is no view left to dispatch into.
+        if (this._destroyed) return;
+
         setPreviewUrl(nodeJSON.attrs?.key, preview);
         this._pending.delete(nodeJSON.attrs?.filename);
 
@@ -1472,32 +1684,56 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // that host, and breaks the day the file moves. When an upload is
       // configured, the bytes are fetched and go through the same path as a
       // dropped file; when it is not, the URL is kept as it always was.
-      this.captureImages = async (urls) => {
-        for (const url of urls) {
-          try {
-            const response = await fetch(url, { mode: "cors", credentials: "omit" });
-            if (!response.ok) throw new Error(`responded ${response.status}`);
+      this.captureOne = async (url) => {
+        try {
+          const response = await fetch(url, {
+            mode: "cors",
+            credentials: "omit",
+            // Torn down while the host is still thinking: the answer would
+            // come back to an editor that no longer exists, and upload bytes
+            // nobody can be shown.
+            signal: this._aborter.signal
+          });
+          if (!response.ok) throw new Error(`responded ${response.status}`);
 
-            const blob = await response.blob();
-            const filename = filenameFor(url, blob);
+          const blob = await response.blob();
+          const filename = filenameFor(url, blob);
 
-            this._pending.set(filename, url);
-            ctx.upload(uploadName, [new File([blob], filename, { type: blob.type })]);
+          this._pending.set(filename, url);
+          ctx.upload(uploadName, [new File([blob], filename, { type: blob.type })]);
 
-            // `upload` is fire and forget: an entry refused for being one too
-            // many, too large, or the wrong type raises nothing here, and the
-            // image would vanish without a word. If nothing comes back for it,
-            // the URL goes in after all.
-            setTimeout(() => this.captureFailed(filename, "the upload never came back"), 15000);
-          } catch (error) {
-            // Usually CORS: the bytes can be displayed but not read.
-            this.captureFailed(filenameFor(url, { type: "" }), error, url);
-          }
+          // `upload` is fire and forget: an entry refused for being one too
+          // many, too large, or the wrong type raises nothing here, and the
+          // image would vanish without a word. If nothing comes back for it,
+          // the URL goes in after all — unless the editor is gone by then,
+          // which `later` is what makes true.
+          this.later(() => this.captureFailed(filename, "the upload never came back"), 15000);
+        } catch (error) {
+          // An abort is the teardown, not a failure to tell anyone about.
+          if (error?.name === "AbortError") return;
+
+          // Usually CORS: the bytes can be displayed but not read.
+          this.captureFailed(filenameFor(url, { type: "" }), error, url);
         }
       };
 
+      // Three at a time rather than one after another: a slow host held up
+      // every image pasted behind it, each of them already waiting on a
+      // network round trip of its own.
+      this.captureImages = async (urls) => {
+        const queue = [...urls];
+        const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+          for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
+            if (this._destroyed) return;
+            await this.captureOne(url);
+          }
+        });
+
+        await Promise.all(workers);
+      };
+
       this.captureFailed = (filename, reason, url = this._pending.get(filename)) => {
-        if (url === undefined) return;
+        if (url === undefined || this._destroyed) return;
 
         this._pending.delete(filename);
         el.dispatchEvent(
@@ -1634,6 +1870,11 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         ).catch((error) => console.warn("coelho: could not flush on destroy", error));
       }
 
+      // Said before anything is torn down, and read by everything that can
+      // come back later: a capture giving up, an insertion from the server,
+      // the frame the counter is waiting for.
+      this._destroyed = true;
+
       this.el.removeEventListener("mousedown", this._onToolbarDown);
       this.el.removeEventListener("click", this._onToolbar);
       if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
@@ -1644,7 +1885,38 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         this._content?.removeEventListener("paste", this._onFiles);
       }
 
+      // A timer holds the whole editor — element, view, schema, and the
+      // documents it remembers — until it fires, and then dispatches into a
+      // view that is gone. A fetch does the same for as long as the other
+      // host takes to answer.
+      // Optional, like everything else read here: `mounted` can throw before
+      // any of this exists — a schema the browser cannot build is exactly
+      // that — and a teardown that throws in turn buries the error that
+      // caused it and skips the cleanup below.
+      for (const timer of this._timers ?? []) clearTimeout(timer);
+      this._timers?.clear();
+
+      if (this._frame != null) cancelAnimationFrame(this._frame);
+      this._aborter?.abort();
+
       this._view?.destroy();
+
+      // The field's apply closes over the view, and the view carries two
+      // closures back to the hook: left as they are, the pair keeps each
+      // other alive for as long as anything holds either one.
+      this._pendingField = null;
+      this._buttons = null;
+      this._countOf = null;
+      this._written?.clear();
+      this._writtenOrder = [];
+      this._pending?.clear();
+
+      if (this._view) {
+        delete this._view.coelhoEditLink;
+        delete this._view.coelhoEditCaption;
+      }
+
+      this._view = null;
     }
   });
 

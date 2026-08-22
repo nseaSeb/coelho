@@ -58,7 +58,7 @@ defmodule Coelho.Render do
   """
 
   alias Coelho.Schema
-  alias Coelho.Schema.{Attr, MarkSpec, NodeSpec}
+  alias Coelho.Schema.Attr
 
   @type opts :: [
           nodes: %{optional(atom()) => term()},
@@ -239,9 +239,20 @@ defmodule Coelho.Render do
     node
     |> Map.get("content", [])
     |> Enum.map(&inline_node(&1, schema, state))
-    |> Enum.reject(fn {_block?, iodata} -> IO.iodata_length(iodata) == 0 end)
+    |> Enum.reject(fn {_block?, iodata} -> blank?(iodata) end)
     |> join(state.separator)
   end
+
+  # Whether a rendered child came to nothing, answered at the first byte
+  # rather than by measuring the whole subtree — which, asked at every level,
+  # walks the render once per level of depth.
+  # Written as clauses rather than as `Enum.all?`: an iolist may be improper
+  # — `["" | inner]` is valid iodata and a render override is free to build
+  # one — and `Enum.all?` refuses those, where `IO.iodata_length/1` did not.
+  defp blank?([]), do: true
+  defp blank?([head | tail]), do: blank?(head) and blank?(tail)
+  defp blank?(binary) when is_binary(binary), do: binary == ""
+  defp blank?(byte) when is_integer(byte), do: false
 
   defp join([], _separator), do: []
   defp join([{_block?, iodata}], _separator), do: iodata
@@ -402,14 +413,39 @@ defmodule Coelho.Render do
   `href`.
   """
   @spec escape(String.t()) :: String.t()
-  def escape(text) when is_binary(text) do
-    text
-    |> String.replace("&", "&amp;")
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-    |> String.replace("\"", "&quot;")
-    |> String.replace("'", "&#39;")
+  def escape(text) when is_binary(text), do: escape(text, text, 0, 0, [])
+
+  # One pass over the bytes, copying the stretches between the five
+  # characters that have to change, rather than five passes each building a
+  # binary for the next one to throw away — this runs on every text node and
+  # on every attribute value of every render. Matching byte by byte is safe
+  # for the same reason it is fast: all five are ASCII, and no byte of a
+  # multi-byte UTF-8 character is ever below 128.
+  #
+  # Text that escapes to itself is handed back as it came, unchopped and
+  # uncopied, which is what most text does.
+  defp escape(<<>>, original, 0, _len, []), do: original
+
+  defp escape(<<>>, original, skip, len, acc),
+    do: IO.iodata_to_binary([acc | [binary_part(original, skip, len)]])
+
+  defp escape(<<char, rest::binary>>, original, skip, len, acc)
+       when char in [?&, ?<, ?>, ?", ?'] do
+    escape(rest, original, skip + len + 1, 0, [
+      acc,
+      binary_part(original, skip, len),
+      entity(char)
+    ])
   end
+
+  defp escape(<<_char, rest::binary>>, original, skip, len, acc),
+    do: escape(rest, original, skip, len + 1, acc)
+
+  defp entity(?&), do: "&amp;"
+  defp entity(?<), do: "&lt;"
+  defp entity(?>), do: "&gt;"
+  defp entity(?"), do: "&quot;"
+  defp entity(?\'), do: "&#39;"
 
   @doc """
   Returns a URL fit to be emitted, or `nil` for one that is not.
@@ -573,10 +609,15 @@ defmodule Coelho.Render do
 
   defp merge_attrs(attrs, []), do: attrs
 
-  defp merge_attrs(attrs, [{name, value} | rest]) do
-    attrs
-    |> append_attr(name, value)
-    |> merge_attrs(rest)
+  # Merged into the list held backwards, so a new attribute is a prepend
+  # rather than a copy of everything before it, and the order the element
+  # carries is the order it was built in.
+  defp merge_attrs(attrs, additions) do
+    additions
+    |> Enum.reduce(Enum.reverse(attrs), fn {name, value}, acc ->
+      prepend_attr(acc, name, value)
+    end)
+    |> Enum.reverse()
   end
 
   # `class` and `style` accumulate — two attributes may each contribute one,
@@ -584,10 +625,13 @@ defmodule Coelho.Render do
   # a single value and the later one wins.
   @separators %{"class" => " ", "style" => ";"}
 
-  defp append_attr(attrs, name, value) do
+  # On the list held backwards, which is why the new attribute is prepended:
+  # `merge_attrs/2` reverses on the way in and on the way out, so this is the
+  # end of the element. Nothing else may call it on a forward list.
+  defp prepend_attr(attrs, name, value) do
     case {List.keyfind(attrs, name, 0), Map.get(@separators, name)} do
       {nil, _separator} ->
-        attrs ++ [{name, value}]
+        [{name, value} | attrs]
 
       {{_name, existing}, separator}
       when is_binary(existing) and existing != "" and is_binary(separator) ->
@@ -604,7 +648,7 @@ defmodule Coelho.Render do
   # declared once. A render function takes over the whole element, so it is
   # the one form this cannot reach: say so rather than half apply it.
   defp with_class(attrs, nil), do: attrs
-  defp with_class(attrs, class), do: append_attr(attrs, "class", class)
+  defp with_class(attrs, class), do: merge_attrs(attrs, [{"class", class}])
 
   defp children(node, schema, state) do
     node
@@ -650,20 +694,16 @@ defmodule Coelho.Render do
   defp resolve_attrs(attrs, _node, _context) when is_list(attrs), do: attrs
 
   defp fetch_node_spec!(schema, type) do
-    with {:ok, name} <- Schema.resolve_node_name(schema, type),
-         %NodeSpec{} = spec <- Schema.node_spec(schema, name) do
-      spec
-    else
-      _ -> raise ArgumentError, "cannot render unknown node type #{inspect(type)}"
+    case Schema.fetch_node_spec(schema, type) do
+      {:ok, spec} -> spec
+      :error -> raise ArgumentError, "cannot render unknown node type #{inspect(type)}"
     end
   end
 
   defp fetch_mark_spec!(schema, type) do
-    with {:ok, name} <- Schema.resolve_mark_name(schema, type),
-         %MarkSpec{} = spec <- Schema.mark_spec(schema, name) do
-      spec
-    else
-      _ -> raise ArgumentError, "cannot render unknown mark type #{inspect(type)}"
+    case Schema.fetch_mark_spec(schema, type) do
+      {:ok, spec} -> spec
+      :error -> raise ArgumentError, "cannot render unknown mark type #{inspect(type)}"
     end
   end
 end

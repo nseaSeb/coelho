@@ -270,7 +270,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
       assigns =
         assigns
-        |> assign(:json, JSON.encode!(Schema.to_json(schema)))
+        |> assign(:json, Schema.json(schema))
         |> assign(:version, fingerprint(schema.fingerprint))
 
       # An attribute and not a `<script>`. A script's content is raw text —
@@ -505,7 +505,10 @@ if Code.ensure_loaded?(Phoenix.Component) do
         |> assign(:id, assigns.id || editor_id(assigns.field || name))
         |> assign(:input_name, name)
         |> assign(:input_id, input_id)
-        |> assign(:schema_json, assigns.schema_id || JSON.encode!(Schema.to_json(schema)))
+        # Encoded when the schema was built, not here: this component renders
+        # on every keystroke the form sends, and the schema it exports has
+        # not moved since the application declared it.
+        |> assign(:schema_json, assigns.schema_id || Schema.json(schema))
         |> assign(:version, fingerprint(schema.fingerprint))
         |> assign(:field_labels_json, field_labels(assigns.field_labels))
         |> assign(

@@ -3,6 +3,89 @@ defmodule Coelho.SchemaTest do
 
   alias Coelho.Schema
 
+  doctest Coelho.Schema
+
+  # Everything a hot path would otherwise recompute is derived once, when the
+  # schema is built. The three constructors converge on the same derivation,
+  # so what this guards is that they all reach it — a new one that forgets to
+  # would hand the editor a stale export and the renderer a stale rank.
+  describe "derived fields" do
+    test "carry the encoded export, and follow extend/2 and restrict/2" do
+      schema = Schema.default()
+      extended = Schema.extend(schema, marks: [highlight: [render: {"mark", []}]])
+      restricted = Schema.restrict(schema, marks: [:bold])
+
+      for built <- [schema, extended, restricted] do
+        assert built.json == JSON.encode!(Schema.to_json(built))
+        assert built.fingerprint == :erlang.phash2(Schema.to_json(built))
+      end
+
+      assert extended.json != schema.json
+      assert restricted.json != schema.json
+    end
+
+    test "rank marks by declaration order, and unknown marks last" do
+      schema = Schema.extend(Schema.default(), marks: [highlight: [render: {"mark", []}]])
+
+      for {name, index} <- Enum.with_index(schema.mark_order) do
+        assert Schema.mark_index(schema, name) == index
+      end
+
+      assert Schema.mark_index(schema, :nothing_of_the_sort) == length(schema.mark_order)
+    end
+
+    test "carry the empty document the schema's own validation accepts" do
+      schema = Schema.new(nodes: [doc: [content: "note+"], note: [content: "text*"]])
+
+      assert schema.empty == %{"type" => "doc", "content" => [%{"type" => "note"}]}
+      assert {:ok, _document} = Coelho.Document.validate(schema.empty, schema)
+      assert Coelho.empty(schema) == schema.empty
+    end
+
+    test "carry the tags the schema imports at all" do
+      schema = Schema.default()
+
+      assert MapSet.member?(schema.parse_tags, "p")
+      assert MapSet.member?(schema.parse_tags, "strong")
+      refute MapSet.member?(schema.parse_tags, "table")
+    end
+
+    test "carry each spec's attribute names as the strings a document uses" do
+      schema = Schema.default()
+
+      assert schema.nodes.heading.attr_keys == MapSet.new(["level", "align"])
+      assert schema.marks.link.attr_keys == MapSet.new(["href", "title"])
+    end
+
+    test "are derived on the spot for a spec that never went through the build" do
+      # Nothing in the library builds one by hand, but a derived field read
+      # straight off the struct answers `nil` for anything that did — and a
+      # `nil` reaching `MapSet.member?/2` raises where the old code worked.
+      spec = %{Schema.node_spec(Schema.default(), :heading) | attr_keys: nil}
+
+      assert Schema.attr_keys(spec) == MapSet.new(["level", "align"])
+
+      assert Schema.parse_tags(%{Schema.default() | parse_tags: nil}) ==
+               Schema.default().parse_tags
+
+      assert Schema.empty(%{Schema.default() | empty: nil}) == Schema.default().empty
+      assert Schema.json(%{Schema.default() | json: nil}) == Schema.default().json
+    end
+
+    test "rank marks off the declaration order when the ranks were never built" do
+      # Ranking every mark the same is not a crash, it is a document that
+      # stops normalising to the same bytes as the one the browser holds.
+      schema = Schema.default()
+      unstamped = %{schema | mark_ranks: %{}}
+
+      for {name, index} <- Enum.with_index(schema.mark_order) do
+        assert Schema.mark_index(unstamped, name) == index
+      end
+
+      assert Schema.mark_index(unstamped, :nothing_of_the_sort) == length(schema.mark_order)
+    end
+  end
+
   test "injects a text node when the declaration omits it" do
     schema = Schema.new(nodes: [doc: [content: "text*"]])
 

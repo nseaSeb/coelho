@@ -743,6 +743,20 @@ end
 The preview is only the editor's; what is stored is the key. Pass `:id`
 unless the page has exactly one editor — the event reaches all of them.
 
+Previews live outside the document, in a table belonging to the page rather
+than to an editor: a LiveView navigation destroys and remounts the hook, and
+the preview of an attachment inserted before it has to survive that. The
+table is bounded, so a long session cannot grow it without end. An
+application that knows an attachment is gone — deleted, or a document closed
+for good — can say so, which is also what releases a `blob:` URL the browser
+would otherwise hold for the life of the page:
+
+```javascript
+import { clearPreviewUrl } from "../../deps/coelho/assets/js/coelho.js"
+
+clearPreviewUrl(key)
+```
+
 ## Serving attachments to more than one tenant
 
 A signed URL is a bearer token: whoever holds it, holds the file. That is the
