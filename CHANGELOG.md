@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-08-22
 
 An audit for leaks, wasted work and duplication, and what it found. The BEAM
 side had no leak to find: no ETS, no processes, no atoms built from anything
