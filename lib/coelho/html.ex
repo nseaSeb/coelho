@@ -112,17 +112,36 @@ defmodule Coelho.HTML do
     * `:dropped_attribute` — the element was kept, and this attribute is not
       one its rule extracts
 
+  `warnings: false` skips the reporting walk, for a migration whose warnings
+  nobody is going to read. It is the more expensive half of an import, and
+  deliberately so: whether an attribute was *used* cannot be read off the
+  names that came out — a rule is free to rename as it extracts, and the
+  shipped ones do — so the question is asked of the rule instead, by taking
+  the attribute away and matching again. That is one match per attribute per
+  element, and it is the only general way to ask; a rule is a function, and
+  a function cannot be asked what it read. Converting a table of stored rows
+  is where the difference shows.
+
   Warnings are counts per tag, in a stable order, and they describe the
   *HTML*: an element the schema knows but that could not fit where it
   appeared — a list item outside a list — is repaired by the import rather
   than reported here. A mark refused because of where it sat, such as bold
   inside a code block, is not reported either.
   """
-  @spec from_html(String.t(), Schema.t()) :: {:ok, map(), [warning()]} | {:error, term()}
-  def from_html(html, %Schema{} = schema \\ Schema.default()) when is_binary(html) do
+  @spec from_html(String.t(), Schema.t(), keyword()) ::
+          {:ok, map(), [warning()]} | {:error, term()}
+  def from_html(html, schema \\ Schema.default(), opts \\ [])
+
+  def from_html(html, %Schema{} = schema, opts) when is_binary(html) do
     with {:ok, trees} <- html |> mark_separators() |> parse_fragment(),
          {:ok, document} <- trees |> convert(schema, :all, []) |> finish(schema) do
-      {:ok, document, warnings(trees, schema)}
+      # Reporting is a second walk of the tree, and one that asks the rules a
+      # question per attribute — the import itself is the cheaper half. An
+      # application migrating a table of rows it will never read the warnings
+      # of says so and pays for the conversion alone.
+      warnings = if Keyword.get(opts, :warnings, true), do: warnings(trees, schema), else: []
+
+      {:ok, document, warnings}
     end
   end
 

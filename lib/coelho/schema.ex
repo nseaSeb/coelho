@@ -8,6 +8,13 @@ defmodule Coelho.Schema do
   ProseMirror schema in the browser. A document the server would reject is
   therefore a document the client could not have produced.
 
+  Build it once. Everything derived from a schema is derived when it is
+  built — the parsed content expressions, the group and name tables, the
+  JSON the editor receives, the fingerprint, the empty document — so a
+  schema is a value to keep, in a module attribute where it costs compile
+  time and nothing after. Building one per call, inside a function that
+  renders, pays all of that per rendered document.
+
   ## Declaring a schema
 
       Coelho.Schema.new(

@@ -329,6 +329,15 @@ defmodule Coelho.Render do
   Like `to_iodata/3`, this trusts the document: an unknown node or mark type
   raises rather than being skipped. Fold a validated document, or one that
   has been through `Coelho.Document.sanitize/2`.
+
+  That strictness is why the library's own walks are not written on top of
+  this one, which is otherwise the obvious thing to ask. Validation has to
+  *report* on a node it does not know, sanitisation has to remove it, and
+  `Coelho.Attachments.keys/2` is handed rows written under whatever schema
+  was in force years ago — none of the three may raise, and a fold that
+  cannot raise cannot promise the caller that what it was handed is a
+  document this schema admits. The two contracts are different on purpose;
+  this one is for a consumer with a document it has already validated.
   """
   @type callbacks :: %{
           required(:node) => (map(), [term()] -> term()) | (map(), [term()], term() -> term()),

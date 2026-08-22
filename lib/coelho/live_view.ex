@@ -511,11 +511,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
       Pair it with `:flush_event`: a debounce still holding the last edit when
       the element goes loses it, and that is what the flush is for.
 
-      One interaction to measure before shipping both: on a form that also
-      carries an `auto_upload`, a debounce still pending on this field was
-      observed to stop the change event that starts the upload from taking
-      effect — in all three engines, on the demo. Uploads and a debounced
-      field on the same form want checking together
+      An upload on the same form is fine. It did not use to be: anything that
+      re-rendered the form while a change was still pending — an upload
+      finishing was enough — patched this field with the server's older copy,
+      and the editor went on holding the newer document while the field
+      posted the older one. The field now follows the editor whenever it is
+      handed a document the editor has already moved past
       """
     )
 

@@ -171,7 +171,29 @@ defmodule Coelho.Storage do
   """
   @callback redirect_url(t(), key(), keyword()) :: {:ok, String.t()} | :error
 
-  @optional_callbacks redirect_url: 3
+  @doc """
+  The bytes in pieces, for a storage that can read them that way.
+
+  `read/2` answers with the whole object on the heap of whichever process
+  asked, so N concurrent downloads hold N copies of it. A storage that
+  implements this hands `Coelho.Plug.Attachments` an enumerable instead and
+  the response is chunked, which is what keeps a large object from being a
+  large allocation per reader.
+
+  Optional. Without it the plug falls back to `read/2`, and a storage with a
+  local path never reaches either — `path/2` is served by `send_file`, which
+  does not read the bytes into the VM at all.
+
+  Answer `:error` for a key this storage has nothing for, or cannot tell
+  apart from one it refuses: the caller then asks `read/2`, whose
+  `{:error, :invalid_key}` is what says 403 rather than 404. A lazy
+  enumerable handed back for a key that is not there sends a 200 with an
+  empty body instead, because the status is gone by the time the first piece
+  is asked for.
+  """
+  @callback stream(t(), key()) :: {:ok, Enumerable.t()} | :error
+
+  @optional_callbacks redirect_url: 3, stream: 2
 
   @spec put(t(), key(), source()) :: :ok | {:error, term()}
   def put(%module{} = storage, key, source) do
@@ -190,12 +212,26 @@ defmodule Coelho.Storage do
   # Reading is all or nothing: the whole object comes back as one binary, on
   # the heap of whichever process asked. `Coelho.Plug.Attachments` serves
   # from `path/2` where the storage has one — `send_file` streams and the
-  # bytes never reach the VM — and falls back to this only for a storage that
-  # has no local file, where N concurrent downloads hold N copies of the
-  # object at once. A storage fronting large objects should implement
-  # `redirect_url/3` and let the client fetch them from the bucket.
+  # bytes never reach the VM — then from `stream/2`, and falls back to this
+  # only for a storage that offers neither, where N concurrent downloads hold
+  # N copies of the object at once.
   @spec read(t(), key()) :: {:ok, binary()} | {:error, term()}
   def read(%module{} = storage, key), do: module.read(storage, key)
+
+  @doc """
+  The bytes in pieces, or `:error` where the storage cannot answer that way.
+
+  Answers `:error` rather than raising for a storage that does not implement
+  the optional callback, so a caller asks once and falls back.
+  """
+  @spec stream(t(), key()) :: {:ok, Enumerable.t()} | :error
+  def stream(%module{} = storage, key) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :stream, 2) do
+      module.stream(storage, key)
+    else
+      :error
+    end
+  end
 
   @spec path(t(), key()) :: {:ok, Path.t()} | :error
   def path(%module{} = storage, key), do: module.path(storage, key)

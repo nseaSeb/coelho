@@ -62,6 +62,51 @@ defmodule Coelho.Plug.AttachmentsTest do
     end
   end
 
+  defmodule Pieces do
+    @moduledoc "A storage that can read in pieces, the way object storage can."
+    @behaviour Coelho.Storage
+
+    defstruct files: %{}, fail_after: nil
+
+    @impl true
+    def put(_storage, _key, _source), do: {:error, :read_only}
+    @impl true
+    def path(_storage, _key), do: :error
+    @impl true
+    def delete(_storage, _key), do: :ok
+    @impl true
+    def exists?(storage, key), do: Map.has_key?(storage.files, key)
+
+    @impl true
+    def read(storage, key) do
+      case Map.fetch(storage.files, key) do
+        {:ok, bytes} -> {:ok, bytes}
+        :error -> {:error, :enoent}
+      end
+    end
+
+    @impl true
+    def stream(storage, key) do
+      case Map.fetch(storage.files, key) do
+        {:ok, bytes} -> {:ok, pieces(bytes, storage.fail_after)}
+        :error -> :error
+      end
+    end
+
+    defp pieces(bytes, nil), do: for(<<piece::binary-size(2) <- bytes>>, do: piece)
+
+    # Lazily, and giving up partway, the way an object storage's own stream
+    # gives up when the socket under it does.
+    defp pieces(bytes, after_pieces) do
+      bytes
+      |> pieces(nil)
+      |> Stream.with_index()
+      |> Stream.map(fn {piece, index} ->
+        if index >= after_pieces, do: raise("the storage gave up"), else: piece
+      end)
+    end
+  end
+
   def metadata("image"), do: %{content_type: "image/png", filename: "a.png"}
   def metadata("svg"), do: %{content_type: "image/svg+xml", filename: "a.svg"}
   def metadata("html"), do: %{content_type: "text/html", filename: ~s(ev"il name.html)}
@@ -201,6 +246,63 @@ defmodule Coelho.Plug.AttachmentsTest do
 
     test "a key it does not hold is a 404, not a 403", %{options: options} do
       assert %{status: 404} = get(signed("missing"), options)
+    end
+  end
+
+  describe "a storage that can read in pieces" do
+    setup do
+      storage = %Pieces{files: %{"image" => "remote bytes"}}
+
+      %{
+        options:
+          Plugged.init(
+            at: "/attachments",
+            storage: storage,
+            secret: {__MODULE__, :secret, []},
+            metadata: {__MODULE__, :metadata, []}
+          )
+      }
+    end
+
+    test "is chunked rather than held whole on the heap", %{options: options} do
+      conn = get(signed("image"), options)
+
+      assert conn.status == 200
+      assert conn.state == :chunked
+      assert conn.resp_body == "remote bytes"
+      assert get_resp_header(conn, "content-type") == ["image/png"]
+      assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
+    end
+
+    test "a key it does not hold falls back to the read, and its answer", %{options: options} do
+      assert %{status: 404} = get(signed("missing"), options)
+    end
+
+    test "a stream that fails halfway ends the body rather than the request" do
+      # An object storage's enumerable is lazy, and what it fails with is an
+      # exception rather than a return value. The status and the headers are
+      # gone by then, so there is nothing left to say — and letting it through
+      # reaches an error handler that tries to answer on a connection already
+      # answered, burying the real reason under `AlreadySentError`.
+      storage = %Pieces{files: %{"image" => "remote bytes"}, fail_after: 1}
+
+      options =
+        Plugged.init(
+          at: "/attachments",
+          storage: storage,
+          secret: {__MODULE__, :secret, []},
+          metadata: {__MODULE__, :metadata, []}
+        )
+
+      conn = get(signed("image"), options)
+
+      # The pieces that made it are already on the wire — this connection is
+      # the one from before the piece that failed, which is all the test
+      # adapter keeps. What matters is that the request ends here, chunked
+      # and halted, rather than raising over an answer already sent.
+      assert conn.status == 200
+      assert conn.state == :chunked
+      assert conn.halted
     end
   end
 
