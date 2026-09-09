@@ -292,11 +292,15 @@ defmodule Coelho.Ash.Type do
 
   @doc """
   Reads a value back out of the column, without re-validating it.
+
+  A stored value that is neither a map nor `nil` is an error, as it is for
+  `Coelho.Ecto.Type`: reading it as an empty document would say nothing
+  about a row that holds something else.
   """
-  @spec cast_stored(term(), keyword()) :: {:ok, map() | nil}
+  @spec cast_stored(term(), keyword()) :: {:ok, map() | nil} | :error
   def cast_stored(nil, _constraints), do: {:ok, nil}
   def cast_stored(value, _constraints) when is_map(value), do: {:ok, value}
-  def cast_stored(_value, _constraints), do: {:ok, nil}
+  def cast_stored(_value, _constraints), do: :error
 
   @doc """
   Writes a value to the column.

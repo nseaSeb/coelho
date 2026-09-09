@@ -183,7 +183,7 @@ defmodule Coelho.Document do
   what makes `to_tsvector` and trigram search behave — indexing rendered HTML
   matches on `strong` and `href`.
   """
-  @spec to_text(map(), Schema.t()) :: String.t()
+  @spec to_text(map() | nil, Schema.t()) :: String.t()
   def to_text(document, %Schema{} = schema) do
     document
     |> text_iodata(schema)
@@ -295,7 +295,7 @@ defmodule Coelho.Document do
   defp text_length(%{"content" => content}, acc) when is_list(content),
     do: Enum.reduce(content, acc, &text_length/2)
 
-  defp text_length(%{"text" => text}, acc) when is_binary(text), do: acc + String.length(text)
+  defp text_length(%{"text" => text}, acc) when is_binary(text), do: acc + characters(text)
   defp text_length(_node, acc), do: acc
 
   @doc """
@@ -763,15 +763,15 @@ defmodule Coelho.Document do
   defp room(max, text), do: max(max - text, 0)
 
   defp keep_text(node, value, :infinity, {nodes, text}),
-    do: {node, {nodes, text + String.length(value)}}
+    do: {node, {nodes, text + characters(value)}}
 
   defp keep_text(node, value, room, {nodes, text}) do
-    length = String.length(value)
+    length = characters(value)
 
     if length <= room do
       {node, {nodes, text + length}}
     else
-      {Map.put(node, "text", String.slice(value, 0, room)), {nodes, text + room}}
+      {Map.put(node, "text", first_characters(value, room)), {nodes, text + room}}
     end
   end
 
@@ -831,7 +831,7 @@ defmodule Coelho.Document do
         # perfectly legal document the moment it is not ASCII — seven
         # accented letters are fourteen bytes, and a CJK document reaches
         # the shipped bound at a third of the characters it is allowed.
-        text = text + String.length(value)
+        text = text + characters(value)
 
         if over?(text, limits.max_text_length) do
           {:error, "document holds more than #{limits.max_text_length} characters of text"}
@@ -1051,7 +1051,7 @@ defmodule Coelho.Document do
   defp spend(_value, _budget, depth) when depth != :infinity and depth < 0, do: :deep
 
   defp spend(value, budget, _depth) when is_binary(value),
-    do: take(budget, String.length(value))
+    do: take(budget, characters(value))
 
   defp spend(value, budget, depth) when is_list(value) do
     Enum.reduce_while(value, budget, &spend_child(&1, &2, depth))
@@ -1076,8 +1076,24 @@ defmodule Coelho.Document do
     end
   end
 
-  defp spend_key(key, budget) when is_binary(key), do: take(budget, String.length(key))
+  defp spend_key(key, budget) when is_binary(key), do: take(budget, characters(key))
   defp spend_key(_key, budget), do: take(budget, 1)
+
+  # `String.length/1` walks a binary as text, and a binary that is not text
+  # makes it raise — which is a document refused with a stack trace rather
+  # than with an error, and a stored row that cannot be counted, trimmed or
+  # even read. A character is the unit a bound is written in, so it stays
+  # the unit wherever the bytes are text; where they are not, a byte is the
+  # only honest answer and it never raises.
+  defp characters(value) do
+    if String.valid?(value), do: String.length(value), else: byte_size(value)
+  end
+
+  defp first_characters(value, count) do
+    if String.valid?(value),
+      do: String.slice(value, 0, count),
+      else: binary_part(value, 0, min(count, byte_size(value)))
+  end
 
   defp take(:infinity, _cost), do: :infinity
   defp take(:over, _cost), do: :over
@@ -1341,7 +1357,15 @@ defmodule Coelho.Document do
   defp text_iodata(_node, _schema), do: []
 
   defp node_text(%NodeSpec{to_text: to_text}, node, _schema) when to_text != nil do
-    if is_function(to_text, 1), do: to_text.(node), else: to_text
+    text = if is_function(to_text, 1), do: to_text.(node), else: to_text
+
+    # A `:to_text` is declared as iodata and reads a stored row to build it,
+    # so it hands back whatever that row held: an attribute written under a
+    # looser validator, or none at all. Joining that raises, and the join is
+    # of the whole document — so one attachment whose filename is not a
+    # string would take down the extraction for the entire row, which is
+    # what a search index calls on every one of them.
+    if iodata?(text), do: text, else: []
   end
 
   defp node_text(%NodeSpec{text: true}, node, _schema) do
@@ -1374,6 +1398,22 @@ defmodule Coelho.Document do
 
     if block?(first, schema), do: text, else: [text, "\n"]
   end
+
+  defp iodata?(value) when is_binary(value), do: true
+  defp iodata?(value) when is_list(value), do: iodata_list?(value)
+  defp iodata?(_value), do: false
+
+  defp iodata_list?([]), do: true
+
+  defp iodata_list?([head | tail]) when is_integer(head),
+    do: head >= 0 and head <= 255 and iodata_list?(tail)
+
+  defp iodata_list?([head | tail]) when is_binary(head) or is_list(head),
+    do: iodata?(head) and iodata_list?(tail)
+
+  # An improper list is iodata when its tail is a binary, and nothing else.
+  defp iodata_list?(tail) when is_binary(tail), do: true
+  defp iodata_list?(_value), do: false
 
   defp children_text(node, schema) do
     node |> Map.get("content", []) |> Enum.map(&text_iodata(&1, schema))

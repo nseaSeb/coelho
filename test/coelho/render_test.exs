@@ -53,6 +53,64 @@ defmodule Coelho.RenderTest do
     assert render(document) == ~s(<p><img src="/a.png"></p>)
   end
 
+  test "drops an attribute whose stored value is not a scalar, rather than stringifying it" do
+    # A row written under a looser schema, or by hand: `to_string/1` on a
+    # list of small integers is control bytes inside the attribute, and on a
+    # map it raises — at render, on every page showing the row. Rendered
+    # without validating first, which is what happens to a stored row.
+    image = fn alt ->
+      doc([paragraph([%{"type" => "image", "attrs" => %{"src" => "/a.png", "alt" => alt}}])])
+    end
+
+    assert Render.to_html(image.([1, 2]), schema()) == ~s(<p><img src="/a.png"></p>)
+    assert Render.to_html(image.(%{"x" => 1}), schema()) == ~s(<p><img src="/a.png"></p>)
+    assert Render.to_html(image.("plain"), schema()) == ~s(<p><img src="/a.png" alt="plain"></p>)
+
+    list = %{
+      "type" => "ordered_list",
+      "attrs" => %{"start" => [1]},
+      "content" => [%{"type" => "list_item", "content" => [paragraph([])]}]
+    }
+
+    assert Render.to_html(doc([list]), schema()) == "<ol><li><p></p></li></ol>"
+  end
+
+  test "keeps what a schema's own attrs function has reason to return" do
+    # The other side of the same rule: a struct that says how it prints, and
+    # the iodata `tag/3` has always accepted. Dropping either would break a
+    # schema rather than protect it from a stored row.
+    assert IO.iodata_to_binary(Render.void_tag("time", [{"datetime", ~D[2026-01-01]}])) ==
+             ~s(<time datetime="2026-01-01"></time>)
+
+    assert IO.iodata_to_binary(Render.tag("a", [{"href", ["/posts/", "one"]}], "x")) ==
+             ~s(<a href="/posts/one">x</a>)
+
+    # A tree of strings is iodata; a list holding a number is a stored array.
+    assert IO.iodata_to_binary(Render.void_tag("img", [{"alt", ["a", ["b", "c"]]}])) ==
+             ~s(<img alt="abc">)
+
+    assert IO.iodata_to_binary(Render.void_tag("img", [{"alt", ["a", 1]}])) == "<img>"
+
+    # An improper list is iodata too, and is what an accumulator built by
+    # prepending looks like — the same reason `render_inline` accepts one.
+    assert IO.iodata_to_binary(Render.tag("a", [{"href", ["/posts/" | "one"]}], "x")) ==
+             ~s(<a href="/posts/one">x</a>)
+
+    assert IO.iodata_to_binary(Render.void_tag("img", [{"alt", ["a" | 1]}])) == "<img>"
+  end
+
+  test "joins an attribute's iodata byte for byte, as it renders a binary" do
+    # `to_string/1` decodes and raises on a list holding invalid UTF-8;
+    # `escape/1` renders the same bytes without looking. One attribute
+    # cannot have both answers, and the one that renders is the one a bare
+    # binary already got.
+    assert IO.iodata_to_binary(Render.void_tag("img", [{"alt", ["x", <<255>>]}])) ==
+             <<"<img alt=\"x", 255, "\">">>
+
+    assert IO.iodata_to_binary(Render.void_tag("img", [{"alt", <<255>>}])) ==
+             <<"<img alt=\"", 255, "\">">>
+  end
+
   test "renders void nodes without a closing tag" do
     document = doc([paragraph([text("a"), %{"type" => "hard_break"}, text("b")])])
 
@@ -131,6 +189,42 @@ defmodule Coelho.RenderTest do
       {:ok, document} = Document.validate(document, built)
 
       assert Render.to_html(document, built) == ~s(<p id="x" class="prose">hi</p>)
+    end
+
+    test "a class accumulates whether it arrived as a string or as iodata" do
+      # `class` and `style` are the two that join rather than replace, and
+      # joining is between binaries — so iodata on either side has to become
+      # one first, or the half already there disappears with nothing said.
+      built = fn value ->
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [
+              content: "text*",
+              group: "block",
+              class: "note",
+              render: {"p", [{"class", value}]}
+            ]
+          ]
+        )
+      end
+
+      document = doc([paragraph([text("hi")])])
+
+      for value <- [["a-", "b"], ["a-" | "b"], "a-b"] do
+        schema = built.(value)
+        {:ok, validated} = Document.validate(document, schema)
+
+        assert Render.to_html(validated, schema) == ~s(<p class="a-b note">hi</p>)
+      end
+
+      # And whatever else renders as a string: `class="7"` on its own has to
+      # still be a `7` beside a spec's class, or the two functions disagree
+      # about what a value is.
+      schema = built.(7)
+      {:ok, validated} = Document.validate(document, schema)
+
+      assert Render.to_html(validated, schema) == ~s(<p class="7 note">hi</p>)
     end
   end
 

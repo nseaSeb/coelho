@@ -19,36 +19,31 @@ defmodule Coelho.HTMLTest do
       # a word processor is a great deal more than 20 KB.
       #
       # A ratio rather than a duration: four times the input costs about four
-      # times the time when the work is linear, sixteen when it is the
-      # square, so the line sits halfway between.
-      # Big enough that the baseline is tens of milliseconds: at half a
-      # millisecond it was scheduler noise, and this failed once in four runs
-      # under `max_cases: 16` while passing every time in isolation — a test
-      # that cries wolf about the very thing it exists to watch.
-      small = import_time(40_000)
-      large = import_time(160_000)
+      # times the work when it is linear, sixteen when it is the square, so
+      # the line sits halfway between.
+      #
+      # Counted in reductions rather than in microseconds, as the matching
+      # test on content expressions is: wall-clock time measures the machine
+      # as much as the work, and that one reported the square exactly, from
+      # a linear function, on a machine running two other suites.
+      small = import_work(40_000)
+      large = import_work(160_000)
 
       ratio = large / max(small, 1)
 
       assert ratio < 8,
-             "4x the fragment cost #{Float.round(ratio, 1)}x the time " <>
-               "(#{small}µs then #{large}µs), which is the square creeping back"
+             "4x the fragment cost #{Float.round(ratio, 1)}x the work " <>
+               "(#{small} then #{large} reductions), which is the square creeping back"
     end
 
-    # The best of three, for the same reason: what is being measured is the
-    # shape of the work, and the fastest run is the one least polluted by
-    # everything else the machine was doing.
-    defp import_time(bytes) do
+    defp import_work(bytes) do
       html = String.duplicate("<pre>", div(bytes, 5))
 
-      1..3
-      |> Enum.map(fn _ ->
-        {micro, {:ok, _document, []}} =
-          :timer.tc(fn -> Coelho.HTML.from_html(html, Schema.default(), warnings: false) end)
+      {:reductions, before} = :erlang.process_info(self(), :reductions)
+      {:ok, _document, []} = Coelho.HTML.from_html(html, Schema.default(), warnings: false)
+      {:reductions, after_} = :erlang.process_info(self(), :reductions)
 
-        micro
-      end)
-      |> Enum.min()
+      after_ - before
     end
   end
 

@@ -89,6 +89,10 @@ defmodule Coelho.MixProject do
       main: "readme",
       source_url: @source_url,
       extras: ["README.md", "CHANGELOG.md"],
+      # The changelog is a record: it names functions that have since left
+      # the documentation, and a record does not get rewritten to keep a
+      # link resolving.
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
       groups_for_modules: [
         Document: [Coelho.Document, Coelho.Document.Error, Coelho.Render],
         Observing: [Coelho.Telemetry],

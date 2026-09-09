@@ -1224,6 +1224,34 @@ const Coelho = createCoelhoHook({
 `demo/lib/demo/rich_text.ex` does exactly this, and the browser test drives
 it end to end.
 
+## Tables
+
+Off unless you ask for them:
+
+```elixir
+Coelho.Schema.Default.build(tables: true)
+```
+
+Four nodes arrive — `table`, `table_row`, `table_cell`, `table_header` —
+with `colspan` and `rowspan` on the two kinds of cell. A cell holds blocks
+rather than text, so a paragraph, a list or a quote goes in one.
+
+What that gives you today is the whole server half. A table validates,
+renders to `<table>`, extracts to text a row at a time, and **survives an
+import that used to drop it**: `from_html/3` warns about an unknown `table`
+against the schema without them, and against this one it keeps the table,
+the header row and the spans the browser wrote.
+
+What it does not give you yet is the editor. There is no cell navigation and
+there are no row or column commands, so a table is easier to write in the
+HTML you are migrating than in the editor you are migrating to. That half is
+ProseMirror's `prosemirror-tables`, and it is not wired up.
+
+A span is a count of cells, bounded at 1000, refused when it is anything
+else, and left out of the markup when it is one — the pair a heading's level
+already had, because what is stored was written under whatever schema was in
+force then.
+
 ## Declaring a schema from scratch
 
 ```elixir

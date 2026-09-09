@@ -267,6 +267,38 @@ defmodule Coelho.DocumentTest do
       assert Document.to_text(doc([paragraph([%{"type" => "text"}])]), schema()) == ""
     end
 
+    test "drops what a :to_text hands back that is not text" do
+      # A `:to_text` reads a stored row, so it hands back whatever the row
+      # held — and joining a document is one call, so one attachment whose
+      # filename is not a string would take the whole extraction down. A
+      # search index calls this on every row.
+      attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => false}}
+
+      assert Document.to_text(doc([attachment]), schema()) == ""
+
+      broken =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [content: "text*", group: "block", to_text: fn _node -> %{} end],
+            text: [group: "inline", inline: true, text: true]
+          ]
+        )
+
+      assert Document.to_text(doc([paragraph([text("a")])]), broken) == ""
+    end
+
+    test "counts a binary that is not text in bytes rather than raising" do
+      # `String.length/1` walks a binary as text and raises on some byte
+      # sequences that are not one. A document holding those bytes has to be
+      # countable, trimmable and readable all the same.
+      document = doc([paragraph([text(<<164, 103, 109, 83>>)])])
+
+      assert Document.to_text(document, schema()) == <<164, 103, 109, 83>>
+      assert Document.text_length(document) == 4
+      assert {:ok, _} = Document.validate(document, schema())
+    end
+
     test "honours a custom text node's :to_text" do
       schema =
         Schema.new(
