@@ -650,6 +650,11 @@ A trigger has to start a word, so `a@b` is an address and not a mention, and
 the query ends at the first space. `"rect"` is the caret's place in the
 viewport, which is what a `position: fixed` list is placed by.
 
+Clicking away from the editor closes the list too, and there is nothing to
+write for that. The editor waits a moment before saying so, because a click
+*on* the list blurs the editor on the way down and lands on the way up — and
+it keeps the range through that blur, so the node still replaces the query.
+
 **`replace: :query` is the half that is easy to miss.** Without it the node
 goes in beside the `@ad` the writer typed and they are left to delete it. The
 range replaced is the one the editor holds when the node arrives rather than

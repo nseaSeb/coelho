@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Clicking away closes the list, and there is nothing to write for it
+
+A click elsewhere on the page changes nothing about the document, so no
+`nil` query was coming and the list stayed drawn until the writer happened
+to type again. The editor says so itself now.
+
+The reason it was left to the application at first is real, and it is why
+this took a shape rather than a line: a click *on* the list blurs the editor
+on the way down and lands on the way up, so closing at once takes the list
+out from under the mouse and the choice is never made. Two things were being
+held as one and are now apart — what the application has drawn, and the
+range an insertion replaces. A blur takes down the drawing after a moment
+and keeps the range, because the click that caused it may be the one
+choosing from the list, and the node then has to land on the query rather
+than beside it.
+
+A list dismissed that way stays dismissed until the writer types: the query
+is what opens one.
+
 ### Tables, in the editor
 
 Tab and Shift+Tab move from cell to cell, a drag selects a rectangle of them,

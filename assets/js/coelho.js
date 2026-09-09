@@ -1363,6 +1363,13 @@ const LEAF = "￼";
 // as a space does, and reads as one character here.
 const BOUNDARY = /[\s￼]/;
 
+// How long a list outlives the blur that a click on it causes. A click blurs
+// the editor on the way down and lands on the way up, so closing at once
+// takes the list out from under the mouse and the choice is never made. Long
+// enough for a deliberate click, short enough that a writer who has moved on
+// does not watch it sit there.
+const BLUR_CLOSE_DELAY = 250;
+
 // What the writer has typed since a trigger character, when there is such a
 // thing. Three conditions, and each of them is a way a query ends: the
 // selection is a caret in a text block, the trigger starts a word — `a@b` is
@@ -1523,12 +1530,36 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // an insertion answers it against positions in a document that is
       // gone — which is a `RangeError` out of the event handler, or worse,
       // text replaced somewhere the writer was not looking.
+      // Two things, kept apart on purpose. `_suggestion` is the range an
+      // insertion replaces; `_drawn` is what the application has on screen.
+      // A blur takes the second down without touching the first, because the
+      // click that caused it may be the one choosing from the list — and the
+      // node then has to land on the query rather than beside it.
+      this._drawn = null;
+
+      this.drawSuggestion = (found) => {
+        this._drawn = { event: found.event, trigger: found.trigger };
+
+        ctx.push(found.event, {
+          trigger: found.trigger,
+          query: found.query,
+          rect: caretRect(this._view, found.from)
+        });
+      };
+
+      this.closeSuggestion = () => {
+        const drawn = this._drawn;
+
+        this._drawn = null;
+
+        if (drawn) ctx.push(drawn.event, { trigger: drawn.trigger, query: null, rect: null });
+      };
+
+      // The positions as well as the drawing: for a document replaced under
+      // the list, the triggers taken away, or the editor going.
       this.endSuggestion = () => {
-        const was = this._suggestion;
-
         this._suggestion = null;
-
-        if (was) ctx.push(was.event, { trigger: was.trigger, query: null, rect: null });
+        this.closeSuggestion();
       };
 
       this.refreshSuggestion = () => {
@@ -1554,23 +1585,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           found.query === was.query &&
           found.from === was.from;
 
-        if (same || (!found && !was)) return;
+        // Nothing has moved. A list the writer dismissed by clicking away
+        // stays dismissed until they type: the query is what reopens it.
+        if (same) return;
 
         // A query that ends leaves a list open with nothing to close it, and
         // so does one that moves to another trigger — the event the list was
         // drawn from has to hear that it is over even when another event is
         // being pushed in the same breath, or two lists are drawn at once.
-        if (was && (!found || found.event !== was.event)) {
-          ctx.push(was.event, { trigger: was.trigger, query: null, rect: null });
+        if (!found || (this._drawn && found.event !== this._drawn.event)) {
+          this.closeSuggestion();
         }
 
-        if (found) {
-          ctx.push(found.event, {
-            trigger: found.trigger,
-            query: found.query,
-            rect: caretRect(this._view, found.from)
-          });
-        }
+        if (found) this.drawSuggestion(found);
       };
 
       this._flushEvent = el.dataset.coelhoFlushEvent;
@@ -1601,6 +1628,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this._view = new EditorView(content, {
         state,
         nodeViews,
+        // Neither handles anything: they say when the list the application
+        // drew is still wanted. `false` leaves the event to ProseMirror.
+        handleDOMEvents: {
+          focus: () => {
+            clearTimeout(this._blurTimer);
+            return false;
+          },
+          blur: () => {
+            clearTimeout(this._blurTimer);
+            this._blurTimer = setTimeout(() => this.closeSuggestion(), BLUR_CLOSE_DELAY);
+            return false;
+          }
+        },
         transformPastedHTML: (html) => (uploadName ? this.captureFrom(html) : html),
         dispatchTransaction: (transaction) => {
           this._view.updateState(this._view.state.apply(transaction));
@@ -2344,7 +2384,9 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // An editor taken off the page with a query open — a modal closing, a
       // patch swapping it out — leaves a list drawn over a page that no
       // longer has an editor under it. The close is pushed before the flag
-      // below stops everything.
+      // below stops everything, and the blur that teardown itself causes has
+      // nothing left to fire on.
+      clearTimeout(this._blurTimer);
       this.endSuggestion?.();
 
       // Said before anything is torn down, and read by everything that can

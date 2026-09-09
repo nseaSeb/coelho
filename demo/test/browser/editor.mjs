@@ -1356,22 +1356,32 @@ const run = async () => {
       await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
     });
 
-    await test("a line break before the trigger still starts a word", async () => {
+    await test("a node before the trigger still starts a word", async () => {
       // Everything between the trigger and the start of the block is read as
-      // text, and a line break is not text: it is a node, and it reads as one
-      // character that is not a space. Taking that for the middle of a word
-      // is a list that never opens after Shift+Enter — or after an image, or
-      // after a mention already put in — while the same characters at the
-      // start of a paragraph open one.
-      await typeInEditor(page, "hi");
-      await page.keyboard.press("Shift+Enter");
+      // text, and a node is not text: an image, a line break, a mention
+      // already put in each read as one character that is not a space.
+      // Taking that for the middle of a word is a list that never opens
+      // after one, while the same characters at the start of a paragraph
+      // open one.
+      //
+      // A mention rather than Shift+Enter, which Firefox on Linux does not
+      // deliver to the page — the leaf is the point, not the key.
+      await typeInEditor(page, "hi ");
+      await page.click('[phx-click="mention"]');
+
+      await documentEventually(
+        page,
+        "the mention never arrived",
+        `return doc.content.flatMap((b) => b.content ?? []).some((n) => n.type === "mention")`
+      );
+
       await page.keyboard.type("@ad");
 
       await page.waitForSelector("#mentions", { timeout: 5000 });
 
       assert.ok(
         (await page.textContent("#mentions")).includes("@ada"),
-        "a line break before the trigger closed the list"
+        "a node before the trigger closed the list"
       );
 
       await page.keyboard.press("Escape");
@@ -1427,6 +1437,19 @@ const run = async () => {
            );
          })()`
       );
+    });
+
+    await test("clicking away closes the list, with nothing for the application to do", async () => {
+      // A click elsewhere changes nothing about the document, so no
+      // transaction is coming to notice it. The editor says so itself after
+      // a moment — long enough that a click on the list still lands, which
+      // the test above is what proves.
+      await typeInEditor(page, "hi @ad");
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      await page.click('input[name="post[title]"]');
+
+      await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
     });
 
     await test("a space ends the query, which is what closes the list", async () => {

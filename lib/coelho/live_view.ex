@@ -560,10 +560,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
       Answer with `Coelho.LiveView.insert_node/3` and `replace: :query`: the
       node goes where `@ali` is, and takes the typing away with it.
 
-      **Close the list on blur yourself.** Clicking away from the editor
-      changes nothing about the document, so there is no `nil` query coming:
-      the editor cannot tell that from the writer clicking the list itself,
-      which it must survive for the insertion to have a range to replace.
+      Clicking away closes it too, and there is nothing to write for that: a
+      click elsewhere changes nothing about the document, so no `nil` query
+      would otherwise be coming. The editor waits a moment first, because a
+      click *on* the list blurs it on the way down and lands on the way up —
+      and it keeps the range through that blur, so the node still goes where
+      the query is.
 
       A seam rather than a command, and deliberately so: what the list holds,
       how it filters and what a click does are the application's, and no
