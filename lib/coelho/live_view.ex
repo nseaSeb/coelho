@@ -703,12 +703,6 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
-    # `attr` checks the type where the value is a literal in a template, and
-    # says nothing about one computed at runtime — which is where a `"blur"`
-    # read out of config would arrive. It cannot work here: LiveView waits for
-    # a blur event on the element carrying the attribute, a hidden input never
-    # blurs, and the editor would go quiet for the life of the page with
-    # nothing in the console. Refused rather than rendered.
     # One character, because the editor looks back for it a character at a
     # time, and a name to push it under. Refused here rather than ignored: a
     # trigger nothing watches for is a list that never opens, with nothing
@@ -759,6 +753,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
       end
     end
 
+    # `attr` checks the type where the value is a literal in a template, and
+    # says nothing about one computed at runtime — which is where a `"blur"`
+    # read out of config would arrive. It cannot work here: LiveView waits for
+    # a blur event on the element carrying the attribute, a hidden input never
+    # blurs, and the editor would go quiet for the life of the page with
+    # nothing in the console. Refused rather than rendered.
     defp validate_debounce!(nil), do: :ok
 
     defp validate_debounce!(milliseconds) when is_integer(milliseconds) and milliseconds >= 0,

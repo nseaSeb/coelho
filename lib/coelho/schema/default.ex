@@ -86,6 +86,12 @@ defmodule Coelho.Schema.Default do
     * `:align` — how the `align` attribute reaches the DOM, in the form
       `Coelho.Schema.Attr` takes for `:render_as`. Defaults to
       `{:style, "text-align"}`.
+    * `:tables` — declares `table`, `table_row`, `table_cell` and
+      `table_header`, with `colspan` and `rowspan` on the two kinds of cell
+      and blocks rather than text inside one. `false` by default: everything
+      a stored table needs is here, and it survives an import that would
+      otherwise drop it, but the editor has no cell navigation and no row or
+      column commands yet.
 
   An inline style is unanswerable by a stylesheet, so an application that
   would rather own alignment in CSS says so once, here, rather than

@@ -36,6 +36,15 @@ typed in two paragraphs is two queries rather than one — the same four
 characters in another place are not the same place, and the positions are
 what an insertion replaces.
 
+### A table a browser wrote imports without a word
+
+Every table a browser serialises carries a `tbody`, and a word processor adds
+a `colgroup` besides. Those hold nothing of their own — their rows lift
+straight through — so an import reported a loss on every real table there
+was, on the one path tables were added for. `tbody`, `thead`, `tfoot`,
+`colgroup` and `col` say nothing now. A `caption` still does: what it holds
+is text, and the text is lost.
+
 ### What else a review found in the seam
 
 Five more, all of them in what the editor decides a query is:

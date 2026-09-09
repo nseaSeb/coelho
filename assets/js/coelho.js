@@ -1650,6 +1650,10 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         this.readFieldLabels();
         this.findLinkField();
         this.refreshToolbar();
+        // The triggers travel on the same element as the schema, and a patch
+        // that moved one can have moved the other: `updated` returns here
+        // rather than reaching its own check.
+        this.readSuggest();
         // `updateState` is not a transaction, so nothing above ran the
         // suggestion refresh, and the positions it holds are in the document
         // that was just replaced.
@@ -2122,7 +2126,14 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // change its triggers with the same toolbar, or carry no toolbar at
       // all — and a toolbar-less editor has no version for the branch below
       // to compare, so it would never re-read them there.
-      if (ctx.el.dataset.coelhoSuggest !== this._suggestRaw) this.readSuggest();
+      if (ctx.el.dataset.coelhoSuggest !== this._suggestRaw) {
+        this.readSuggest();
+
+        // Triggers taken away do not end a query on their own: nothing has
+        // been typed, so no transaction is coming to notice. The list would
+        // stay on the page until the writer happened to type again.
+        this.refreshSuggestion();
+      }
 
       // New buttons, or the same buttons in another language. LiveView has
       // already replaced the toolbar — its id carries this fingerprint — so
@@ -2251,6 +2262,12 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           })
         ).catch((error) => console.warn("coelho: could not flush on destroy", error));
       }
+
+      // An editor taken off the page with a query open — a modal closing, a
+      // patch swapping it out — leaves a list drawn over a page that no
+      // longer has an editor under it. The close is pushed before the flag
+      // below stops everything.
+      this.endSuggestion?.();
 
       // Said before anything is torn down, and read by everything that can
       // come back later: a capture giving up, an insertion from the server,

@@ -123,6 +123,33 @@ defmodule Coelho.TablesTest do
       assert %{kind: :unknown_element, tag: "table"} = hd(warnings)
     end
 
+    test "says nothing about the wrappers a browser writes and a schema has no use for" do
+      # Every table a browser serialises carries a `tbody`, and a word
+      # processor adds `colgroup` besides. Those hold nothing of their own —
+      # the rows lift straight through — so reporting them would say a table
+      # had lost something on every real table there is.
+      html = """
+      <table><colgroup><col></colgroup>
+        <thead><tr><th>h</th></tr></thead>
+        <tbody><tr><td>a</td></tr></tbody>
+      </table>
+      """
+
+      assert {:ok, document, []} = Coelho.HTML.from_html(html, schema(), warnings: true)
+
+      assert Render.to_html(document, schema()) ==
+               "<table><tr><th><p>h</p></th></tr><tr><td><p>a</p></td></tr></table>"
+
+      # A caption is not one of them: what it holds is text, and the text is
+      # lost.
+      assert {:ok, _document, [%{tag: "caption"}]} =
+               Coelho.HTML.from_html(
+                 "<table><caption>c</caption><tr><td>a</td></tr></table>",
+                 schema(),
+                 warnings: true
+               )
+    end
+
     test "reads a span the browser wrote, and ignores one it could not have" do
       for {written, expected} <- [{~s( colspan="3"), ~s(colspan="3")}, {~s( colspan="x"), nil}] do
         html = "<table><tr><td#{written}>a</td></tr></table>"

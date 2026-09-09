@@ -629,11 +629,17 @@ def handle_event("mention_query", %{"query" => query, "rect" => rect}, socket) d
 end
 
 def handle_event("mention_pick", %{"id" => id, "label" => label}, socket) do
+  # `phx-value-id` arrives as a string, and the node's `user_id` validates as
+  # an integer: the document would be refused on the way back, a long way
+  # from the click.
   {:noreply,
    socket
    |> assign(:mentions, [])
    |> Coelho.LiveView.insert_node(
-     %{"type" => "mention", "attrs" => %{"user_id" => id, "label" => label}},
+     %{
+       "type" => "mention",
+       "attrs" => %{"user_id" => String.to_integer(id), "label" => label}
+     },
      id: Coelho.LiveView.editor_id(socket.assigns.form[:body]),
      replace: :query
    )}
