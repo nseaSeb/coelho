@@ -86,6 +86,12 @@ defmodule Coelho.Schema.Default do
     * `:align` — how the `align` attribute reaches the DOM, in the form
       `Coelho.Schema.Attr` takes for `:render_as`. Defaults to
       `{:style, "text-align"}`.
+    * `:tables` — declares `table`, `table_row`, `table_cell` and
+      `table_header`, with `colspan` and `rowspan` on the two kinds of cell
+      and blocks rather than text inside one. `false` by default: everything
+      a stored table needs is here, and it survives an import that would
+      otherwise drop it, but the editor has no cell navigation and no row or
+      column commands yet.
 
   An inline style is unanswerable by a stylesheet, so an application that
   would rather own alignment in CSS says so once, here, rather than
@@ -105,91 +111,92 @@ defmodule Coelho.Schema.Default do
 
     Schema.new(
       top_node: :doc,
-      nodes: [
-        doc: [content: "block+"],
-        paragraph: [
-          content: "inline*",
-          group: "block",
-          attrs: [align: align_attr(align)],
-          render: {"p", []},
-          parse: [{"p", &__MODULE__.parse_align/1}]
-        ],
-        heading: [
-          content: "inline*",
-          group: "block",
-          attrs: [
-            level: [default: 1, validate: {:one_of, [1, 2, 3, 4, 5, 6]}],
-            align: align_attr(align)
+      nodes:
+        [
+          doc: [content: "block+"],
+          paragraph: [
+            content: "inline*",
+            group: "block",
+            attrs: [align: align_attr(align)],
+            render: {"p", []},
+            parse: [{"p", &__MODULE__.parse_align/1}]
           ],
-          render: {&__MODULE__.heading_tag/1, []},
-          parse: Enum.map(1..6, &{"h#{&1}", Function.capture(__MODULE__, :"parse_h#{&1}", 1)})
-        ],
-        blockquote: [
-          content: "block+",
-          group: "block",
-          render: {"blockquote", []},
-          parse: ["blockquote"]
-        ],
-        bullet_list: [content: "list_item+", group: "block", render: {"ul", []}, parse: ["ul"]],
-        ordered_list: [
-          content: "list_item+",
-          group: "block",
-          attrs: [start: [default: 1, validate: :integer]],
-          render: {"ol", &__MODULE__.ordered_list_attrs/1},
-          parse: [{"ol", &__MODULE__.parse_ordered_list/1}]
-        ],
-        list_item: [
-          content: "paragraph block*",
-          attrs: [align: align_attr(align)],
-          render: {"li", []},
-          parse: [{"li", &__MODULE__.parse_align/1}]
-        ],
-        code_block: [
-          content: "text*",
-          group: "block",
-          marks: :none,
-          attrs: [language: [default: nil, validate: {:nullable, &__MODULE__.language/1}]],
-          render: &__MODULE__.render_code_block/2,
-          parse: ["pre"]
-        ],
-        horizontal_rule: [group: "block", void: true, render: {"hr", []}, parse: ["hr"]],
-        image: [
-          group: "inline",
-          inline: true,
-          void: true,
-          attrs: [
-            src: [required: true, validate: :safe_url],
-            alt: [default: nil, validate: {:nullable, :string}],
-            title: [default: nil, validate: {:nullable, :string}]
+          heading: [
+            content: "inline*",
+            group: "block",
+            attrs: [
+              level: [default: 1, validate: {:one_of, [1, 2, 3, 4, 5, 6]}],
+              align: align_attr(align)
+            ],
+            render: {&__MODULE__.heading_tag/1, []},
+            parse: Enum.map(1..6, &{"h#{&1}", Function.capture(__MODULE__, :"parse_h#{&1}", 1)})
           ],
-          render: {"img", &__MODULE__.image_attrs/1},
-          parse: [{"img", &__MODULE__.parse_image/1}]
-        ],
-        attachment: [
-          group: "block",
-          void: true,
-          attrs: [
-            key: [required: true, validate: :string],
-            filename: [default: nil, validate: {:nullable, :string}],
-            content_type: [default: nil, validate: {:nullable, :string}],
-            byte_size: [default: nil, validate: {:nullable, :integer}],
-            alt: [default: nil, validate: {:nullable, :string}],
-            caption: [default: nil, validate: {:nullable, :string}]
+          blockquote: [
+            content: "block+",
+            group: "block",
+            render: {"blockquote", []},
+            parse: ["blockquote"]
           ],
-          render: &__MODULE__.render_attachment/3,
-          render_inline: &__MODULE__.inline_attachment/3,
-          to_text: &__MODULE__.attachment_text/1
-        ],
-        hard_break: [
-          group: "inline",
-          inline: true,
-          void: true,
-          render: {"br", []},
-          to_text: "\n",
-          parse: ["br"]
-        ],
-        text: [group: "inline", inline: true, text: true]
-      ],
+          bullet_list: [content: "list_item+", group: "block", render: {"ul", []}, parse: ["ul"]],
+          ordered_list: [
+            content: "list_item+",
+            group: "block",
+            attrs: [start: [default: 1, validate: :integer]],
+            render: {"ol", &__MODULE__.ordered_list_attrs/1},
+            parse: [{"ol", &__MODULE__.parse_ordered_list/1}]
+          ],
+          list_item: [
+            content: "paragraph block*",
+            attrs: [align: align_attr(align)],
+            render: {"li", []},
+            parse: [{"li", &__MODULE__.parse_align/1}]
+          ],
+          code_block: [
+            content: "text*",
+            group: "block",
+            marks: :none,
+            attrs: [language: [default: nil, validate: {:nullable, &__MODULE__.language/1}]],
+            render: &__MODULE__.render_code_block/2,
+            parse: ["pre"]
+          ],
+          horizontal_rule: [group: "block", void: true, render: {"hr", []}, parse: ["hr"]],
+          image: [
+            group: "inline",
+            inline: true,
+            void: true,
+            attrs: [
+              src: [required: true, validate: :safe_url],
+              alt: [default: nil, validate: {:nullable, :string}],
+              title: [default: nil, validate: {:nullable, :string}]
+            ],
+            render: {"img", &__MODULE__.image_attrs/1},
+            parse: [{"img", &__MODULE__.parse_image/1}]
+          ],
+          attachment: [
+            group: "block",
+            void: true,
+            attrs: [
+              key: [required: true, validate: :string],
+              filename: [default: nil, validate: {:nullable, :string}],
+              content_type: [default: nil, validate: {:nullable, :string}],
+              byte_size: [default: nil, validate: {:nullable, :integer}],
+              alt: [default: nil, validate: {:nullable, :string}],
+              caption: [default: nil, validate: {:nullable, :string}]
+            ],
+            render: &__MODULE__.render_attachment/3,
+            render_inline: &__MODULE__.inline_attachment/3,
+            to_text: &__MODULE__.attachment_text/1
+          ],
+          hard_break: [
+            group: "inline",
+            inline: true,
+            void: true,
+            render: {"br", []},
+            to_text: "\n",
+            parse: ["br"]
+          ],
+          text: [group: "inline", inline: true, text: true]
+        ] ++ table_nodes(Keyword.get(opts, :tables, false)),
       marks: [
         bold: [render: {"strong", []}, parse: ~w(strong b)],
         italic: [render: {"em", []}, parse: ~w(em i)],
@@ -205,6 +212,81 @@ defmodule Coelho.Schema.Default do
         ]
       ]
     )
+  end
+
+  # Declared last so that nothing else moves: `block+` is satisfied by the
+  # schema's first suitable block, which is how a bare `Hello` becomes a
+  # paragraph and not a table.
+  #
+  # Off unless asked for, and the reason is the browser rather than the
+  # server. Everything a stored table needs is here — it validates, renders,
+  # extracts to text and survives an import that used to drop it with a
+  # warning — but the editor has no cell navigation and no row or column
+  # commands yet, so a table is easier to write in the HTML an application is
+  # migrating than in the editor it is migrating to.
+  defp table_nodes(false), do: []
+
+  defp table_nodes(true) do
+    cell = [
+      content: "block+",
+      attrs: [
+        colspan: [default: 1, validate: &__MODULE__.span/1],
+        rowspan: [default: 1, validate: &__MODULE__.span/1]
+      ]
+    ]
+
+    [
+      table: [
+        content: "table_row+",
+        group: "block",
+        render: {"table", []},
+        parse: ["table"]
+      ],
+      table_row: [
+        content: "(table_cell | table_header)+",
+        render: {"tr", []},
+        parse: ["tr"]
+      ],
+      table_cell:
+        cell ++
+          [render: {"td", &__MODULE__.cell_attrs/1}, parse: [{"td", &__MODULE__.parse_cell/1}]],
+      table_header:
+        cell ++
+          [render: {"th", &__MODULE__.cell_attrs/1}, parse: [{"th", &__MODULE__.parse_cell/1}]]
+    ]
+  end
+
+  # A span is a count of cells, and it is bounded for the same reason every
+  # other bound exists: `colspan="1000000"` is one attribute a writer never
+  # typed and a table nothing downstream can lay out.
+  @max_span 1000
+
+  @doc false
+  def span(value) when is_integer(value) and value >= 1 and value <= @max_span, do: :ok
+
+  def span(_value), do: {:error, "must be a whole number of cells, from 1 to #{@max_span}"}
+
+  @doc false
+  def cell_attrs(node) do
+    [{"colspan", span_of(node, "colspan")}, {"rowspan", span_of(node, "rowspan")}]
+  end
+
+  # Absent when it is one, which is what it means, and clamped rather than
+  # trusted — a row was written under whatever schema was in force then.
+  defp span_of(node, name) do
+    case attr(node, name, 1) do
+      value when is_integer(value) and value > 1 and value <= @max_span -> value
+      _one_or_not_a_span -> nil
+    end
+  end
+
+  @doc false
+  def parse_cell(attrs) do
+    for name <- ~w(colspan rowspan),
+        {value, ""} <- [Integer.parse(Map.get(attrs, name, "1"))],
+        value > 1,
+        into: %{},
+        do: {name, min(value, @max_span)}
   end
 
   # Alignment is a property of a block of text, not of one kind of block, so
@@ -320,7 +402,11 @@ defmodule Coelho.Schema.Default do
   @doc false
   def render_attachment(node, _inner, context) do
     url = Coelho.Attachments.url(context, node)
-    label = attr(node, "filename", nil) || attr(node, "key", "")
+
+    # `label/1` and not the attribute: a filename can be stored empty, and
+    # the anchor would have no text at all — a link a reader cannot see,
+    # where the inline form falls back to the key and says something.
+    label = label(node)
 
     body =
       cond do
@@ -336,8 +422,12 @@ defmodule Coelho.Schema.Default do
           Coelho.Render.tag("a", [{"href", url}], escape(label))
       end
 
+    # Drawn when there is a caption to draw, which is what the inline form
+    # and the text extraction both ask: `nil` is not the only way a stored
+    # row says there is none, and an empty `figcaption` on a public page is
+    # the three of them disagreeing about one row.
     caption =
-      case attr(node, "caption", nil) do
+      case present(attr(node, "caption", nil)) do
         nil -> []
         caption -> Coelho.Render.tag("figcaption", [], escape(caption))
       end
@@ -398,11 +488,21 @@ defmodule Coelho.Schema.Default do
 
   @doc false
   def attachment_text(node) do
-    case attr(node, "caption", nil) || attr(node, "filename", nil) do
+    case present(attr(node, "caption", nil)) || present(attr(node, "filename", nil)) do
       nil -> []
       text -> [text, "\n"]
     end
   end
+
+  # The first of the two that is text somebody typed. `||` on the raw
+  # attributes answers a different question: every value is truthy but
+  # `false` and `nil`, so a caption a looser row wrote — a number, a map —
+  # would take the place of a filename that is right there, and the search
+  # index would lose the only name the row has. `""` is a caption the schema
+  # accepts and is nothing to show, which is how `label/1` and
+  # `with_caption/2` already read it.
+  defp present(value) when is_binary(value) and value != "", do: value
+  defp present(_value), do: nil
 
   defp image?(content_type) when is_binary(content_type),
     do: String.starts_with?(content_type, "image/")
@@ -410,7 +510,24 @@ defmodule Coelho.Schema.Default do
   defp image?(_content_type), do: false
 
   defp escape(value) when is_binary(value), do: Coelho.Render.escape(value)
-  defp escape(value), do: Coelho.Render.escape(to_string(value))
+
+  # An attachment draws its own markup, so it escapes its own text rather
+  # than going through `attributes/1` — and it reads that text out of a
+  # stored row, which can hold whatever the validator in force then allowed.
+  # `to_string/1` raises on a map, and this is a public page: what cannot be
+  # a string is nothing, the same answer the attributes get.
+  #
+  # Which is why `nil` and a boolean come first and answer nothing at all.
+  # They say whether there is something to show rather than what to show,
+  # and `attributes/1` reads them that way too — one row draws a caption
+  # through here and an `alt` through there, and a `figcaption` reading
+  # `false` is the two of them disagreeing.
+  defp escape(value) when is_nil(value) or is_boolean(value), do: []
+
+  defp escape(value) when is_number(value) or is_atom(value),
+    do: Coelho.Render.escape(to_string(value))
+
+  defp escape(_value), do: []
 
   # Every term in a schema has to be escapable, so that a schema can live in a
   # module attribute: remote captures qualify, closures do not.

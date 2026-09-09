@@ -12,7 +12,7 @@ defmodule Demo.RichText do
   functions below are named, not closures.
   """
 
-  @schema Coelho.Schema.extend(Coelho.Schema.default(),
+  @schema Coelho.Schema.extend(Coelho.Schema.Default.build(tables: true),
             nodes: [
               mention: [
                 group: "inline",

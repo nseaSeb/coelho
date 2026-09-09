@@ -191,17 +191,26 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
         socket
         |> Coelho.LiveView.insert_node(Coelho.Attachment.to_node(attachment),
-             id: editor_id(@form[:body]),
+             editor: @form[:body],
              preview: MyApp.Uploads.url(attachment.key))
 
     ## Options
 
-      * `:id` — which editor to insert into, as `editor_id/1` returns it.
-        `push_event/3` reaches the whole page, so **without this every editor
-        on it inserts the node**, which is only ever right when there is one.
+      * `:editor` — which editor to insert into, as the form field or the
+        name the component was rendered for. `push_event/3` reaches the
+        whole page, so **without this every editor on it inserts the node**,
+        which is only ever right when there is one.
+      * `:id` — the same, as the DOM id `editor_id/1` derives, for an editor
+        whose id was given by hand.
       * `:preview` — for the editor's eyes only: an attachment's URL, which
         the document does not carry and the renderer resolves again on every
         render.
+      * `:replace` — `:query` puts the node where the writer's `@name` is,
+        which is what a suggestion list settles. Without it the node goes in
+        beside what they typed and they have to delete it themselves. See
+        `:suggest` on `coelho_editor/1`. The range is the one the editor
+        holds *now* rather than the one that was pushed, so a writer who
+        kept typing while the list was open still loses exactly their query.
 
     """
     @spec insert_node(Phoenix.LiveView.Socket.t(), map(), keyword()) ::
@@ -209,9 +218,33 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def insert_node(socket, node, opts \\ []) when is_map(node) do
       Phoenix.LiveView.push_event(socket, "coelho:insert", %{
         node: node,
-        id: Keyword.get(opts, :id),
-        preview: Keyword.get(opts, :preview)
+        id: Keyword.get(opts, :id) || target_id(Keyword.get(opts, :editor)),
+        preview: Keyword.get(opts, :preview),
+        replace: replace_option!(Keyword.get(opts, :replace))
       })
+    end
+
+    # The field or the name, the way `coelho_editor/1` took it, so that the
+    # derivation of an id lives in one place and an application never has to
+    # spell it.
+    defp target_id(nil), do: nil
+    defp target_id(%Phoenix.HTML.FormField{} = field), do: editor_id(field)
+    defp target_id(name) when is_binary(name), do: editor_id(name)
+
+    defp target_id(other) do
+      raise ArgumentError,
+            "editor takes the form field or the name the editor was rendered for, " <>
+              "got #{inspect(other)}"
+    end
+
+    defp replace_option!(nil), do: nil
+    defp replace_option!(:query), do: "query"
+
+    defp replace_option!(other) do
+      raise ArgumentError,
+            "replace takes :query or nothing, got #{inspect(other)}. It names what the " <>
+              "node goes in place of, and a suggestion's query is the only range the " <>
+              "editor holds"
     end
 
     @doc """
@@ -525,6 +558,41 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     )
 
+    attr(:suggest, :list,
+      default: [],
+      doc: """
+      Trigger characters that make the editor say what the writer is typing
+      after one, for a list the application draws:
+
+          suggest={[{"@", event: "mention"}, {"/", event: "slash_command"}]}
+
+      A trigger has to start a word — `a@b` is an address — and the query
+      ends at the first space. `handle_event/3` receives
+      `%{"trigger" => "@", "query" => "ali"}` as it is typed, and
+      `%{"query" => nil}` when there is no longer one, which is what closes
+      the list. `"rect"` carries the caret's place in the viewport, for
+      putting the list beside it.
+
+      Answer with `Coelho.LiveView.insert_node/3` and `replace: :query`: the
+      node goes where `@ali` is, and takes the typing away with it.
+
+      Clicking away closes it too, and there is nothing to write for that: a
+      click elsewhere changes nothing about the document, so no `nil` query
+      would otherwise be coming. The editor waits a moment first, because a
+      click *on* the list blurs it on the way down and lands on the way up —
+      and it keeps the range through that blur, so the node still goes where
+      the query is.
+
+      A seam rather than a command, and deliberately so: what the list holds,
+      how it filters and what a click does are the application's, and no
+      schema can be asked about them. `CONTRIBUTING.md` has the rule.
+
+      Options per entry: `:event`, the name to push, required; and `:max`,
+      the longest query pushed, 50 characters by default — past that the
+      writer is not choosing from a list any more
+      """
+    )
+
     attr(:placeholder, :string, default: nil)
     attr(:class, :string, default: nil)
     attr(:rest, :global)
@@ -532,6 +600,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def coelho_editor(assigns) do
       schema = assigns.document_schema || Schema.default()
       validate_debounce!(assigns.debounce)
+      suggest = assigns.suggest |> Enum.map(&suggestion!/1) |> one_each!()
       {name, value, input_id} = input_for!(assigns)
       toolbar = Enum.filter(assigns.toolbar, &supported?(schema, &1))
 
@@ -558,6 +627,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
                icons_fingerprint(assigns.icons)}
             )
         )
+        |> assign(:suggest_json, suggest != [] && JSON.encode!(suggest))
         |> assign(:value_json, value_json(value, schema))
         |> assign(:count, initial_count(value))
         |> assign(:toolbar, toolbar)
@@ -576,6 +646,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
         data-coelho-upload={@upload && @upload.name}
         data-coelho-maxlength={@maxlength}
         data-coelho-field-labels={@field_labels_json}
+        data-coelho-suggest={@suggest_json}
         data-coelho-flush-event={@flush_event}
         data-coelho-flush-token={@flush_token && to_string(@flush_token)}
         {@rest}
@@ -648,6 +719,56 @@ if Code.ensure_loaded?(Phoenix.Component) do
         />
       </div>
       """
+    end
+
+    # One character, because the editor looks back for it a character at a
+    # time, and a name to push it under. Refused here rather than ignored: a
+    # trigger nothing watches for is a list that never opens, with nothing
+    # said anywhere.
+    defp suggestion!({trigger, opts}) when is_binary(trigger) and is_list(opts) do
+      event = Keyword.get(opts, :event)
+      max = Keyword.get(opts, :max, 50)
+
+      cond do
+        String.length(trigger) != 1 ->
+          raise ArgumentError, "a suggestion trigger is one character, got #{inspect(trigger)}"
+
+        not is_binary(event) ->
+          raise ArgumentError,
+                "a suggestion needs an event to push, as in " <>
+                  "{#{inspect(trigger)}, event: \"mention\"}"
+
+        not (is_integer(max) and max > 0) ->
+          raise ArgumentError,
+                "a suggestion's :max is a number of characters, got #{inspect(max)}"
+
+        true ->
+          %{trigger: trigger, event: event, max: max}
+      end
+    end
+
+    defp suggestion!(other) do
+      raise ArgumentError,
+            "a suggestion is a trigger and its options, as in " <>
+              "{\"@\", event: \"mention\"}, got #{inspect(other)}"
+    end
+
+    # The editor looks for a trigger and not for the event behind it, so the
+    # second suggestion naming a character the first already named is one
+    # that can never be pushed — the same silence this refuses everywhere
+    # else.
+    defp one_each!(suggestions) do
+      triggers = Enum.map(suggestions, & &1.trigger)
+
+      case triggers -- Enum.uniq(triggers) do
+        [] ->
+          suggestions
+
+        [repeated | _] ->
+          raise ArgumentError,
+                "two suggestions share the trigger #{inspect(repeated)}, and only the " <>
+                  "first of them could ever be pushed"
+      end
     end
 
     # `attr` checks the type where the value is a literal in a template, and
@@ -828,6 +949,15 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # schema declares is a working button.
     @node_commands ~w(heading paragraph code_block blockquote bullet_list ordered_list horizontal_rule)
 
+    # A row and a column are acts on the table the caret is in: one verb
+    # each, nothing left to decide, and the schema can be asked whether it
+    # has tables at all. Putting a table *in* is not among them — it needs a
+    # number of rows and a number of columns, which no schema can be asked
+    # for — and goes through `insert_node/3` like every other decision the
+    # application owns.
+    @table_commands ~w(table_row_after table_row_delete table_column_after
+                       table_column_delete table_delete)
+
     # The node names the toolbar accepts as commands. Reachable so that the
     # hook's own list can be checked against it — the two are kept by hand,
     # in two languages, and nothing else would notice them drifting apart —
@@ -837,11 +967,22 @@ if Code.ensure_loaded?(Phoenix.Component) do
     @spec node_commands() :: [String.t()]
     def node_commands, do: @node_commands
 
+    @doc false
+    @spec table_commands() :: [String.t()]
+    def table_commands, do: @table_commands
+
     # `caption` acts on whichever selected node declares the attribute, so it
     # cannot be looked up as a node or a mark of its own.
     @always ~w(undo redo caption)
 
     defp supported?(_schema, command) when command in @always, do: true
+
+    # All five need the same three nodes: a table to act on, rows to add and
+    # remove, and cells for a column to be made of. A schema with only some
+    # of them is not one these can run against.
+    defp supported?(schema, command) when command in @table_commands do
+      Enum.all?([:table, :table_row, :table_cell], &Map.has_key?(schema.nodes, &1))
+    end
 
     # `insert` names a verb, not a thing: on its own it says nothing about
     # what to put in, and the hook has nothing to run. Refused here so that a

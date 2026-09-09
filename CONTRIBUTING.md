@@ -60,8 +60,15 @@ Roughly in order of how much they would help someone using this:
   (`Coelho.Schema.extend/2`); the *handles* are a ProseMirror node view,
   which `createCoelhoHook({nodeViews: …})` passes straight through. Both
   halves have a place to live; neither is written.
-- **Tables.** The largest missing feature, and the one that decides whether
-  this is usable for documentation rather than only for articles.
+- **Tables, in the editor.** The server half ships — `Coelho.Schema.Default.build(tables: true)`
+  declares four nodes, and a table validates, renders, extracts to text and
+  survives an import that used to drop it. What is missing is the half that
+  makes one pleasant to write: cell navigation, and the row and column
+  commands. That is `prosemirror-tables`, a peer dependency this package
+  does not yet declare, wired through the hook. Note what the toolbar rule
+  below says about it: "a table with N columns" is not a command, so
+  inserting one goes through the seam the library already has, and the row
+  and column verbs are what to argue about.
 - **An accessibility pass.** The toolbar is reachable by keyboard and names
   its commands, and there is one check for each — that is a floor, not an
   audit. Nobody has listened to this with a screen reader.
@@ -134,6 +141,60 @@ application supplies, filtered as the writer types — the rule says no, and
 says what instead: the list is the application's to draw and its choice is
 the application's to make, and the node it settles on goes in through the
 insert it already has.
+
+## The seams
+
+A seam is a place where a term this library did not build reaches code that
+does something with it: a function an application declared in its schema, a
+callback it implemented, a value it passed through the component. The list
+below is all of them.
+
+It is worth keeping because of where the defects are. Every one found in
+September lived on a seam, none was caught by the suite, and the suite was
+green through all of them at 93 % coverage — because a generator built from
+the schema produces what the schema admits, and a seam is the one place a
+term arrives that it does not. The two things that did catch them were a
+review that *executed* a matrix of values, and a property.
+
+So the question a seam answers is not "is it tested" but **"what happens
+when it hands back something else"**, and the only honest way to ask that is
+to hand it everything.
+
+| Seam | The application supplies | Held to it by |
+| --- | --- | --- |
+| `:render`, `:render_inline` on a node or a mark | a `{tag, attrs}` tuple or a function returning iodata | a property, for the attributes only |
+| `:attrs` inside a render tuple | a list of pairs, or a function of the node and the context | a property |
+| `:to_text` | iodata, or a function returning it | a property |
+| `:class`, `:editor_text`, `:parse` | strings the browser half also reads | the schema's own fingerprint, which refuses at build what it cannot export |
+| an attribute's `:validate` | `:ok` or `{:error, message}` | nothing yet |
+| an attribute's `:render_as` | `{:style, property}` or `{:class, map}` | nothing yet, though the value is checked against the ones the attribute declares |
+| `Coelho.Storage` — `put/3`, `read/2`, `path/2`, `delete/2`, `exists?/2`, and the optional `redirect_url/3` and `stream/2` | the tuples each callback declares | nothing yet |
+| `:resolve` in the render context | a function or a map, answering with the URL an attachment is served from | nothing yet |
+| `:authorize` on the plug | `{m, f, a}` or a function of two arguments, deciding whether bytes are served | nothing yet |
+| a rule passed to `Coelho.HTML.from_html/3` | a map, or a function, saying which attributes an imported element keeps | nothing yet |
+| `:toolbar`, `:labels`, `:icons`, `:field_labels` | words and markup that reach the page and the exported JSON | nothing yet |
+| `cast_stored` and its neighbours, overridden in the Ecto or Ash type | a document, or an error | nothing yet |
+| `nodeViews`, and the `nodes` and `marks` DOM overrides, passed to `createCoelhoHook` | ProseMirror node views and DOM specs | nothing yet |
+| `setPreviewUrl/2` | a URL an image is shown from until its upload lands | nothing yet |
+
+Two of those rows are worth reading twice. `:icons` is handed to
+`Phoenix.HTML.Safe`, so anything that is not safe markup raises while a page
+is rendering. `:resolve` and `:authorize` decide what a reader is shown and
+what a reader may fetch, which makes them the two seams where the wrong
+answer is not a broken page but a wrong one.
+
+### What a new seam owes
+
+Two properties, and they ask different questions:
+
+* **It answers rather than raises**, for any term at all. This is the one
+  `Coelho.HTML` has carried since the import existed — "no HTML raises,
+  whatever it is" — and the one the renderer went without.
+* **Two paths agree.** A property of the first kind cannot see two functions
+  reading one row and reaching different answers, because both of them
+  answered. That is what an empty `figcaption` on a page, nothing in the
+  inline form and a filename in the search index turned out to be, and only
+  a review found it.
 
 ## Scope
 

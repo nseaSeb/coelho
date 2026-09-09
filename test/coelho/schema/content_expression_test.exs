@@ -20,36 +20,34 @@ defmodule Coelho.Schema.ContentExpressionTest do
       #
       # Asserted as a ratio rather than as a duration: a machine's speed is
       # not the property under test. Four times the children costs about four
-      # times the time when the work is linear, and about sixteen when it is
-      # the square — so the line is drawn halfway between, where no amount of
-      # a busy machine puts a linear run.
-      small = elapsed(2_000)
-      large = elapsed(8_000)
+      # times the work when it is linear, and about sixteen when it is the
+      # square — so the line is drawn halfway between.
+      #
+      # Counted in reductions rather than in microseconds. Wall-clock time
+      # measures the machine as much as the work: with two other suites and a
+      # documentation build running beside it, the best of three linear runs
+      # came out at 16.1x, which is the square exactly, from a function that
+      # had not changed. A reduction is a step this process took, and a step
+      # is a step however busy the schedulers are.
+      small = work(2_000)
+      large = work(8_000)
 
       ratio = large / max(small, 1)
 
       assert ratio < 8,
-             "4x the children cost #{Float.round(ratio, 1)}x the time " <>
-               "(#{small}µs then #{large}µs), which is the square creeping back"
+             "4x the children cost #{Float.round(ratio, 1)}x the work " <>
+               "(#{small} then #{large} reductions), which is the square creeping back"
     end
 
-    defp elapsed(count) do
+    defp work(count) do
       {:ok, ast} = Expr.parse("block+")
       children = List.duplicate(:paragraph, count)
 
-      # The best of three: what is being measured is the shape of the work,
-      # and the fastest run is the one least polluted by everything else the
-      # machine was doing — which on a busy CI box is most of it.
-      1..3
-      |> Enum.map(fn _ ->
-        {micro, true} =
-          :timer.tc(fn ->
-            Expr.matches?(ast, children, fn name, child -> name == child or name == :block end)
-          end)
+      {:reductions, before} = :erlang.process_info(self(), :reductions)
+      true = Expr.matches?(ast, children, fn name, child -> name == child or name == :block end)
+      {:reductions, after_} = :erlang.process_info(self(), :reductions)
 
-        micro
-      end)
-      |> Enum.min()
+      after_ - before
     end
   end
 

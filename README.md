@@ -18,6 +18,47 @@ What the column actually holds is the JSON — and the attachment's URL, with
 its expiry and its signature, exists only in the rendered output. It is never
 in the document.
 
+## Five minutes
+
+```elixir
+# mix.exs
+{:coelho, "~> 0.14"}
+```
+
+```
+mix deps.get
+mix coelho.install        # browser packages, the hook, the stylesheet, the migration
+```
+
+```elixir
+# A :map column, and the field that reads it
+alter table(:posts) do
+  add :body, :map
+end
+
+defmodule MyApp.Post do
+  use Ecto.Schema
+  import Coelho.Ecto
+
+  schema "posts" do
+    field :title, :string
+    rich_text :body
+  end
+end
+```
+
+```heex
+<.form for={@form} phx-change="validate" phx-submit="save">
+  <.coelho_editor field={@form[:body]} />
+</.form>
+
+<div class="prose">{Coelho.to_safe_html(@post.body)}</div>
+```
+
+That is an editor whose document is validated on every change, stored as
+JSON, and rendered by the server. Everything below is what you can do from
+there; the rest of this page is why it is shaped this way.
+
 ## Why not HTML
 
 The usual arrangement stores the editor's HTML output and filters it with a
@@ -605,6 +646,68 @@ the same number from the same place. Or let the component do it —
 number rendered server side so an existing document does not read zero until
 the hook has started.
 
+### A list the writer opens by typing
+
+A mention, a slash command, an emoji picker: the writer types a character and
+chooses from a list. The list is the application's — what it holds, how it
+filters, what a click does — so the library's half is to say what is being
+typed and to take it away again when something is chosen.
+
+```heex
+<.coelho_editor field={@form[:body]} suggest={[{"@", event: "mention_query"}]} />
+```
+
+```elixir
+def handle_event("mention_query", %{"query" => nil}, socket) do
+  {:noreply, assign(socket, :mentions, [])}
+end
+
+def handle_event("mention_query", %{"query" => query, "rect" => rect}, socket) do
+  {:noreply,
+   socket
+   |> assign(:mentions, MyApp.People.matching(query))
+   |> assign(:mention_rect, rect)}
+end
+
+def handle_event("mention_pick", %{"id" => id, "label" => label}, socket) do
+  # `phx-value-id` arrives as a string, and the node's `user_id` validates as
+  # an integer: the document would be refused on the way back, a long way
+  # from the click.
+  {:noreply,
+   socket
+   |> assign(:mentions, [])
+   |> Coelho.LiveView.insert_node(
+     %{
+       "type" => "mention",
+       "attrs" => %{"user_id" => String.to_integer(id), "label" => label}
+     },
+     editor: socket.assigns.form[:body],
+     replace: :query
+   )}
+end
+```
+
+A trigger has to start a word, so `a@b` is an address and not a mention, and
+the query ends at the first space. `"rect"` is the caret's place in the
+viewport, which is what a `position: fixed` list is placed by.
+
+Clicking away from the editor closes the list too, and there is nothing to
+write for that. The editor waits a moment before saying so, because a click
+*on* the list blurs the editor on the way down and lands on the way up — and
+it keeps the range through that blur, so the node still replaces the query.
+
+**`replace: :query` is the half that is easy to miss.** Without it the node
+goes in beside the `@ad` the writer typed and they are left to delete it. The
+range replaced is the one the editor holds when the node arrives rather than
+the one that was pushed — a writer who kept typing while the list was open
+still loses exactly their query.
+
+The node itself is an ordinary one, declared the way [a variable
+is](#a-variable-and-anything-else-that-must-not-be-split): inline, void, and
+carrying the attributes your application needs. Nothing about the list
+reaches the schema, which is the point — a schema cannot be asked what a
+name matches.
+
 ### Not losing the last keystrokes
 
 The editor writes into its hidden input and lets `phx-change` carry it, which
@@ -938,7 +1041,7 @@ def handle_progress(:attachment, entry, socket) when entry.done? do
 
   {:noreply,
    Coelho.LiveView.insert_node(socket, Coelho.Attachment.to_node(attachment),
-     id: Coelho.LiveView.editor_id(socket.assigns.form[:body]),
+     editor: socket.assigns.form[:body],
      preview: MyApp.Uploads.url(attachment.key)
    )}
 end
@@ -1191,7 +1294,7 @@ Anything the server decides on reaches the document through one call:
 
 ```elixir
 Coelho.LiveView.insert_node(socket, %{"type" => "mention", "attrs" => %{"user_id" => 7}},
-  id: Coelho.LiveView.editor_id(@form[:body])
+  editor: @form[:body]
 )
 ```
 
@@ -1223,6 +1326,48 @@ const Coelho = createCoelhoHook({
 
 `demo/lib/demo/rich_text.ex` does exactly this, and the browser test drives
 it end to end.
+
+## Tables
+
+Off unless you ask for them:
+
+```elixir
+Coelho.Schema.Default.build(tables: true)
+```
+
+Four nodes arrive — `table`, `table_row`, `table_cell`, `table_header` —
+with `colspan` and `rowspan` on the two kinds of cell. A cell holds blocks
+rather than text, so a paragraph, a list or a quote goes in one.
+
+What that gives you today is the whole server half. A table validates,
+renders to `<table>`, extracts to text a row at a time, and **survives an
+import that used to drop it**: `from_html/3` warns about an unknown `table`
+against the schema without them, and against this one it keeps the table,
+the header row and the spans the browser wrote.
+
+In the editor, **Tab** and **Shift+Tab** move from cell to cell, a drag
+selects a rectangle of them, and five commands act on the table the caret is
+in:
+
+```heex
+toolbar={~w(bold italic link table_row_after table_row_delete
+            table_column_after table_column_delete table_delete)}
+```
+
+They are filtered like every other command: a schema without tables draws
+none of them. Each does something rather than turning something on, so none
+of them reports a pressed state.
+
+**Putting a table in is not one of them.** How many rows and how many
+columns is a decision no schema can be asked for, so it goes the way every
+other decision does — the application builds the node and hands it over with
+`Coelho.LiveView.insert_node/3`. `demo/lib/demo_web/live/editor_live.ex`
+does exactly that, and the browser suite drives the whole of it.
+
+A span is a count of cells, bounded at 1000, refused when it is anything
+else, and left out of the markup when it is one — the pair a heading's level
+already had, because what is stored was written under whatever schema was in
+force then.
 
 ## Declaring a schema from scratch
 

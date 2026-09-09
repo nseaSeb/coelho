@@ -27,6 +27,24 @@ defmodule Coelho.ReduceTest do
   end
 
   describe "reduce/4" do
+    test "folds nil to nil, as to_html renders it to nothing" do
+      assert Render.reduce(nil, schema(), callbacks()) == nil
+      assert Coelho.reduce(nil, schema(), callbacks()) == nil
+    end
+
+    test "refuses a callback map with no :node, nil document or not" do
+      # Otherwise a fold answers for every empty column and raises on the
+      # first row that holds a document — in production rather than in the
+      # test that happened to use a nullable fixture.
+      assert_raise KeyError, fn -> Render.reduce(nil, schema(), %{nodes: fn _, _ -> :x end}) end
+    end
+
+    test "still raises on a nil inside a document" do
+      assert_raise ArgumentError, ~r/cannot fold nil/, fn ->
+        Render.reduce(doc([nil]), schema(), callbacks())
+      end
+    end
+
     test "returns a term, not iodata" do
       document = validate!(doc([paragraph([text("hello")])]))
 

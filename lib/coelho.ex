@@ -159,16 +159,16 @@ defmodule Coelho do
   The schema may be left out, in which case the render options can be passed
   straight as the second argument.
   """
-  @spec to_html(map()) :: String.t()
+  @spec to_html(map() | nil) :: String.t()
   def to_html(document), do: Render.to_html(document, Schema.default(), [])
 
-  @spec to_html(map(), Schema.t() | Render.opts()) :: String.t()
+  @spec to_html(map() | nil, Schema.t() | Render.opts()) :: String.t()
   def to_html(document, opts) when is_list(opts),
     do: Render.to_html(document, Schema.default(), opts)
 
   def to_html(document, %Schema{} = schema), do: Render.to_html(document, schema, [])
 
-  @spec to_html(map(), Schema.t(), Render.opts()) :: String.t()
+  @spec to_html(map() | nil, Schema.t(), Render.opts()) :: String.t()
   def to_html(document, %Schema{} = schema, opts), do: Render.to_html(document, schema, opts)
 
   @doc """
@@ -176,16 +176,16 @@ defmodule Coelho do
 
   The form that needs no `raw/1` — see `Coelho.Render.to_safe_html/3`.
   """
-  @spec to_safe_html(map()) :: {:safe, iodata()}
+  @spec to_safe_html(map() | nil) :: {:safe, iodata()}
   def to_safe_html(document), do: Render.to_safe_html(document, Schema.default(), [])
 
-  @spec to_safe_html(map(), Schema.t() | Render.opts()) :: {:safe, iodata()}
+  @spec to_safe_html(map() | nil, Schema.t() | Render.opts()) :: {:safe, iodata()}
   def to_safe_html(document, opts) when is_list(opts),
     do: Render.to_safe_html(document, Schema.default(), opts)
 
   def to_safe_html(document, %Schema{} = schema), do: Render.to_safe_html(document, schema, [])
 
-  @spec to_safe_html(map(), Schema.t(), Render.opts()) :: {:safe, iodata()}
+  @spec to_safe_html(map() | nil, Schema.t(), Render.opts()) :: {:safe, iodata()}
   def to_safe_html(document, %Schema{} = schema, opts),
     do: Render.to_safe_html(document, schema, opts)
 
@@ -197,35 +197,35 @@ defmodule Coelho do
   the enclosing paragraph out from under it. See
   `Coelho.Render.to_inline_html/3`, which carries the whole reason.
   """
-  @spec to_inline_html(map()) :: String.t()
+  @spec to_inline_html(map() | nil) :: String.t()
   def to_inline_html(document), do: Render.to_inline_html(document, Schema.default(), [])
 
-  @spec to_inline_html(map(), Schema.t() | Render.opts()) :: String.t()
+  @spec to_inline_html(map() | nil, Schema.t() | Render.opts()) :: String.t()
   def to_inline_html(document, opts) when is_list(opts),
     do: Render.to_inline_html(document, Schema.default(), opts)
 
   def to_inline_html(document, %Schema{} = schema),
     do: Render.to_inline_html(document, schema, [])
 
-  @spec to_inline_html(map(), Schema.t(), Render.opts()) :: String.t()
+  @spec to_inline_html(map() | nil, Schema.t(), Render.opts()) :: String.t()
   def to_inline_html(document, %Schema{} = schema, opts),
     do: Render.to_inline_html(document, schema, opts)
 
   @doc """
   `to_inline_html/3` in the shape a template will not escape again.
   """
-  @spec to_safe_inline_html(map()) :: {:safe, iodata()}
+  @spec to_safe_inline_html(map() | nil) :: {:safe, iodata()}
   def to_safe_inline_html(document),
     do: Render.to_safe_inline_html(document, Schema.default(), [])
 
-  @spec to_safe_inline_html(map(), Schema.t() | Render.opts()) :: {:safe, iodata()}
+  @spec to_safe_inline_html(map() | nil, Schema.t() | Render.opts()) :: {:safe, iodata()}
   def to_safe_inline_html(document, opts) when is_list(opts),
     do: Render.to_safe_inline_html(document, Schema.default(), opts)
 
   def to_safe_inline_html(document, %Schema{} = schema),
     do: Render.to_safe_inline_html(document, schema, [])
 
-  @spec to_safe_inline_html(map(), Schema.t(), Render.opts()) :: {:safe, iodata()}
+  @spec to_safe_inline_html(map() | nil, Schema.t(), Render.opts()) :: {:safe, iodata()}
   def to_safe_inline_html(document, %Schema{} = schema, opts),
     do: Render.to_safe_inline_html(document, schema, opts)
 
@@ -244,7 +244,7 @@ defmodule Coelho do
 
   See `Coelho.Render.reduce/4`.
   """
-  @spec reduce(map(), Schema.t(), Render.callbacks(), Render.opts()) :: term()
+  @spec reduce(map() | nil, Schema.t(), Render.callbacks(), Render.opts()) :: term()
   def reduce(document, schema \\ Schema.default(), callbacks, opts \\ []),
     do: Render.reduce(document, schema, callbacks, opts)
 
@@ -265,7 +265,7 @@ defmodule Coelho do
   @doc """
   Extracts the plain text of a document, for full text search.
   """
-  @spec to_text(map(), Schema.t()) :: String.t()
+  @spec to_text(map() | nil, Schema.t()) :: String.t()
   def to_text(document, schema \\ Schema.default()), do: Document.to_text(document, schema)
 
   @doc """

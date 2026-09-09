@@ -972,7 +972,21 @@ const run = async () => {
       // than turning something on has no state to report and says nothing,
       // which is the whole set below — anything else missing `aria-pressed`
       // is a toggle that stopped answering.
-      const actions = ["undo", "redo", "caption", "horizontal_rule", "insert"];
+      const actions = [
+        "undo",
+        "redo",
+        "caption",
+        "horizontal_rule",
+        "insert",
+        // A row added, a column deleted, a table gone: each of them does
+        // something rather than turning something on, so there is nothing
+        // about them to be in force.
+        "table_row_after",
+        "table_row_delete",
+        "table_column_after",
+        "table_column_delete",
+        "table_delete"
+      ];
 
       const unnamed = await page.$$eval("[data-coelho-command]", (buttons, actions) =>
         buttons
@@ -1308,6 +1322,199 @@ const run = async () => {
 
       await page.click("#note-schema");
       await settle(page);
+    });
+
+    await test("a trigger opens a list the application draws, and a pick replaces the typing", async () => {
+      // The seam in full, end to end: the library says a trigger was typed
+      // and what follows it, the application decides what that matches, and
+      // `replace: :query` is what takes the typing away with the node. The
+      // wait is on the list appearing rather than on a keystroke, because
+      // what the trigger does is push an event and a round trip is not a
+      // keystroke.
+      await typeInEditor(page, "hi @ad");
+
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      assert.ok(
+        (await page.textContent("#mentions")).includes("@ada"),
+        "the list did not offer the name being typed"
+      );
+
+      await page.click("#mentions button");
+
+      await documentEventually(
+        page,
+        "the mention never replaced what was typed",
+        `return (() => {
+           const inline = doc.content.flatMap((block) => block.content ?? []);
+           const text = inline.map((node) => node.text ?? "").join("");
+
+           return inline.some((node) => node.type === "mention") && !text.includes("@");
+         })()`
+      );
+
+      await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
+    });
+
+    await test("a node before the trigger still starts a word", async () => {
+      // Everything between the trigger and the start of the block is read as
+      // text, and a node is not text: an image, a line break, a mention
+      // already put in each read as one character that is not a space.
+      // Taking that for the middle of a word is a list that never opens
+      // after one, while the same characters at the start of a paragraph
+      // open one.
+      //
+      // A mention rather than Shift+Enter, which Firefox on Linux does not
+      // deliver to the page — the leaf is the point, not the key.
+      await typeInEditor(page, "hi ");
+      await page.click('[phx-click="mention"]');
+
+      await documentEventually(
+        page,
+        "the mention never arrived",
+        `return doc.content.flatMap((b) => b.content ?? []).some((n) => n.type === "mention")`
+      );
+
+      await page.keyboard.type("@ad");
+
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      assert.ok(
+        (await page.textContent("#mentions")).includes("@ada"),
+        "a node before the trigger closed the list"
+      );
+
+      await page.keyboard.press("Escape");
+    });
+
+    await test("no list is offered inside a code block", async () => {
+      // `@Override`, `@media`, `@property`: a code block is a text block, and
+      // a list offered there is a list in the way.
+      // Typed into the block rather than over it: a select-all spans the
+      // whole document, and replacing that drops the code block along with
+      // its text — the list would then open in a paragraph and be right to.
+      await typeInEditor(page, "x");
+      await page.click('[data-coelho-command="code_block"]');
+      await settle(page);
+      await page.keyboard.type("@ada");
+      await settle(page);
+
+      assert.ok(!(await page.$("#mentions")), "the list opened inside a code block");
+
+      await page.click('[data-coelho-command="code_block"]');
+      await settle(page);
+    });
+
+    await test("the same query in another paragraph is another query", async () => {
+      // The positions are what an insertion replaces, and they are not the
+      // query text: `@ada` typed twice is the same four characters in two
+      // places. Holding the first one's positions puts the mention in a
+      // paragraph the writer has left, and leaves their typing behind in the
+      // one they are in. The caret moves with ArrowUp alone, which lands on
+      // the same column — `End` is answered differently by each engine.
+      await typeInEditor(page, "@ada");
+      await page.keyboard.press("Enter");
+      await page.keyboard.type("@ada");
+
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+      await page.keyboard.press("ArrowUp");
+      await settle(page);
+
+      await page.click("#mentions button");
+
+      await documentEventually(
+        page,
+        "the mention did not land in the paragraph the caret was in",
+        `return (() => {
+           const blocks = doc.content.filter((block) => block.type === "paragraph");
+           const textOf = (block) =>
+             (block.content ?? []).map((node) => node.text ?? "").join("");
+
+           return (
+             (blocks[0].content ?? []).some((node) => node.type === "mention") &&
+             !textOf(blocks[0]).includes("@") &&
+             textOf(blocks[1]) === "@ada"
+           );
+         })()`
+      );
+    });
+
+    await test("clicking away closes the list, with nothing for the application to do", async () => {
+      // A click elsewhere changes nothing about the document, so no
+      // transaction is coming to notice it. The editor says so itself after
+      // a moment — long enough that a click on the list still lands, which
+      // the test above is what proves.
+      await typeInEditor(page, "hi @ad");
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      await page.click('input[name="post[title]"]');
+
+      await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
+    });
+
+    await test("a space ends the query, which is what closes the list", async () => {
+      await typeInEditor(page, "hi @ad");
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      await page.keyboard.type(" ");
+
+      await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
+    });
+
+    await test("a table goes in through the seam, and its rows and columns are commands", async () => {
+      // How many rows and how many columns is a decision no schema can be
+      // asked for, so the table itself arrives through `insert_node/3`. What
+      // is done to one afterwards is a verb with nothing left to decide, and
+      // those are commands in the toolbar.
+      const table = `doc.content.find((block) => block.type === "table")`;
+
+      const cellText = `(cell) =>
+        (cell.content ?? [])
+          .flatMap((block) => block.content ?? [])
+          .map((node) => node.text ?? "")
+          .join("")`;
+
+      await typeInEditor(page, "before");
+      await page.click("#insert-table");
+
+      await documentEventually(page, "the table never arrived", `return Boolean(${table})`);
+
+      // The node lands after the caret rather than inside itself, so a cell
+      // has to be clicked into before a command has a table to act on.
+      await page.click(`${EDITOR} td`);
+      await settle(page);
+      await page.keyboard.press("Tab");
+      await page.keyboard.type("ZZ");
+
+      await documentEventually(
+        page,
+        "Tab did not move to the next cell",
+        `return (() => {
+           const row = ${table}.content[1];
+           const text = ${cellText};
+
+           return text(row.content[0]) === "Paper" && text(row.content[1]) === "ZZ";
+         })()`
+      );
+
+      await page.click('[data-coelho-command="table_row_after"]');
+      await settle(page);
+
+      await documentEventually(page, "no row was added", `return ${table}.content.length === 3`);
+
+      await page.click('[data-coelho-command="table_column_delete"]');
+      await settle(page);
+
+      await documentEventually(
+        page,
+        "the column was not deleted",
+        `return ${table}.content.every((row) => row.content.length === 1)`
+      );
+
+      await page.click('[data-coelho-command="table_delete"]');
+      await settle(page);
+
+      await documentEventually(page, "the table was not deleted", `return !${table}`);
     });
 
     await test("nothing threw along the way", () => {

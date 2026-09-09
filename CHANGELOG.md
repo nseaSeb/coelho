@@ -1,5 +1,254 @@
 # Changelog
 
+## Unreleased
+
+Tables, a list the writer opens by typing, and the ground both were built on:
+the places where a term this library did not build reaches code that does
+something with it, written down and, where it mattered most, held to what
+they promised by a property. Eight defects went with them, all of the same
+shape — a value nobody validated, trusted anyway — and three of them were
+found by the properties on their first run.
+
+### Tables
+
+```elixir
+Coelho.Schema.Default.build(tables: true)
+```
+
+Four nodes — `table`, `table_row`, `table_cell`, `table_header` — with
+`colspan` and `rowspan` on the two kinds of cell, and blocks rather than text
+inside one, so a paragraph, a list or a quote goes in a cell. Off unless
+asked for, so nothing already declared moves.
+
+On the server, a table validates, renders to `<table>`, extracts to text a
+row at a time, and **survives an import that used to drop it**: `from_html/3`
+warned about an unknown `table` and handed the document back without it,
+which is the one shape a migration cannot afford to lose silently. The
+wrappers a browser writes — `tbody`, `thead`, `tfoot`, `colgroup`, `col` —
+hold nothing of their own and say nothing; a `caption` still warns, because
+what it holds is text and the text is lost.
+
+In the editor, Tab and Shift+Tab move from cell to cell, a drag selects a
+rectangle of them, and five commands act on the table the caret is in:
+`table_row_after`, `table_row_delete`, `table_column_after`,
+`table_column_delete` and `table_delete`. Filtered like every other command —
+a schema without tables draws none of them — and each does something rather
+than turning something on, so none reports a pressed state.
+
+Putting a table *in* is not among them, and that is the rule in
+`CONTRIBUTING.md` rather than an omission: how many rows and how many columns
+is a decision no schema can be asked for. It goes through
+`Coelho.LiveView.insert_node/3` like every other decision an application
+owns, and the demo shows the whole of it.
+
+A span is a count of cells, bounded at 1000, refused when it is anything
+else, and left out of the markup when it is one — the pair a heading's level
+already had, because a stored row was written under whatever schema was in
+force then.
+
+`prosemirror-tables` joins the browser packages `mix coelho.install` puts in.
+An application that never declares tables carries it and never runs it: the
+plugin is added only where the schema has them. Nothing in the library
+changed for the server half to work, which is the part worth knowing: the
+content expressions a table needs were already expressible, and an
+application wanting a different table can declare one with
+`Coelho.Schema.extend/2` and get the same treatment.
+
+### A list the writer opens by typing
+
+The seam `CONTRIBUTING.md` said a suggestion list would get instead of a
+command now exists, and mentions are what it is for:
+
+```heex
+<.coelho_editor field={@form[:body]} suggest={[{"@", event: "mention_query"}]} />
+```
+
+The editor pushes that event with what is being typed after the trigger, and
+again with `"query" => nil` when there is no longer a query, which is what
+closes the list. `"rect"` carries the caret's place in the viewport, for
+putting the list beside it. A trigger has to start a word — `a@b` is an
+address — the query ends at the first space, a node before the trigger
+counts as a word boundary, and no list opens inside a code block, where
+`@media` is code.
+
+`Coelho.LiveView.insert_node/3` takes **`replace: :query`**, and that is the
+half that is easy to miss: without it the node goes in beside the `@ad` the
+writer typed and they are left to delete it themselves. The range replaced is
+the one the editor holds when the node arrives rather than the one that was
+pushed, so a writer who kept typing while the list was open still loses
+exactly their query — and `@ada` typed in two paragraphs is two queries, not
+one.
+
+Clicking away closes the list, and there is nothing to write for that. The
+editor waits a moment first, because a click *on* the list blurs the editor
+on the way down and lands on the way up, and it keeps the range through that
+blur so the node still lands on the query. A list dismissed that way stays
+dismissed until the writer types: the query is what opens one.
+
+Nothing about the list reaches the schema, which is the point. What it
+holds, how it filters and what a click does are the application's, and a
+schema cannot be asked what a name matches. The node it settles on is an
+ordinary one, declared the way a variable is. Two suggestions cannot share a
+trigger: the editor looks for the character rather than the event behind it,
+so the second could never have been pushed.
+
+The demo does the whole thing, and the browser suite drives it in all three
+engines.
+
+### `insert_node/3` takes the editor's field
+
+```elixir
+insert_node(socket, node, editor: @form[:body])
+```
+
+`:id` still works for an editor whose id was given by hand, but the field or
+the name the component was rendered for is what an application has in hand,
+and deriving the id from it was the one thing every call site had to spell.
+
+### The seams are written down
+
+`CONTRIBUTING.md` now lists every place a term this library did not build
+reaches code that does something with it: the render and text functions a
+schema declares, an attribute's validator, the storage callbacks, the
+attachment resolver, the plug's authorisation, the import rules, the
+toolbar's words and markup, the stored-type overrides, and the browser hook's
+node views. Each row says what holds it to what it promised, and most say
+"nothing yet" — which is the point of writing it down.
+
+Every defect in this release lived on one of those rows.
+
+### Three properties for what reaches the renderer without being validated
+
+`Coelho.HTML` has carried "no HTML raises, whatever it is" since the import
+existed, because HTML plainly comes from outside. The renderer reads two
+things that come from outside just as much and had no such promise: a row
+written under whatever schema was in force when it was stored, and a value
+handed back by a function the application wrote.
+
+- **A row written under any schema at all still renders.** Every attribute
+  of a generated document, node and mark alike, set to an arbitrary term.
+  Rendering, inline rendering and plain text extraction all have to answer,
+  and `sanitize/2` has to produce something `validate/2` accepts.
+- **An attribute a schema's own render hands back never raises, whatever it
+  is.** Through a function rather than a literal, because the two are gated
+  differently: a literal is encoded into the schema's fingerprint when the
+  schema is built, so a value that cannot be exported is refused there. What
+  a function returns at render time meets nothing.
+- **A value that renders alone is still there beside a spec's class.** Two
+  values do not accumulate and say so: the empty string, which has nothing to
+  add, and a boolean, which is whether the attribute is written rather than
+  what it holds.
+
+### What they found
+
+- **Plain text extraction raised on a stored attachment.** A `:to_text` is
+  declared as iodata and builds it out of a row, so it hands back whatever
+  that row held — and a filename that is `false` made the join for the whole
+  document raise. One row would take down the extraction a search index runs
+  over every one of them. What a `:to_text` returns is checked now.
+- **An attachment rendered its label through `to_string/1`**, and raised on
+  a map exactly the way the attribute path used to.
+- **Counting characters raised on bytes that are not text.** `String.length/1`
+  walks a binary as text and raises on some sequences that are not one, in
+  six places: `text_length/1`, the `:max_text_length` bound, the trim that
+  enforces it, and the attribute budget's own count of a key and a value. A
+  document holding those bytes could not be counted, trimmed, validated or
+  read. A character stays the unit wherever `String` can walk one, which is
+  almost always: giving up on every binary that is merely *invalid* would
+  trim `"héllo" <> <<255>>` to half of an `é`, which is a document
+  `sanitize/2` produced and `JSON.encode!` refuses. Only the sequences that
+  actually raise fall back to counting bytes.
+
+### An attribute `to_string/1` cannot answer for is dropped at render
+
+`heading.level` and `code_block.language` were clamped at render in 0.14.0
+because a stored row was written under whatever schema was in force then.
+Every other attribute still went through `to_string/1`, and two shapes a
+stored row can hold answer that badly: a map **raises**, on every page that
+shows the row, and an array of numbers becomes control bytes inside the
+attribute, with nothing said. Both are left out of the element now, which is
+what a `nil` value already did.
+
+What a schema has reason to return is untouched: a string, a number, an
+atom, a struct that says how it prints — a `Date`, a `URI`, a `Decimal` —
+and the iodata `Coelho.Render.tag/3` has always accepted, which is a tree of
+strings, improper tail and all. That iodata is joined byte for byte now
+rather than through `to_string/1`, which decodes, so a list holding a binary
+that is not valid UTF-8 renders the same bytes a bare binary always did
+instead of raising.
+
+`class` and `style` accumulate across every value that renders, not only
+across strings. They are the two attributes that join rather than replace —
+a spec's `:class` on top of what its `:render` put there — and joining was
+between binaries, which failed differently on each side: iodata already in
+place was silently replaced, iodata arriving to join it **raised**, and a
+number was dropped in the join though `class="7"` renders on its own.
+
+One value pays for this: a **charlist**, which is a list of numbers and
+cannot be told apart from a stored array at render — `~c"hi"` and the JSON
+`[104, 105]` are the same term. A schema handing back what an Erlang
+function returned should wrap it in `List.to_string/1`.
+
+### One attachment, one name
+
+Three renderers read one row — the block, the inline form and the plain
+text — and a row written under a looser validator got three answers out of
+them. Which of a caption and a filename to show was decided with `||` and
+"is it `nil`", and every value but `false` and `nil` is truthy: a caption a
+looser row wrote took the place of a filename that was there, so the search
+index lost the only name the row had, while the page drew an empty
+`figcaption` and the inline form drew nothing. A filename stored as the
+empty string — which the schema accepts — drew an anchor with no text. All
+three ask the same question now, the one the inline form already asked: is
+this text somebody typed.
+
+### `reduce/4` folds `nil` to `nil`
+
+`to_html/3` renders a `nil` document as nothing, because that is what a
+nullable column holds and the README promises it. `reduce/4` raised on the
+same value. It folds to `nil` now; a `nil` *inside* a document is not a
+document and still raises, and a callback map missing its `:node` is refused
+whatever the document holds — a fold that answered for every empty column and
+raised on the first row holding a document was a typo found in production.
+
+The specs went with it. Every render function accepted a `nil` document and
+declared `map()`, so an application running Dialyzer over the very call the
+documentation tells it to write — `to_safe_html(@post.body)` on a nullable
+column — was warned about it. `to_iodata/3`, `to_html/3`, `to_inline_html/3`,
+`to_inline_iodata/3`, their safe forms, `to_text/2` and the delegates in
+`Coelho` all say `map() | nil` now.
+
+### The Ash type refuses a stored value that is not a document — **and this one can bite an upgrade**
+
+`Coelho.Ash.Type.cast_stored/2` read anything that was not a map as `nil`,
+so a column holding something else came back as an absent document with
+nothing said about it. It returns `:error` now, as `Coelho.Ecto.Type.load/3`
+always has.
+
+**What changes for you:** an Ash resource whose column holds rows that are
+not documents — text written before the type was adopted, a value another
+tool put there — read them as empty documents before and **fails to load
+them now**. That is the row saying what it holds rather than hiding it, but
+it is a read that used to succeed. The way through is the override the
+moduledoc shows: `cast_stored/2` deciding what the bytes are before calling
+`super`, which is unaffected by this change.
+
+### Two tests measured the machine
+
+The two ratio tests that guard the linear paths of 0.14.0 timed their runs
+with the wall clock, and the wall clock measures the machine as much as the
+work: on a busy machine the content-expression matcher came out at 16.1
+times the work for 4 times the input — the square exactly, from a function
+that had not changed. Both count reductions now, which are steps this
+process took however busy the schedulers are.
+
+### `mix docs` is quiet again
+
+The changelog names `Coelho.Schema.empty/1` and `Coelho.LiveView.node_commands/0`,
+which left the documentation in 0.13.0, and ex_doc warned on each. The
+changelog is a record and is not rewritten to keep a link resolving; the
+warning is skipped for that file instead.
+
 ## 0.14.0 — 2026-08-22
 
 A security review of the whole surface — the first one — and what measuring

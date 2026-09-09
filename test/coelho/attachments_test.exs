@@ -123,6 +123,21 @@ defmodule Coelho.AttachmentsTest do
       assert html =~ "&lt;script&gt;"
       assert html =~ "<figcaption>a &amp; b</figcaption>"
     end
+
+    test "a caption a stored row holds that is not text is no caption at all" do
+      # Three renderers read this one attribute — the block, the inline form
+      # and the plain text — and a row written under a looser validator used
+      # to get three different answers out of them: an empty `figcaption` on
+      # the page, nothing inline, and the filename in the search index.
+      for caption <- [false, true, "", 5, %{"a" => 1}] do
+        node = %{"key" => "k", "filename" => "report.pdf", "caption" => caption}
+        document = %{"type" => "doc", "content" => [attachment(node)]}
+        context = [context: %{resolve: %{"k" => "/k"}}]
+
+        refute Render.to_html(document, schema(), context) =~ "figcaption"
+        assert Document.to_text(document, schema()) == "report.pdf"
+      end
+    end
   end
 
   describe "validation and text" do

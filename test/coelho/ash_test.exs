@@ -78,6 +78,11 @@ defmodule Coelho.AshTest do
       assert Type.cast_stored(nil, constraints()) == {:ok, nil}
     end
 
+    test "refuses a stored value that is not a document, as the Ecto type does" do
+      assert Type.cast_stored("not a document", constraints()) == :error
+      assert Type.cast_stored(42, constraints()) == :error
+    end
+
     test "writes a document to the column, and refuses anything else" do
       assert Type.dump_to_native(%{"type" => "doc"}, constraints()) == {:ok, %{"type" => "doc"}}
       assert Type.dump_to_native(nil, constraints()) == {:ok, nil}

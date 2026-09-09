@@ -48,6 +48,8 @@ defmodule DemoWeb.EditorLive do
      )
      |> assign_document(post.body)
      |> assign(:errors, [])
+     |> assign(:mentions, [])
+     |> assign(:mention_rect, nil)
      |> assign(:note, note_document("note"))
      |> assign(:note_open, true)
      |> assign(:note_generation, 1)
@@ -145,6 +147,73 @@ defmodule DemoWeb.EditorLive do
     end
   end
 
+  # The seam, in full. The library says a trigger was typed and what has been
+  # typed after it; which names those are, how they are filtered and what a
+  # click does are this application's, and no schema could have been asked.
+  @people [
+    %{id: 7, label: "@ada"},
+    %{id: 8, label: "@alan"},
+    %{id: 9, label: "@grace"}
+  ]
+
+  def handle_event("mention_query", %{"query" => nil}, socket) do
+    {:noreply, assign(socket, :mentions, [])}
+  end
+
+  def handle_event("mention_query", %{"query" => query, "rect" => rect}, socket) do
+    matching =
+      Enum.filter(@people, &String.starts_with?(&1.label, "@" <> String.downcase(query)))
+
+    {:noreply,
+     socket
+     |> assign(:mentions, matching)
+     |> assign(:mention_rect, rect || %{"bottom" => 0, "left" => 0})}
+  end
+
+  def handle_event("mention_pick", %{"id" => id, "label" => label}, socket) do
+    # `replace: :query` is what takes the `@ad` away with the node: without
+    # it the writer is left to delete their own typing.
+    {:noreply,
+     socket
+     |> assign(:mentions, [])
+     |> insert_node(
+       %{"type" => "mention", "attrs" => %{"user_id" => String.to_integer(id), "label" => label}},
+       editor: socket.assigns.form[:body],
+       replace: :query
+     )}
+  end
+
+  # How many rows and how many columns is a decision no schema can be asked
+  # for, so a table goes in the way every other decision does: the
+  # application builds the node and hands it over. The row and column verbs
+  # *are* commands, and they are in the toolbar above.
+  def handle_event("table", _params, socket) do
+    cell = fn type, text ->
+      %{
+        "type" => type,
+        "content" => [
+          %{"type" => "paragraph", "content" => [%{"type" => "text", "text" => text}]}
+        ]
+      }
+    end
+
+    table = %{
+      "type" => "table",
+      "content" => [
+        %{
+          "type" => "table_row",
+          "content" => [cell.("table_header", "Name"), cell.("table_header", "Amount")]
+        },
+        %{
+          "type" => "table_row",
+          "content" => [cell.("table_cell", "Paper"), cell.("table_cell", "12")]
+        }
+      ]
+    }
+
+    {:noreply, insert_node(socket, table, editor: socket.assigns.form[:body])}
+  end
+
   def handle_event("mention", _params, socket) do
     # A node the application decides on, built server side against the same
     # schema that will validate it on the way back.
@@ -152,7 +221,7 @@ defmodule DemoWeb.EditorLive do
      insert_node(
        socket,
        %{"type" => "mention", "attrs" => %{"user_id" => 7, "label" => "@ada"}},
-       id: editor_id(socket.assigns.form[:body])
+       editor: socket.assigns.form[:body]
      )}
   end
 
@@ -204,7 +273,7 @@ defmodule DemoWeb.EditorLive do
         {:ok, attachment} ->
           {:noreply,
            insert_node(socket, Coelho.Attachment.to_node(attachment),
-             id: editor_id(socket.assigns.form[:body]),
+             editor: socket.assigns.form[:body],
              preview: Demo.Uploads.url(attachment.key)
            )}
 
@@ -343,7 +412,9 @@ defmodule DemoWeb.EditorLive do
             toolbar={
               ~w(bold italic strike code link heading heading_2 heading_3 paragraph code_block
                  blockquote bullet_list ordered_list horizontal_rule caption
-                 align_left align_center align_right align_justify undo redo) ++
+                 align_left align_center align_right align_justify
+                 table_row_after table_row_delete table_column_after
+                 table_column_delete table_delete undo redo) ++
                 [
                   {"insert",
                    node: :variable,
@@ -357,11 +428,34 @@ defmodule DemoWeb.EditorLive do
                 ]
             }
             upload={@uploads.attachment}
+            suggest={[{"@", event: "mention_query"}]}
           />
 
+          <ul
+            :if={@mentions != []}
+            id="mentions"
+            class="mentions"
+            style={"top: #{@mention_rect["bottom"]}px; left: #{@mention_rect["left"]}px"}
+          >
+            <li :for={person <- @mentions}>
+              <button
+                type="button"
+                phx-click="mention_pick"
+                phx-value-id={person.id}
+                phx-value-label={person.label}
+              >
+                {person.label}
+              </button>
+            </li>
+          </ul>
+
           <p class="hint">
-            Drop or paste a file into the editor to attach it, or
-            <button type="button" class="link" phx-click="mention">insert a mention</button>
+            Drop or paste a file into the editor to attach it, or <button
+              type="button"
+              class="link"
+              phx-click="mention"
+            >insert a mention</button>, or
+            <button type="button" class="link" id="insert-table" phx-click="table">a table</button>
             — a node this application added to the schema.
           </p>
 

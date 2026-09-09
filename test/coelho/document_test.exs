@@ -267,6 +267,59 @@ defmodule Coelho.DocumentTest do
       assert Document.to_text(doc([paragraph([%{"type" => "text"}])]), schema()) == ""
     end
 
+    test "drops what a :to_text hands back that is not text" do
+      # A `:to_text` reads a stored row, so it hands back whatever the row
+      # held — and joining a document is one call, so one attachment whose
+      # filename is not a string would take the whole extraction down. A
+      # search index calls this on every row.
+      attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => false}}
+
+      assert Document.to_text(doc([attachment]), schema()) == ""
+
+      broken =
+        Schema.new(
+          nodes: [
+            doc: [content: "block+"],
+            paragraph: [content: "text*", group: "block", to_text: fn _node -> %{} end],
+            text: [group: "inline", inline: true, text: true]
+          ]
+        )
+
+      assert Document.to_text(doc([paragraph([text("a")])]), broken) == ""
+    end
+
+    test "counts a binary that is not text without raising, and without cutting one in half" do
+      # `String` walks a binary whatever the bytes are, right up to the few
+      # sequences that make it raise: `<<164, 103, 109, 83>>` counts as four,
+      # while a real codepoint followed by rubbish raises out of
+      # `unicode_util`. Both have to be countable, trimmable and readable.
+      walkable = doc([paragraph([text(<<164, 103, 109, 83>>)])])
+
+      assert Document.to_text(walkable, schema()) == <<164, 103, 109, 83>>
+      assert Document.text_length(walkable) == 4
+      assert {:ok, _} = Document.validate(walkable, schema())
+
+      raising = <<9817::utf8, 164, 103, 109, 83, 157, 162, 254, 73>>
+
+      # Bytes, since characters cannot be counted: the codepoint is three of them.
+      assert Document.text_length(doc([paragraph([text(raising)])])) == byte_size(raising)
+      assert {:ok, _} = Document.validate(doc([paragraph([text(raising)])]), schema())
+    end
+
+    test "trims to a character rather than to a byte, so what is kept is still text" do
+      # Giving up on the whole binary because it is not valid throws away the
+      # part of it that is: two characters of `"héllo" <> <<255>>` are `"hé"`,
+      # and the first two *bytes* are half of an `é` — a document `sanitize/2`
+      # produced that `JSON.encode!` then refuses, which is the one thing it
+      # exists to prevent.
+      document = doc([paragraph([text("héllo" <> <<0xFF>>)])])
+      trimmed = Document.sanitize(document, schema(), limits: [max_text_length: 2])
+
+      assert [%{"content" => [%{"text" => kept}]}] = trimmed["content"]
+      assert kept == "hé"
+      assert is_binary(JSON.encode!(trimmed))
+    end
+
     test "honours a custom text node's :to_text" do
       schema =
         Schema.new(

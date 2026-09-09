@@ -172,8 +172,22 @@ defmodule Coelho.HTML do
     end)
   end
 
+  # Elements that hold nothing of their own: everything they carry is carried
+  # by their children, so lifting them loses exactly nothing. A browser writes
+  # `tbody` into every table it serialises, and a word processor writes both
+  # it and `colgroup` — reporting those would say a table had lost something
+  # on every real table there is, which is a warning nobody can act on and
+  # therefore one nobody reads. What a `caption` holds *is* lost, so it is not
+  # here.
+  @structural ~w(tbody thead tfoot colgroup col)
+
   defp collect_warnings(trees, schema, acc) when is_list(trees),
     do: Enum.reduce(trees, acc, &collect_warnings(&1, schema, &2))
+
+  defp collect_warnings({tag, _attrs, children}, schema, acc)
+       when tag in @structural do
+    collect_warnings(children, schema, acc)
+  end
 
   defp collect_warnings({tag, attrs, children}, schema, acc) when is_binary(tag) do
     acc =

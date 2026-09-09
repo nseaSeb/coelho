@@ -69,7 +69,7 @@ defmodule Coelho.Render do
   @doc """
   Renders a document to iodata.
   """
-  @spec to_iodata(map(), Schema.t(), opts()) :: iodata()
+  @spec to_iodata(map() | nil, Schema.t(), opts()) :: iodata()
   def to_iodata(document, %Schema{} = schema, opts \\ []) do
     state = %{
       nodes: Keyword.get(opts, :nodes, %{}),
@@ -88,7 +88,7 @@ defmodule Coelho.Render do
   @doc """
   Renders a document to an HTML string.
   """
-  @spec to_html(map(), Schema.t(), opts()) :: String.t()
+  @spec to_html(map() | nil, Schema.t(), opts()) :: String.t()
   def to_html(document, %Schema{} = schema, opts \\ []) do
     document |> to_iodata(schema, opts) |> IO.iodata_to_binary()
   end
@@ -155,7 +155,7 @@ defmodule Coelho.Render do
   not a seam this put there, and dropping it would be dropping something
   someone wrote.
   """
-  @spec to_inline_html(map(), Schema.t(), opts()) :: String.t()
+  @spec to_inline_html(map() | nil, Schema.t(), opts()) :: String.t()
   def to_inline_html(document, %Schema{} = schema, opts \\ []),
     do: document |> to_inline_iodata(schema, opts) |> IO.iodata_to_binary()
 
@@ -165,14 +165,14 @@ defmodule Coelho.Render do
   The same reasoning as `to_safe_html/3`: having removed the need to remember
   `raw/1` in one place, this does not reintroduce it in the other.
   """
-  @spec to_safe_inline_html(map(), Schema.t(), opts()) :: {:safe, iodata()}
+  @spec to_safe_inline_html(map() | nil, Schema.t(), opts()) :: {:safe, iodata()}
   def to_safe_inline_html(document, %Schema{} = schema, opts \\ []),
     do: {:safe, to_inline_iodata(document, schema, opts)}
 
   @doc """
   `to_inline_html/3` as iodata.
   """
-  @spec to_inline_iodata(map(), Schema.t(), opts()) :: iodata()
+  @spec to_inline_iodata(map() | nil, Schema.t(), opts()) :: iodata()
   def to_inline_iodata(document, %Schema{} = schema, opts \\ []) do
     state = %{
       nodes: Keyword.get(opts, :nodes, %{}),
@@ -289,7 +289,7 @@ defmodule Coelho.Render do
   It renders the same iodata `to_iodata/3` builds, so the escaping guarantees
   above hold unchanged.
   """
-  @spec to_safe_html(map(), Schema.t(), opts()) :: {:safe, iodata()}
+  @spec to_safe_html(map() | nil, Schema.t(), opts()) :: {:safe, iodata()}
   def to_safe_html(document, %Schema{} = schema, opts \\ []),
     do: {:safe, to_iodata(document, schema, opts)}
 
@@ -328,7 +328,9 @@ defmodule Coelho.Render do
 
   Like `to_iodata/3`, this trusts the document: an unknown node or mark type
   raises rather than being skipped. Fold a validated document, or one that
-  has been through `Coelho.Document.sanitize/2`.
+  has been through `Coelho.Document.sanitize/2`. And like `to_html/3`, a
+  `nil` document — a nullable column — folds to `nil` rather than raising;
+  a `nil` *inside* a document is not a document, and does raise.
 
   That strictness is why the library's own walks are not written on top of
   this one, which is otherwise the obvious thing to ask. Validation has to
@@ -345,15 +347,20 @@ defmodule Coelho.Render do
             (String.t(), [map()] -> term()) | (String.t(), [map()], term() -> term())
         }
 
-  @spec reduce(map(), Schema.t(), callbacks(), opts()) :: term()
+  @spec reduce(map() | nil, Schema.t(), callbacks(), opts()) :: term()
   def reduce(document, %Schema{} = schema, callbacks, opts \\ []) do
+    # Built before the document is looked at, so that a callback map missing
+    # its `:node` is refused whatever the row holds. A fold that answers for
+    # every empty column and raises on the first one holding a document is a
+    # typo found in production rather than in the test that happened to use
+    # a nullable fixture.
     state = %{
       node: Map.fetch!(callbacks, :node),
       text: Map.get(callbacks, :text),
       context: Keyword.get(opts, :context, %{})
     }
 
-    reduce_node(document, schema, state)
+    if is_nil(document), do: nil, else: reduce_node(document, schema, state)
   end
 
   defp reduce_node(%{"type" => type} = node, schema, state) when is_binary(type) do
@@ -512,14 +519,59 @@ defmodule Coelho.Render do
 
   def void_tag(name, attrs), do: tag(name, attrs, [])
 
+  # A value `to_string/1` would answer badly for is dropped rather than
+  # rendered. A row written under a looser schema — or by hand — can hold a
+  # map where a string was expected, and `to_string/1` *raises* on one, at
+  # render, on every page that shows the row; the same reason a heading's
+  # level and a code block's language are clamped at render rather than
+  # trusted. A JSON array of numbers is the other half: `to_string([1, 2])`
+  # is two control bytes, which is not what any schema meant.
+  #
+  # What is kept is everything a schema's own `attrs` function has reason to
+  # hand back: a string, a number, an atom, a struct that says how it prints
+  # — a `Date`, a `URI`, a `Decimal` — and the iodata `Coelho.Render.tag/3`
+  # has always accepted, which is a tree of strings.
   defp attributes(attrs) do
     Enum.map(attrs, fn
-      {_name, nil} -> []
-      {_name, false} -> []
-      {name, true} -> [" ", name]
-      {name, value} -> [" ", name, "=\"", escape(to_string(value)), "\""]
+      {_name, nil} ->
+        []
+
+      {_name, false} ->
+        []
+
+      {name, true} ->
+        [" ", name]
+
+      {name, value} ->
+        if renderable?(value), do: [" ", name, "=\"", escape(stringify(value)), "\""], else: []
     end)
   end
+
+  defp renderable?(value) when is_binary(value) or is_number(value) or is_atom(value), do: true
+  defp renderable?(value) when is_struct(value), do: String.Chars.impl_for(value) != nil
+  defp renderable?([]), do: true
+
+  # An improper list — `["/posts/" | slug]` — is iodata like any other, and
+  # is what an accumulator built by prepending looks like. Walking the list
+  # by hand rather than through `Enum.all?/2`, which refuses one: this would
+  # otherwise raise the very way it exists to stop.
+  defp renderable?([head | tail]),
+    do: part?(head) and (is_binary(tail) or (is_list(tail) and renderable?(tail)))
+
+  defp renderable?(_value), do: false
+
+  # A number inside a list is what separates a stored JSON array from
+  # iodata: nothing a schema hands back spells a string as the integers of
+  # its bytes, and `to_string([1, 2])` is two control bytes.
+  defp part?(value) when is_binary(value), do: true
+  defp part?(value) when is_list(value), do: renderable?(value)
+  defp part?(_value), do: false
+
+  # Iodata is joined byte for byte, never decoded: a list holding a binary
+  # that is not valid UTF-8 raises in `to_string/1` and renders in
+  # `escape/1`, and the two answers cannot both be this function's.
+  defp stringify(value) when is_list(value), do: IO.iodata_to_binary(value)
+  defp stringify(value), do: to_string(value)
 
   # -- Nodes ----------------------------------------------------------------
 
@@ -649,16 +701,35 @@ defmodule Coelho.Render do
   defp prepend_attr(attrs, name, value) do
     case {List.keyfind(attrs, name, 0), Map.get(@separators, name)} do
       {nil, _separator} ->
-        [{name, value} | attrs]
+        [{name, joinable(value)} | attrs]
 
-      {{_name, existing}, separator}
-      when is_binary(existing) and existing != "" and is_binary(separator) ->
-        List.keyreplace(attrs, name, 0, {name, existing <> separator <> value})
-
-      {_found, _separator} ->
-        List.keyreplace(attrs, name, 0, {name, value})
+      {{_name, existing}, separator} ->
+        joined = join_attr(joinable(existing), separator, joinable(value))
+        List.keyreplace(attrs, name, 0, {name, joined})
     end
   end
+
+  # Only two binaries accumulate, so a value that will render as a string is
+  # made one on the way in — on either side, since what a `:render` put
+  # there is met by what the spec adds. Anything else replaces the half
+  # already there instead of joining it, and this function has to agree with
+  # `attributes/1` about which is which: `class="7"` renders on its own, so
+  # a `7` must not vanish beside a spec's class.
+  #
+  # `nil` and a boolean are left alone. They are not values but whether the
+  # attribute is written at all, and `attributes/1` answers that before it
+  # asks anything about a string.
+  defp joinable(value) when is_nil(value) or is_boolean(value), do: value
+
+  defp joinable(value) do
+    if renderable?(value), do: stringify(value), else: value
+  end
+
+  defp join_attr(existing, separator, value)
+       when is_binary(existing) and existing != "" and is_binary(separator) and is_binary(value),
+       do: existing <> separator <> value
+
+  defp join_attr(_existing, _separator, value), do: value
 
   # A spec's `:class` is applied on both sides — here, and in the browser
   # through the exported schema — so the writer sees the class the public

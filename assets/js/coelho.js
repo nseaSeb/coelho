@@ -10,6 +10,15 @@ import { EditorState, Selection, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import {
+  addColumnAfter,
+  addRowAfter,
+  deleteColumn,
+  deleteRow,
+  deleteTable,
+  goToNextCell,
+  tableEditing
+} from "prosemirror-tables";
+import {
   baseKeymap,
   toggleMark,
   setBlockType,
@@ -105,6 +114,31 @@ export const clearPreviewUrl = (key) => {
   releasePreview(url);
 };
 
+// A span is absent when it is one, which is what it means, and is read back
+// the same way — the server writes the same markup from the same rule.
+const span = (dom, name) => {
+  const value = Number(dom.getAttribute(name));
+
+  return Number.isInteger(value) && value > 1 && value <= 1000 ? value : 1;
+};
+
+const cellDOM = (tag) => ({
+  toDOM: (node) => [
+    tag,
+    {
+      ...(node.attrs.colspan > 1 && { colspan: node.attrs.colspan }),
+      ...(node.attrs.rowspan > 1 && { rowspan: node.attrs.rowspan })
+    },
+    0
+  ],
+  parseDOM: [
+    {
+      tag,
+      getAttrs: (dom) => ({ colspan: span(dom, "colspan"), rowspan: span(dom, "rowspan") })
+    }
+  ]
+});
+
 export const defaultNodeDOM = {
   paragraph: {
     toDOM: () => ["p", 0],
@@ -143,6 +177,16 @@ export const defaultNodeDOM = {
     code: true,
     defining: true
   },
+  // A cell's Elixir render is a function — it writes a span only when there
+  // is one to write — and a function does not cross to the browser, so the
+  // two halves are written here. Both of them: a `toDOM` without the
+  // matching `parseDOM` loses the spans on the editor's own copy and paste,
+  // which serialises a selection through one and reads it back through the
+  // other.
+  table: { tableRole: "table", isolating: true },
+  table_row: { tableRole: "row" },
+  table_cell: { ...cellDOM("td"), tableRole: "cell", isolating: true },
+  table_header: { ...cellDOM("th"), tableRole: "header_cell", isolating: true },
   horizontal_rule: {
     toDOM: () => ["hr"],
     parseDOM: [{ tag: "hr" }]
@@ -914,6 +958,21 @@ const commandFor = (name, schema, options) => {
           return true;
         })
       );
+    // A row and a column are acts on the table the caret is in, and each is
+    // one verb with nothing left to decide — which is what makes them
+    // commands rather than a seam. Putting a table *in* is not: it needs a
+    // number of rows and a number of columns, and no schema can be asked for
+    // those. That one goes through `Coelho.LiveView.insert_node/3`.
+    case "table_row_after":
+      return nodes.table && addRowAfter;
+    case "table_row_delete":
+      return nodes.table && deleteRow;
+    case "table_column_after":
+      return nodes.table && addColumnAfter;
+    case "table_column_delete":
+      return nodes.table && deleteColumn;
+    case "table_delete":
+      return nodes.table && deleteTable;
     case "undo":
       return undo;
     case "redo":
@@ -1121,7 +1180,17 @@ const cachedCommandFor = (name, schema, options) => {
 // that make a state — mount and rebuild — because the two have to stay in
 // lockstep: a plugin added to one and not the other is a rebuild that
 // silently drops it.
-const editorPlugins = (schema) => [history(), keymap(buildKeymap(schema)), keymap(baseKeymap)];
+// `tableEditing` is what makes a table a table rather than a grid of blocks:
+// it draws the cell selection a drag makes, keeps the column widths in step,
+// and is what every command below reads its rectangle from. Added only where
+// the schema has tables, so an application without them carries the plugin
+// but never runs it.
+const editorPlugins = (schema) => [
+  history(),
+  keymap(buildKeymap(schema)),
+  keymap(baseKeymap),
+  ...(schema.nodes.table ? [tableEditing()] : [])
+];
 
 const buildKeymap = (schema) => {
   const { nodes, marks } = schema;
@@ -1134,6 +1203,16 @@ const buildKeymap = (schema) => {
   if (marks.bold) bindings["Mod-b"] = toggleMark(marks.bold);
   if (marks.italic) bindings["Mod-i"] = toggleMark(marks.italic);
   if (marks.code) bindings["Mod-e"] = toggleMark(marks.code);
+
+  // Tab is the only way through a table that everyone already knows.
+  // `goToNextCell` answers false outside a table, so the key falls through to
+  // the *next keymap plugin* — `baseKeymap` — and not to a later binding in
+  // this object: one keymap holds one binding per key, and a second
+  // `bindings["Tab"]` written below would replace this one without a word.
+  if (nodes.table) {
+    bindings["Tab"] = goToNextCell(1);
+    bindings["Shift-Tab"] = goToNextCell(-1);
+  }
 
   if (nodes.list_item) {
     bindings["Enter"] = splitListItem(nodes.list_item);
@@ -1275,6 +1354,86 @@ const reinterpret = (doc, from, to) => {
 
 // `nodes` and `marks` say how a node *looks*; `nodeViews` say how it
 // *behaves* — drag handles on an image, a menu on an embed. Both are
+// An inline node that is not text — an image, a mention already put in —
+// stands for one character here, and it is one no query may hold: whatever
+// the writer is typing, it started after that.
+const LEAF = "￼";
+
+// What can sit before a trigger and still leave it starting a word. A leaf —
+// a line break, an image, a mention already put in — ends a word as surely
+// as a space does, and reads as one character here.
+const BOUNDARY = /[\s￼]/;
+
+// How long a list outlives the blur that a click on it causes. A click blurs
+// the editor on the way down and lands on the way up, so closing at once
+// takes the list out from under the mouse and the choice is never made. Long
+// enough for a deliberate click, short enough that a writer who has moved on
+// does not watch it sit there.
+const BLUR_CLOSE_DELAY = 250;
+
+// What the writer has typed since a trigger character, when there is such a
+// thing. Three conditions, and each of them is a way a query ends: the
+// selection is a caret in a text block, the trigger starts a word — `a@b` is
+// an address, not a mention — and nothing since the trigger is a space,
+// because a space is the writer going back to writing.
+const suggestionAt = (state, triggers) => {
+  const { $from, empty } = state.selection;
+
+  if (!empty || !$from.parent.isTextblock) return null;
+
+  // A code block is a text block, and `@Override`, `@media` and `@property`
+  // are all code. A list offered there is a list in the way, and a query
+  // pushed on every keystroke of it is a round trip nobody asked for.
+  if ($from.parent.type.spec.code) return null;
+
+  let found = null;
+
+  for (const { trigger, event, max } of triggers) {
+    // One character further back than the longest query allowed, and that
+    // one character is what makes the question answerable: without it a
+    // trigger sitting at the window's edge could be starting a word or
+    // sitting inside one, and there is no telling which.
+    const start = Math.max(0, $from.parentOffset - max - trigger.length - 1);
+    const before = $from.parent.textBetween(start, $from.parentOffset, null, LEAF);
+    const index = before.lastIndexOf(trigger);
+
+    if (index === -1) continue;
+    if (index === 0 && start > 0) continue;
+    if (index > 0 && !BOUNDARY.test(before[index - 1])) continue;
+
+    const query = before.slice(index + trigger.length);
+
+    if (query.length > max || /\s/.test(query) || query.includes(LEAF)) continue;
+
+    // Counted back from the caret rather than forward from the window: the
+    // trigger and the query are text, and text is one position per
+    // character, so this is exact whatever sits before them. Adding up the
+    // string's own indices is not — `textBetween` reads through an inline
+    // node that has content without its two boundary tokens, and the
+    // positions drift by two for each one.
+    const from = $from.pos - trigger.length - query.length;
+
+    // Two triggers can both match; the writer is answering the nearer one.
+    if (!found || from > found.from) found = { trigger, event, query, from, to: $from.pos };
+  }
+
+  return found;
+};
+
+// Where to draw a list, in the coordinates a fixed element is placed in.
+const caretRect = (view, pos) => {
+  try {
+    const { top, bottom, left, right } = view.coordsAtPos(pos);
+
+    return { top, bottom, left, right };
+  } catch (_error) {
+    // A position the view cannot place — the DOM a frame behind the
+    // document, a view being torn down — is not worth losing the event for.
+    // An application that has nowhere to put the list can still filter it.
+    return null;
+  }
+};
+
 // functions and neither can come from Elixir, which is why they are taken
 // here rather than exported with the schema.
 export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
@@ -1352,6 +1511,96 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this.says = (key, fallback) =>
         key in this._fieldLabels ? this._fieldLabels[key] : fallback;
 
+      this.readSuggest = () => {
+        this._suggestRaw = el.dataset.coelhoSuggest;
+        this._suggest = JSON.parse(this._suggestRaw || "[]");
+      };
+
+      this.readSuggest();
+      this._suggestion = null;
+
+      // Pushed whenever what the writer is typing after a trigger changes,
+      // and pushed again with `query: null` when there is no longer one:
+      // an application draws its list from this event and has nothing else
+      // to close it with. A selection that moves ends a query as surely as
+      // a space does, so this runs on every transaction rather than on the
+      // ones that changed the document.
+      // Said when the positions stop meaning anything: a document replaced
+      // under the list, or the triggers taken away. Without it the
+      // application's list stays on the page with nothing to close it, and
+      // an insertion answers it against positions in a document that is
+      // gone — which is a `RangeError` out of the event handler, or worse,
+      // text replaced somewhere the writer was not looking.
+      // Two things, kept apart on purpose. `_suggestion` is the range an
+      // insertion replaces; `_drawn` is what the application has on screen.
+      // A blur takes the second down without touching the first, because the
+      // click that caused it may be the one choosing from the list — and the
+      // node then has to land on the query rather than beside it.
+      this._drawn = null;
+
+      this.drawSuggestion = (found) => {
+        this._drawn = { event: found.event, trigger: found.trigger };
+
+        ctx.push(found.event, {
+          trigger: found.trigger,
+          query: found.query,
+          rect: caretRect(this._view, found.from)
+        });
+      };
+
+      this.closeSuggestion = () => {
+        const drawn = this._drawn;
+
+        this._drawn = null;
+
+        if (drawn) ctx.push(drawn.event, { trigger: drawn.trigger, query: null, rect: null });
+      };
+
+      // The positions as well as the drawing: for a document replaced under
+      // the list, the triggers taken away, or the editor going.
+      this.endSuggestion = () => {
+        this._suggestion = null;
+        this.closeSuggestion();
+      };
+
+      this.refreshSuggestion = () => {
+        if (!this._suggest.length) {
+          this.endSuggestion();
+          return;
+        }
+
+        const found = suggestionAt(this._view.state, this._suggest);
+        const was = this._suggestion;
+
+        // Kept whatever happens, and before anything is compared: the same
+        // word can be typed after a trigger in two places, and it is the
+        // *positions* an insertion replaces. Holding the ones from the first
+        // of them would put the node in a paragraph the writer left.
+        this._suggestion = found;
+
+        const same =
+          found &&
+          was &&
+          found.event === was.event &&
+          found.trigger === was.trigger &&
+          found.query === was.query &&
+          found.from === was.from;
+
+        // Nothing has moved. A list the writer dismissed by clicking away
+        // stays dismissed until they type: the query is what reopens it.
+        if (same) return;
+
+        // A query that ends leaves a list open with nothing to close it, and
+        // so does one that moves to another trigger — the event the list was
+        // drawn from has to hear that it is over even when another event is
+        // being pushed in the same breath, or two lists are drawn at once.
+        if (!found || (this._drawn && found.event !== this._drawn.event)) {
+          this.closeSuggestion();
+        }
+
+        if (found) this.drawSuggestion(found);
+      };
+
       this._flushEvent = el.dataset.coelhoFlushEvent;
       this._flushToken = el.dataset.coelhoFlushToken ?? null;
       this._name = input?.name ?? null;
@@ -1380,6 +1629,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this._view = new EditorView(content, {
         state,
         nodeViews,
+        // Neither handles anything: they say when the list the application
+        // drew is still wanted. `false` leaves the event to ProseMirror.
+        handleDOMEvents: {
+          focus: () => {
+            clearTimeout(this._blurTimer);
+            return false;
+          },
+          blur: () => {
+            clearTimeout(this._blurTimer);
+            this._blurTimer = setTimeout(() => this.closeSuggestion(), BLUR_CLOSE_DELAY);
+            return false;
+          }
+        },
         transformPastedHTML: (html) => (uploadName ? this.captureFrom(html) : html),
         dispatchTransaction: (transaction) => {
           this._view.updateState(this._view.state.apply(transaction));
@@ -1395,6 +1657,8 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           // never quite equals what the editor wrote, and the two would
           // trade rounds forever.
           if (transaction.docChanged && !transaction.getMeta(REMOTE)) this.syncInput();
+
+          this.refreshSuggestion();
         }
       });
 
@@ -1505,6 +1769,14 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         this.readFieldLabels();
         this.findLinkField();
         this.refreshToolbar();
+        // The triggers travel on the same element as the schema, and a patch
+        // that moved one can have moved the other: `updated` returns here
+        // rather than reaching its own check.
+        this.readSuggest();
+        // `updateState` is not a transaction, so nothing above ran the
+        // suggestion refresh, and the positions it holds are in the document
+        // that was just replaced.
+        this.endSuggestion();
         // The input still holds the document as it was written under the old
         // schema. Leaving it there would show one thing and post another, and
         // the next keystroke would post whatever the rebuild had dropped.
@@ -1814,7 +2086,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // Anything the server decides to put in the document arrives here: an
       // attachment it has just stored, a mention it has just resolved, an
       // embed. The node is the server's, built against the same schema.
-      this.insertNode = (nodeJSON, preview, { focus = true } = {}) => {
+      this.insertNode = (nodeJSON, preview, { focus = true, replace = null } = {}) => {
         // A node can arrive after the editor is gone: a server round trip,
         // or a capture giving up. There is no view left to dispatch into.
         if (this._destroyed) return;
@@ -1832,17 +2104,28 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         if (focus) this._view.focus();
 
         const { state } = this._view;
-        const transaction = this._view.hasFocus()
-          ? state.tr.replaceSelectionWith(node)
-          : state.tr.insert(state.doc.content.size, node);
+
+        // What the writer typed to open the list goes with the node that
+        // closed it. The range is the one held now rather than the one that
+        // was pushed, because they kept typing while the server was
+        // answering — and it is that longer query they meant to be rid of.
+        const query = replace === "query" ? this._suggestion : null;
+
+        const size = state.doc.content.size;
+
+        const transaction = query
+          ? state.tr.replaceWith(Math.min(query.from, size), Math.min(query.to, size), node)
+          : this._view.hasFocus()
+            ? state.tr.replaceSelectionWith(node)
+            : state.tr.insert(state.doc.content.size, node);
 
         this._view.dispatch(transaction.scrollIntoView());
       };
 
       // push_event reaches the whole page, so an insertion meant for one
       // editor would otherwise land in every editor on it.
-      ctx.handle("coelho:insert", ({ node, id, preview }) => {
-        if (id == null || id === el.id) this.insertNode(node, preview);
+      ctx.handle("coelho:insert", ({ node, id, preview, replace }) => {
+        if (id == null || id === el.id) this.insertNode(node, preview, { replace });
       });
 
       const uploadName = el.dataset.coelhoUpload;
@@ -1956,6 +2239,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       if (ctx.el.dataset.coelhoSchemaVersion !== this._version) {
         this.rebuild();
         return;
+      }
+
+      // What the writer types after a trigger is not a button: an editor can
+      // change its triggers with the same toolbar, or carry no toolbar at
+      // all — and a toolbar-less editor has no version for the branch below
+      // to compare, so it would never re-read them there.
+      if (ctx.el.dataset.coelhoSuggest !== this._suggestRaw) {
+        this.readSuggest();
+
+        // Triggers taken away do not end a query on their own: nothing has
+        // been typed, so no transaction is coming to notice. The list would
+        // stay on the page until the writer happened to type again.
+        this.refreshSuggestion();
       }
 
       // New buttons, or the same buttons in another language. LiveView has
@@ -2085,6 +2381,14 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           })
         ).catch((error) => console.warn("coelho: could not flush on destroy", error));
       }
+
+      // An editor taken off the page with a query open — a modal closing, a
+      // patch swapping it out — leaves a list drawn over a page that no
+      // longer has an editor under it. The close is pushed before the flag
+      // below stops everything, and the blur that teardown itself causes has
+      // nothing left to fire on.
+      clearTimeout(this._blurTimer);
+      this.endSuggestion?.();
 
       // Said before anything is torn down, and read by everything that can
       // come back later: a capture giving up, an insertion from the server,
