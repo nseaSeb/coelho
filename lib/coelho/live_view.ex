@@ -931,6 +931,15 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # schema declares is a working button.
     @node_commands ~w(heading paragraph code_block blockquote bullet_list ordered_list horizontal_rule)
 
+    # A row and a column are acts on the table the caret is in: one verb
+    # each, nothing left to decide, and the schema can be asked whether it
+    # has tables at all. Putting a table *in* is not among them — it needs a
+    # number of rows and a number of columns, which no schema can be asked
+    # for — and goes through `insert_node/3` like every other decision the
+    # application owns.
+    @table_commands ~w(table_row_after table_row_delete table_column_after
+                       table_column_delete table_delete)
+
     # The node names the toolbar accepts as commands. Reachable so that the
     # hook's own list can be checked against it — the two are kept by hand,
     # in two languages, and nothing else would notice them drifting apart —
@@ -940,11 +949,22 @@ if Code.ensure_loaded?(Phoenix.Component) do
     @spec node_commands() :: [String.t()]
     def node_commands, do: @node_commands
 
+    @doc false
+    @spec table_commands() :: [String.t()]
+    def table_commands, do: @table_commands
+
     # `caption` acts on whichever selected node declares the attribute, so it
     # cannot be looked up as a node or a mark of its own.
     @always ~w(undo redo caption)
 
     defp supported?(_schema, command) when command in @always, do: true
+
+    # All five need the same three nodes: a table to act on, rows to add and
+    # remove, and cells for a column to be made of. A schema with only some
+    # of them is not one these can run against.
+    defp supported?(schema, command) when command in @table_commands do
+      Enum.all?([:table, :table_row, :table_cell], &Map.has_key?(schema.nodes, &1))
+    end
 
     # `insert` names a verb, not a thing: on its own it says nothing about
     # what to put in, and the hook has nothing to run. Refused here so that a

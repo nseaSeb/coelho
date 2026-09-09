@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Tables, in the editor
+
+Tab and Shift+Tab move from cell to cell, a drag selects a rectangle of them,
+and five commands act on the table the caret is in: `table_row_after`,
+`table_row_delete`, `table_column_after`, `table_column_delete` and
+`table_delete`. Filtered like every other command — a schema without tables
+draws none of them — and each does something rather than turning something
+on, so none reports a pressed state.
+
+Putting a table *in* is not among them, and that is the rule in
+`CONTRIBUTING.md` rather than an omission: how many rows and how many columns
+is a decision no schema can be asked for. It goes through
+`Coelho.LiveView.insert_node/3` like every other decision an application owns,
+and the demo shows the whole of it.
+
+`prosemirror-tables` joins the browser packages `mix coelho.install` puts in.
+An application that never declares tables carries it and never runs it: the
+plugin is added only where the schema has them.
+
+Two things a table needs cannot come from Elixir and are written in the hook
+beside the rest: the role `prosemirror-tables` recognises each of the four
+nodes by, and a cell's own DOM. A cell's Elixir render is a function — it
+writes a span only when there is one to write — and a function does not cross
+to the browser. Both halves are there, `toDOM` and `parseDOM`: the editor
+serialises a copied selection through one and reads it back through the
+other, so a span written by only one of them is a span lost on copy and
+paste.
+
 ### A list the writer opens by typing
 
 The seam `CONTRIBUTING.md` said a suggestion list would get instead of a

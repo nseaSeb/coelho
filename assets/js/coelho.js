@@ -10,6 +10,15 @@ import { EditorState, Selection, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import {
+  addColumnAfter,
+  addRowAfter,
+  deleteColumn,
+  deleteRow,
+  deleteTable,
+  goToNextCell,
+  tableEditing
+} from "prosemirror-tables";
+import {
   baseKeymap,
   toggleMark,
   setBlockType,
@@ -105,6 +114,31 @@ export const clearPreviewUrl = (key) => {
   releasePreview(url);
 };
 
+// A span is absent when it is one, which is what it means, and is read back
+// the same way — the server writes the same markup from the same rule.
+const span = (dom, name) => {
+  const value = Number(dom.getAttribute(name));
+
+  return Number.isInteger(value) && value > 1 && value <= 1000 ? value : 1;
+};
+
+const cellDOM = (tag) => ({
+  toDOM: (node) => [
+    tag,
+    {
+      ...(node.attrs.colspan > 1 && { colspan: node.attrs.colspan }),
+      ...(node.attrs.rowspan > 1 && { rowspan: node.attrs.rowspan })
+    },
+    0
+  ],
+  parseDOM: [
+    {
+      tag,
+      getAttrs: (dom) => ({ colspan: span(dom, "colspan"), rowspan: span(dom, "rowspan") })
+    }
+  ]
+});
+
 export const defaultNodeDOM = {
   paragraph: {
     toDOM: () => ["p", 0],
@@ -143,6 +177,16 @@ export const defaultNodeDOM = {
     code: true,
     defining: true
   },
+  // A cell's Elixir render is a function — it writes a span only when there
+  // is one to write — and a function does not cross to the browser, so the
+  // two halves are written here. Both of them: a `toDOM` without the
+  // matching `parseDOM` loses the spans on the editor's own copy and paste,
+  // which serialises a selection through one and reads it back through the
+  // other.
+  table: { tableRole: "table", isolating: true },
+  table_row: { tableRole: "row" },
+  table_cell: { ...cellDOM("td"), tableRole: "cell", isolating: true },
+  table_header: { ...cellDOM("th"), tableRole: "header_cell", isolating: true },
   horizontal_rule: {
     toDOM: () => ["hr"],
     parseDOM: [{ tag: "hr" }]
@@ -914,6 +958,21 @@ const commandFor = (name, schema, options) => {
           return true;
         })
       );
+    // A row and a column are acts on the table the caret is in, and each is
+    // one verb with nothing left to decide — which is what makes them
+    // commands rather than a seam. Putting a table *in* is not: it needs a
+    // number of rows and a number of columns, and no schema can be asked for
+    // those. That one goes through `Coelho.LiveView.insert_node/3`.
+    case "table_row_after":
+      return nodes.table && addRowAfter;
+    case "table_row_delete":
+      return nodes.table && deleteRow;
+    case "table_column_after":
+      return nodes.table && addColumnAfter;
+    case "table_column_delete":
+      return nodes.table && deleteColumn;
+    case "table_delete":
+      return nodes.table && deleteTable;
     case "undo":
       return undo;
     case "redo":
@@ -1121,7 +1180,17 @@ const cachedCommandFor = (name, schema, options) => {
 // that make a state — mount and rebuild — because the two have to stay in
 // lockstep: a plugin added to one and not the other is a rebuild that
 // silently drops it.
-const editorPlugins = (schema) => [history(), keymap(buildKeymap(schema)), keymap(baseKeymap)];
+// `tableEditing` is what makes a table a table rather than a grid of blocks:
+// it draws the cell selection a drag makes, keeps the column widths in step,
+// and is what every command below reads its rectangle from. Added only where
+// the schema has tables, so an application without them carries the plugin
+// but never runs it.
+const editorPlugins = (schema) => [
+  history(),
+  keymap(buildKeymap(schema)),
+  keymap(baseKeymap),
+  ...(schema.nodes.table ? [tableEditing()] : [])
+];
 
 const buildKeymap = (schema) => {
   const { nodes, marks } = schema;
@@ -1134,6 +1203,15 @@ const buildKeymap = (schema) => {
   if (marks.bold) bindings["Mod-b"] = toggleMark(marks.bold);
   if (marks.italic) bindings["Mod-i"] = toggleMark(marks.italic);
   if (marks.code) bindings["Mod-e"] = toggleMark(marks.code);
+
+  // Tab is the only way through a table that everyone already knows, and it
+  // is bound before the list bindings so that a list *inside* a cell does not
+  // take it: `goToNextCell` returns false outside a table, which hands the
+  // key on to whatever is bound after it.
+  if (nodes.table) {
+    bindings["Tab"] = goToNextCell(1);
+    bindings["Shift-Tab"] = goToNextCell(-1);
+  }
 
   if (nodes.list_item) {
     bindings["Enter"] = splitListItem(nodes.list_item);

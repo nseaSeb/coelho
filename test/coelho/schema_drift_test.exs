@@ -28,8 +28,12 @@ defmodule Coelho.SchemaDriftTest do
   end
 
   test "every default schema node has a DOM mapping in the hook" do
+    # Everything the library can declare, and not only what the default
+    # schema ships: tables are an option, and the half of them that cannot
+    # come from Elixir — the role `prosemirror-tables` reads — has to be
+    # here for the day the option is taken.
     declared =
-      Schema.default().node_order
+      Schema.Default.build(tables: true).node_order
       |> Enum.reject(&(&1 in @without_dom))
       |> Enum.map(&Atom.to_string/1)
       |> Enum.sort()
@@ -62,6 +66,21 @@ defmodule Coelho.SchemaDriftTest do
     # `undo`/`redo` belong to no vocabulary at all.
     assert Enum.sort(Enum.filter(labels, &(&1 in nodes))) ==
              Enum.sort(Coelho.LiveView.node_commands())
+  end
+
+  test "the table commands the server keeps are the ones the hook has a verb for" do
+    # The same two hand-kept lists as above, for the family that acts on a
+    # table rather than toggling a block. A verb added to one and not the
+    # other is a button that does nothing, or one that is never drawn.
+    source = File.read!(@source)
+
+    [_, body] =
+      Regex.run(~r/const commandFor = .*?\n  switch \(name\) \{(.*?)\n  \}/s, source) ||
+        flunk("commandFor not found in #{@source}")
+
+    cases = ~r/^    case "(table_[a-z_]+)":/m |> Regex.scan(body) |> Enum.map(fn [_, n] -> n end)
+
+    assert Enum.sort(cases) == Enum.sort(Coelho.LiveView.table_commands())
   end
 
   test "the hook builds its schema from the exported ordering, not from an object" do

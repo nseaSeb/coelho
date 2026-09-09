@@ -1299,10 +1299,24 @@ import that used to drop it**: `from_html/3` warns about an unknown `table`
 against the schema without them, and against this one it keeps the table,
 the header row and the spans the browser wrote.
 
-What it does not give you yet is the editor. There is no cell navigation and
-there are no row or column commands, so a table is easier to write in the
-HTML you are migrating than in the editor you are migrating to. That half is
-ProseMirror's `prosemirror-tables`, and it is not wired up.
+In the editor, **Tab** and **Shift+Tab** move from cell to cell, a drag
+selects a rectangle of them, and five commands act on the table the caret is
+in:
+
+```heex
+toolbar={~w(bold italic link table_row_after table_row_delete
+            table_column_after table_column_delete table_delete)}
+```
+
+They are filtered like every other command: a schema without tables draws
+none of them. Each does something rather than turning something on, so none
+of them reports a pressed state.
+
+**Putting a table in is not one of them.** How many rows and how many
+columns is a decision no schema can be asked for, so it goes the way every
+other decision does — the application builds the node and hands it over with
+`Coelho.LiveView.insert_node/3`. `demo/lib/demo_web/live/editor_live.ex`
+does exactly that, and the browser suite drives the whole of it.
 
 A span is a count of cells, bounded at 1000, refused when it is anything
 else, and left out of the markup when it is one — the pair a heading's level

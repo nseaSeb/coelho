@@ -67,3 +67,13 @@
 .mentions button { background: none; border: 0; padding: .25rem .5rem; cursor: pointer;
   font: inherit; color: #3730a3; }
 .mentions button:hover { background: #eef2ff; border-radius: .25rem; }
+
+/* A table in the editor and on the page. `prosemirror-tables` draws the cell
+   selection with a `selectedCell` class and needs the cells to be relative
+   for it. */
+.coelho-content table, .prose table { border-collapse: collapse; width: 100%; margin: .75rem 0; }
+.coelho-content td, .coelho-content th, .prose td, .prose th {
+  border: 1px solid #d4d4d8; padding: .35rem .5rem; vertical-align: top; position: relative; }
+.coelho-content th, .prose th { background: #f4f4f5; text-align: left; }
+.coelho-content .selectedCell::after {
+  content: ""; position: absolute; inset: 0; background: rgb(99 102 241 / .18); pointer-events: none; }

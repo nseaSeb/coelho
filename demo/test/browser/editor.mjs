@@ -972,7 +972,21 @@ const run = async () => {
       // than turning something on has no state to report and says nothing,
       // which is the whole set below — anything else missing `aria-pressed`
       // is a toggle that stopped answering.
-      const actions = ["undo", "redo", "caption", "horizontal_rule", "insert"];
+      const actions = [
+        "undo",
+        "redo",
+        "caption",
+        "horizontal_rule",
+        "insert",
+        // A row added, a column deleted, a table gone: each of them does
+        // something rather than turning something on, so there is nothing
+        // about them to be in force.
+        "table_row_after",
+        "table_row_delete",
+        "table_column_after",
+        "table_column_delete",
+        "table_delete"
+      ];
 
       const unnamed = await page.$$eval("[data-coelho-command]", (buttons, actions) =>
         buttons
@@ -1422,6 +1436,62 @@ const run = async () => {
       await page.keyboard.type(" ");
 
       await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
+    });
+
+    await test("a table goes in through the seam, and its rows and columns are commands", async () => {
+      // How many rows and how many columns is a decision no schema can be
+      // asked for, so the table itself arrives through `insert_node/3`. What
+      // is done to one afterwards is a verb with nothing left to decide, and
+      // those are commands in the toolbar.
+      const table = `doc.content.find((block) => block.type === "table")`;
+
+      const cellText = `(cell) =>
+        (cell.content ?? [])
+          .flatMap((block) => block.content ?? [])
+          .map((node) => node.text ?? "")
+          .join("")`;
+
+      await typeInEditor(page, "before");
+      await page.click("#insert-table");
+
+      await documentEventually(page, "the table never arrived", `return Boolean(${table})`);
+
+      // The node lands after the caret rather than inside itself, so a cell
+      // has to be clicked into before a command has a table to act on.
+      await page.click(`${EDITOR} td`);
+      await settle(page);
+      await page.keyboard.press("Tab");
+      await page.keyboard.type("ZZ");
+
+      await documentEventually(
+        page,
+        "Tab did not move to the next cell",
+        `return (() => {
+           const row = ${table}.content[1];
+           const text = ${cellText};
+
+           return text(row.content[0]) === "Paper" && text(row.content[1]) === "ZZ";
+         })()`
+      );
+
+      await page.click('[data-coelho-command="table_row_after"]');
+      await settle(page);
+
+      await documentEventually(page, "no row was added", `return ${table}.content.length === 3`);
+
+      await page.click('[data-coelho-command="table_column_delete"]');
+      await settle(page);
+
+      await documentEventually(
+        page,
+        "the column was not deleted",
+        `return ${table}.content.every((row) => row.content.length === 1)`
+      );
+
+      await page.click('[data-coelho-command="table_delete"]');
+      await settle(page);
+
+      await documentEventually(page, "the table was not deleted", `return !${table}`);
     });
 
     await test("nothing threw along the way", () => {
