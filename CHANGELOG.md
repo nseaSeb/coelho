@@ -36,6 +36,38 @@ typed in two paragraphs is two queries rather than one — the same four
 characters in another place are not the same place, and the positions are
 what an insertion replaces.
 
+### What else a review found in the seam
+
+Five more, all of them in what the editor decides a query is:
+
+- **A line break before the trigger closed the list.** Everything between the
+  trigger and the start of the block is read as text, and a line break is not
+  text — it is a node, and it reads as one character that is not a space.
+  Taking that for the middle of a word meant no list ever opened after
+  Shift+Enter, after an image, or after a mention already put in, while the
+  same characters at the start of a paragraph opened one.
+- **The list opened inside a code block**, where `@Override` and `@media` are
+  code and a list is in the way.
+- **A document replaced under an open list** — a schema changing, a rebuild —
+  left the positions pointing into a document that was gone. The list is told
+  it is over now, rather than answering later against offsets that mean
+  something else.
+- **The triggers taken away under an open list** left it drawn with nothing
+  to close it, and kept a range that could still be replaced against.
+- **A position counted from the window** rather than back from the caret drifts
+  by two for every inline node with content between them. It is counted back
+  from the caret now, which is exact whatever the text is made of.
+
+And two suggestions can no longer share a trigger: the editor looks for the
+character rather than the event behind it, so the second could never have
+been pushed.
+
+Blur is the one the editor cannot answer, and the documentation says so: a
+click elsewhere on the page changes nothing about the document, and the
+editor cannot tell it from a click on the list itself — which it has to
+survive for the insertion to have a range to replace. Closing the list on
+blur is the application's.
+
 ### An attachment has one name
 
 The block form built its label from the filename attribute directly where

@@ -1342,6 +1342,45 @@ const run = async () => {
       await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
     });
 
+    await test("a line break before the trigger still starts a word", async () => {
+      // Everything between the trigger and the start of the block is read as
+      // text, and a line break is not text: it is a node, and it reads as one
+      // character that is not a space. Taking that for the middle of a word
+      // is a list that never opens after Shift+Enter — or after an image, or
+      // after a mention already put in — while the same characters at the
+      // start of a paragraph open one.
+      await typeInEditor(page, "hi");
+      await page.keyboard.press("Shift+Enter");
+      await page.keyboard.type("@ad");
+
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      assert.ok(
+        (await page.textContent("#mentions")).includes("@ada"),
+        "a line break before the trigger closed the list"
+      );
+
+      await page.keyboard.press("Escape");
+    });
+
+    await test("no list is offered inside a code block", async () => {
+      // `@Override`, `@media`, `@property`: a code block is a text block, and
+      // a list offered there is a list in the way.
+      // Typed into the block rather than over it: a select-all spans the
+      // whole document, and replacing that drops the code block along with
+      // its text — the list would then open in a paragraph and be right to.
+      await typeInEditor(page, "x");
+      await page.click('[data-coelho-command="code_block"]');
+      await settle(page);
+      await page.keyboard.type("@ada");
+      await settle(page);
+
+      assert.ok(!(await page.$("#mentions")), "the list opened inside a code block");
+
+      await page.click('[data-coelho-command="code_block"]');
+      await settle(page);
+    });
+
     await test("the same query in another paragraph is another query", async () => {
       // The positions are what an insertion replaces, and they are not the
       // query text: `@ada` typed twice is the same four characters in two

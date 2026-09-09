@@ -1280,6 +1280,11 @@ const reinterpret = (doc, from, to) => {
 // the writer is typing, it started after that.
 const LEAF = "￼";
 
+// What can sit before a trigger and still leave it starting a word. A leaf —
+// a line break, an image, a mention already put in — ends a word as surely
+// as a space does, and reads as one character here.
+const BOUNDARY = /[\s￼]/;
+
 // What the writer has typed since a trigger character, when there is such a
 // thing. Three conditions, and each of them is a way a query ends: the
 // selection is a caret in a text block, the trigger starts a word — `a@b` is
@@ -1289,6 +1294,11 @@ const suggestionAt = (state, triggers) => {
   const { $from, empty } = state.selection;
 
   if (!empty || !$from.parent.isTextblock) return null;
+
+  // A code block is a text block, and `@Override`, `@media` and `@property`
+  // are all code. A list offered there is a list in the way, and a query
+  // pushed on every keystroke of it is a round trip nobody asked for.
+  if ($from.parent.type.spec.code) return null;
 
   let found = null;
 
@@ -1303,13 +1313,19 @@ const suggestionAt = (state, triggers) => {
 
     if (index === -1) continue;
     if (index === 0 && start > 0) continue;
-    if (index > 0 && !/\s/.test(before[index - 1])) continue;
+    if (index > 0 && !BOUNDARY.test(before[index - 1])) continue;
 
     const query = before.slice(index + trigger.length);
 
     if (query.length > max || /\s/.test(query) || query.includes(LEAF)) continue;
 
-    const from = $from.start() + start + index;
+    // Counted back from the caret rather than forward from the window: the
+    // trigger and the query are text, and text is one position per
+    // character, so this is exact whatever sits before them. Adding up the
+    // string's own indices is not — `textBetween` reads through an inline
+    // node that has content without its two boundary tokens, and the
+    // positions drift by two for each one.
+    const from = $from.pos - trigger.length - query.length;
 
     // Two triggers can both match; the writer is answering the nearer one.
     if (!found || from > found.from) found = { trigger, event, query, from, to: $from.pos };
@@ -1423,8 +1439,25 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // to close it with. A selection that moves ends a query as surely as
       // a space does, so this runs on every transaction rather than on the
       // ones that changed the document.
+      // Said when the positions stop meaning anything: a document replaced
+      // under the list, or the triggers taken away. Without it the
+      // application's list stays on the page with nothing to close it, and
+      // an insertion answers it against positions in a document that is
+      // gone — which is a `RangeError` out of the event handler, or worse,
+      // text replaced somewhere the writer was not looking.
+      this.endSuggestion = () => {
+        const was = this._suggestion;
+
+        this._suggestion = null;
+
+        if (was) ctx.push(was.event, { trigger: was.trigger, query: null, rect: null });
+      };
+
       this.refreshSuggestion = () => {
-        if (!this._suggest.length) return;
+        if (!this._suggest.length) {
+          this.endSuggestion();
+          return;
+        }
 
         const found = suggestionAt(this._view.state, this._suggest);
         const was = this._suggestion;
@@ -1617,6 +1650,10 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         this.readFieldLabels();
         this.findLinkField();
         this.refreshToolbar();
+        // `updateState` is not a transaction, so nothing above ran the
+        // suggestion refresh, and the positions it holds are in the document
+        // that was just replaced.
+        this.endSuggestion();
         // The input still holds the document as it was written under the old
         // schema. Leaving it there would show one thing and post another, and
         // the next keystroke would post whatever the rebuild had dropped.
@@ -1951,8 +1988,10 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         // answering — and it is that longer query they meant to be rid of.
         const query = replace === "query" ? this._suggestion : null;
 
+        const size = state.doc.content.size;
+
         const transaction = query
-          ? state.tr.replaceWith(query.from, Math.min(query.to, state.doc.content.size), node)
+          ? state.tr.replaceWith(Math.min(query.from, size), Math.min(query.to, size), node)
           : this._view.hasFocus()
             ? state.tr.replaceSelectionWith(node)
             : state.tr.insert(state.doc.content.size, node);

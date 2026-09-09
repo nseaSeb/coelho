@@ -56,6 +56,14 @@ defmodule Coelho.SuggestTest do
       end
     end
 
+    test "refuses two suggestions sharing a trigger" do
+      # The editor looks for the character, not for the event behind it, so
+      # the second of them could never be pushed.
+      assert_raise ArgumentError, ~r/share the trigger/, fn ->
+        render(%{suggest: [{"@", event: "mention"}, {"@", event: "emoji"}]})
+      end
+    end
+
     test "says what the shape is when it is given something else" do
       assert_raise ArgumentError, ~r/a trigger and its options/, fn ->
         render(%{suggest: ["@"]})

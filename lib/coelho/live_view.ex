@@ -560,6 +560,11 @@ if Code.ensure_loaded?(Phoenix.Component) do
       Answer with `Coelho.LiveView.insert_node/3` and `replace: :query`: the
       node goes where `@ali` is, and takes the typing away with it.
 
+      **Close the list on blur yourself.** Clicking away from the editor
+      changes nothing about the document, so there is no `nil` query coming:
+      the editor cannot tell that from the writer clicking the list itself,
+      which it must survive for the insertion to have a range to replace.
+
       A seam rather than a command, and deliberately so: what the list holds,
       how it filters and what a click does are the application's, and no
       schema can be asked about them. `CONTRIBUTING.md` has the rule.
@@ -577,7 +582,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def coelho_editor(assigns) do
       schema = assigns.document_schema || Schema.default()
       validate_debounce!(assigns.debounce)
-      suggest = Enum.map(assigns.suggest, &suggestion!/1)
+      suggest = assigns.suggest |> Enum.map(&suggestion!/1) |> one_each!()
       {name, value, input_id} = input_for!(assigns)
       toolbar = Enum.filter(assigns.toolbar, &supported?(schema, &1))
 
@@ -734,6 +739,24 @@ if Code.ensure_loaded?(Phoenix.Component) do
       raise ArgumentError,
             "a suggestion is a trigger and its options, as in " <>
               "{\"@\", event: \"mention\"}, got #{inspect(other)}"
+    end
+
+    # The editor looks for a trigger and not for the event behind it, so the
+    # second suggestion naming a character the first already named is one
+    # that can never be pushed — the same silence this refuses everywhere
+    # else.
+    defp one_each!(suggestions) do
+      triggers = Enum.map(suggestions, & &1.trigger)
+
+      case triggers -- Enum.uniq(triggers) do
+        [] ->
+          suggestions
+
+        [repeated | _] ->
+          raise ArgumentError,
+                "two suggestions share the trigger #{inspect(repeated)}, and only the " <>
+                  "first of them could ever be pushed"
+      end
     end
 
     defp validate_debounce!(nil), do: :ok
