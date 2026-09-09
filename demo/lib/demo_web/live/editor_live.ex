@@ -48,6 +48,8 @@ defmodule DemoWeb.EditorLive do
      )
      |> assign_document(post.body)
      |> assign(:errors, [])
+     |> assign(:mentions, [])
+     |> assign(:mention_rect, nil)
      |> assign(:note, note_document("note"))
      |> assign(:note_open, true)
      |> assign(:note_generation, 1)
@@ -143,6 +145,42 @@ defmodule DemoWeb.EditorLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # The seam, in full. The library says a trigger was typed and what has been
+  # typed after it; which names those are, how they are filtered and what a
+  # click does are this application's, and no schema could have been asked.
+  @people [
+    %{id: 7, label: "@ada"},
+    %{id: 8, label: "@alan"},
+    %{id: 9, label: "@grace"}
+  ]
+
+  def handle_event("mention_query", %{"query" => nil}, socket) do
+    {:noreply, assign(socket, :mentions, [])}
+  end
+
+  def handle_event("mention_query", %{"query" => query, "rect" => rect}, socket) do
+    matching =
+      Enum.filter(@people, &String.starts_with?(&1.label, "@" <> String.downcase(query)))
+
+    {:noreply,
+     socket
+     |> assign(:mentions, matching)
+     |> assign(:mention_rect, rect || %{"bottom" => 0, "left" => 0})}
+  end
+
+  def handle_event("mention_pick", %{"id" => id, "label" => label}, socket) do
+    # `replace: :query` is what takes the `@ad` away with the node: without
+    # it the writer is left to delete their own typing.
+    {:noreply,
+     socket
+     |> assign(:mentions, [])
+     |> insert_node(
+       %{"type" => "mention", "attrs" => %{"user_id" => String.to_integer(id), "label" => label}},
+       id: editor_id(socket.assigns.form[:body]),
+       replace: :query
+     )}
   end
 
   def handle_event("mention", _params, socket) do
@@ -357,7 +395,26 @@ defmodule DemoWeb.EditorLive do
                 ]
             }
             upload={@uploads.attachment}
+            suggest={[{"@", event: "mention_query"}]}
           />
+
+          <ul
+            :if={@mentions != []}
+            id="mentions"
+            class="mentions"
+            style={"top: #{@mention_rect["bottom"]}px; left: #{@mention_rect["left"]}px"}
+          >
+            <li :for={person <- @mentions}>
+              <button
+                type="button"
+                phx-click="mention_pick"
+                phx-value-id={person.id}
+                phx-value-label={person.label}
+              >
+                {person.label}
+              </button>
+            </li>
+          </ul>
 
           <p class="hint">
             Drop or paste a file into the editor to attach it, or

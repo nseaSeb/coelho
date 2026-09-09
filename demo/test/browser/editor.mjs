@@ -1310,6 +1310,47 @@ const run = async () => {
       await settle(page);
     });
 
+    await test("a trigger opens a list the application draws, and a pick replaces the typing", async () => {
+      // The seam in full, end to end: the library says a trigger was typed
+      // and what follows it, the application decides what that matches, and
+      // `replace: :query` is what takes the typing away with the node. The
+      // wait is on the list appearing rather than on a keystroke, because
+      // what the trigger does is push an event and a round trip is not a
+      // keystroke.
+      await typeInEditor(page, "hi @ad");
+
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      assert.ok(
+        (await page.textContent("#mentions")).includes("@ada"),
+        "the list did not offer the name being typed"
+      );
+
+      await page.click("#mentions button");
+
+      await documentEventually(
+        page,
+        "the mention never replaced what was typed",
+        `return (() => {
+           const inline = doc.content.flatMap((block) => block.content ?? []);
+           const text = inline.map((node) => node.text ?? "").join("");
+
+           return inline.some((node) => node.type === "mention") && !text.includes("@");
+         })()`
+      );
+
+      await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
+    });
+
+    await test("a space ends the query, which is what closes the list", async () => {
+      await typeInEditor(page, "hi @ad");
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+
+      await page.keyboard.type(" ");
+
+      await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
+    });
+
     await test("nothing threw along the way", () => {
       assert.deepEqual(errors, []);
     });

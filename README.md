@@ -605,6 +605,57 @@ the same number from the same place. Or let the component do it —
 number rendered server side so an existing document does not read zero until
 the hook has started.
 
+### A list the writer opens by typing
+
+A mention, a slash command, an emoji picker: the writer types a character and
+chooses from a list. The list is the application's — what it holds, how it
+filters, what a click does — so the library's half is to say what is being
+typed and to take it away again when something is chosen.
+
+```heex
+<.coelho_editor field={@form[:body]} suggest={[{"@", event: "mention_query"}]} />
+```
+
+```elixir
+def handle_event("mention_query", %{"query" => nil}, socket) do
+  {:noreply, assign(socket, :mentions, [])}
+end
+
+def handle_event("mention_query", %{"query" => query, "rect" => rect}, socket) do
+  {:noreply,
+   socket
+   |> assign(:mentions, MyApp.People.matching(query))
+   |> assign(:mention_rect, rect)}
+end
+
+def handle_event("mention_pick", %{"id" => id, "label" => label}, socket) do
+  {:noreply,
+   socket
+   |> assign(:mentions, [])
+   |> Coelho.LiveView.insert_node(
+     %{"type" => "mention", "attrs" => %{"user_id" => id, "label" => label}},
+     id: Coelho.LiveView.editor_id(socket.assigns.form[:body]),
+     replace: :query
+   )}
+end
+```
+
+A trigger has to start a word, so `a@b` is an address and not a mention, and
+the query ends at the first space. `"rect"` is the caret's place in the
+viewport, which is what a `position: fixed` list is placed by.
+
+**`replace: :query` is the half that is easy to miss.** Without it the node
+goes in beside the `@ad` the writer typed and they are left to delete it. The
+range replaced is the one the editor holds when the node arrives rather than
+the one that was pushed — a writer who kept typing while the list was open
+still loses exactly their query.
+
+The node itself is an ordinary one, declared the way [a variable
+is](#a-variable-and-anything-else-that-must-not-be-split): inline, void, and
+carrying the attributes your application needs. Nothing about the list
+reaches the schema, which is the point — a schema cannot be asked what a
+name matches.
+
 ### Not losing the last keystrokes
 
 The editor writes into its hidden input and lets `phx-change` carry it, which

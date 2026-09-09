@@ -202,6 +202,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
       * `:preview` — for the editor's eyes only: an attachment's URL, which
         the document does not carry and the renderer resolves again on every
         render.
+      * `:replace` — `:query` puts the node where the writer's `@name` is,
+        which is what a suggestion list settles. Without it the node goes in
+        beside what they typed and they have to delete it themselves. See
+        `:suggest` on `coelho_editor/1`. The range is the one the editor
+        holds *now* rather than the one that was pushed, so a writer who
+        kept typing while the list was open still loses exactly their query.
 
     """
     @spec insert_node(Phoenix.LiveView.Socket.t(), map(), keyword()) ::
@@ -210,8 +216,19 @@ if Code.ensure_loaded?(Phoenix.Component) do
       Phoenix.LiveView.push_event(socket, "coelho:insert", %{
         node: node,
         id: Keyword.get(opts, :id),
-        preview: Keyword.get(opts, :preview)
+        preview: Keyword.get(opts, :preview),
+        replace: replace_option!(Keyword.get(opts, :replace))
       })
+    end
+
+    defp replace_option!(nil), do: nil
+    defp replace_option!(:query), do: "query"
+
+    defp replace_option!(other) do
+      raise ArgumentError,
+            "replace takes :query or nothing, got #{inspect(other)}. It names what the " <>
+              "node goes in place of, and a suggestion's query is the only range the " <>
+              "editor holds"
     end
 
     @doc """
@@ -525,6 +542,34 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     )
 
+    attr(:suggest, :list,
+      default: [],
+      doc: """
+      Trigger characters that make the editor say what the writer is typing
+      after one, for a list the application draws:
+
+          suggest={[{"@", event: "mention"}, {"/", event: "slash_command"}]}
+
+      A trigger has to start a word — `a@b` is an address — and the query
+      ends at the first space. `handle_event/3` receives
+      `%{"trigger" => "@", "query" => "ali"}` as it is typed, and
+      `%{"query" => nil}` when there is no longer one, which is what closes
+      the list. `"rect"` carries the caret's place in the viewport, for
+      putting the list beside it.
+
+      Answer with `Coelho.LiveView.insert_node/3` and `replace: :query`: the
+      node goes where `@ali` is, and takes the typing away with it.
+
+      A seam rather than a command, and deliberately so: what the list holds,
+      how it filters and what a click does are the application's, and no
+      schema can be asked about them. `CONTRIBUTING.md` has the rule.
+
+      Options per entry: `:event`, the name to push, required; and `:max`,
+      the longest query pushed, 50 characters by default — past that the
+      writer is not choosing from a list any more
+      """
+    )
+
     attr(:placeholder, :string, default: nil)
     attr(:class, :string, default: nil)
     attr(:rest, :global)
@@ -532,6 +577,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def coelho_editor(assigns) do
       schema = assigns.document_schema || Schema.default()
       validate_debounce!(assigns.debounce)
+      suggest = Enum.map(assigns.suggest, &suggestion!/1)
       {name, value, input_id} = input_for!(assigns)
       toolbar = Enum.filter(assigns.toolbar, &supported?(schema, &1))
 
@@ -558,6 +604,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
                icons_fingerprint(assigns.icons)}
             )
         )
+        |> assign(:suggest_json, suggest != [] && JSON.encode!(suggest))
         |> assign(:value_json, value_json(value, schema))
         |> assign(:count, initial_count(value))
         |> assign(:toolbar, toolbar)
@@ -576,6 +623,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
         data-coelho-upload={@upload && @upload.name}
         data-coelho-maxlength={@maxlength}
         data-coelho-field-labels={@field_labels_json}
+        data-coelho-suggest={@suggest_json}
         data-coelho-flush-event={@flush_event}
         data-coelho-flush-token={@flush_token && to_string(@flush_token)}
         {@rest}
@@ -656,6 +704,38 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # a blur event on the element carrying the attribute, a hidden input never
     # blurs, and the editor would go quiet for the life of the page with
     # nothing in the console. Refused rather than rendered.
+    # One character, because the editor looks back for it a character at a
+    # time, and a name to push it under. Refused here rather than ignored: a
+    # trigger nothing watches for is a list that never opens, with nothing
+    # said anywhere.
+    defp suggestion!({trigger, opts}) when is_binary(trigger) and is_list(opts) do
+      event = Keyword.get(opts, :event)
+      max = Keyword.get(opts, :max, 50)
+
+      cond do
+        String.length(trigger) != 1 ->
+          raise ArgumentError, "a suggestion trigger is one character, got #{inspect(trigger)}"
+
+        not is_binary(event) ->
+          raise ArgumentError,
+                "a suggestion needs an event to push, as in " <>
+                  "{#{inspect(trigger)}, event: \"mention\"}"
+
+        not (is_integer(max) and max > 0) ->
+          raise ArgumentError,
+                "a suggestion's :max is a number of characters, got #{inspect(max)}"
+
+        true ->
+          %{trigger: trigger, event: event, max: max}
+      end
+    end
+
+    defp suggestion!(other) do
+      raise ArgumentError,
+            "a suggestion is a trigger and its options, as in " <>
+              "{\"@\", event: \"mention\"}, got #{inspect(other)}"
+    end
+
     defp validate_debounce!(nil), do: :ok
 
     defp validate_debounce!(milliseconds) when is_integer(milliseconds) and milliseconds >= 0,

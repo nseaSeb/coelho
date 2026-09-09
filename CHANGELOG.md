@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### A list the writer opens by typing
+
+The seam `CONTRIBUTING.md` said a suggestion list would get instead of a
+command now exists, and mentions are what it is for.
+
+```heex
+<.coelho_editor field={@form[:body]} suggest={[{"@", event: "mention_query"}]} />
+```
+
+The editor pushes that event with what is being typed after the trigger, and
+pushes it again with `"query" => nil` when there is no longer a query, which
+is what closes the list. `"rect"` carries the caret's place in the viewport,
+for putting the list beside it. A trigger has to start a word — `a@b` is an
+address — and the query ends at the first space.
+
+`Coelho.LiveView.insert_node/3` takes **`replace: :query`**, and that is the
+half that is easy to miss: without it the node goes in beside the `@ad` the
+writer typed and they are left to delete it themselves. The range replaced is
+the one the editor holds when the node arrives rather than the one that was
+pushed, so a writer who kept typing while the list was open still loses
+exactly their query.
+
+Nothing about the list reaches the schema, which is the point. What it holds,
+how it filters and what a click does are the application's, and a schema
+cannot be asked what a name matches. The node it settles on is an ordinary
+one, declared the way a variable is.
+
+The demo does the whole thing, and the browser suite drives it in all three
+engines: typing `@ad` opens a list, picking `@ada` replaces the typing with
+the node, and a space closes the list without choosing anything.
+
 ### Tables, on the server
 
 ```elixir

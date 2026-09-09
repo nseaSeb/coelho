@@ -1275,6 +1275,63 @@ const reinterpret = (doc, from, to) => {
 
 // `nodes` and `marks` say how a node *looks*; `nodeViews` say how it
 // *behaves* — drag handles on an image, a menu on an embed. Both are
+// An inline node that is not text — an image, a mention already put in —
+// stands for one character here, and it is one no query may hold: whatever
+// the writer is typing, it started after that.
+const LEAF = "￼";
+
+// What the writer has typed since a trigger character, when there is such a
+// thing. Three conditions, and each of them is a way a query ends: the
+// selection is a caret in a text block, the trigger starts a word — `a@b` is
+// an address, not a mention — and nothing since the trigger is a space,
+// because a space is the writer going back to writing.
+const suggestionAt = (state, triggers) => {
+  const { $from, empty } = state.selection;
+
+  if (!empty || !$from.parent.isTextblock) return null;
+
+  let found = null;
+
+  for (const { trigger, event, max } of triggers) {
+    // One character further back than the longest query allowed, and that
+    // one character is what makes the question answerable: without it a
+    // trigger sitting at the window's edge could be starting a word or
+    // sitting inside one, and there is no telling which.
+    const start = Math.max(0, $from.parentOffset - max - trigger.length - 1);
+    const before = $from.parent.textBetween(start, $from.parentOffset, null, LEAF);
+    const index = before.lastIndexOf(trigger);
+
+    if (index === -1) continue;
+    if (index === 0 && start > 0) continue;
+    if (index > 0 && !/\s/.test(before[index - 1])) continue;
+
+    const query = before.slice(index + trigger.length);
+
+    if (query.length > max || /\s/.test(query) || query.includes(LEAF)) continue;
+
+    const from = $from.start() + start + index;
+
+    // Two triggers can both match; the writer is answering the nearer one.
+    if (!found || from > found.from) found = { trigger, event, query, from, to: $from.pos };
+  }
+
+  return found;
+};
+
+// Where to draw a list, in the coordinates a fixed element is placed in.
+const caretRect = (view, pos) => {
+  try {
+    const { top, bottom, left, right } = view.coordsAtPos(pos);
+
+    return { top, bottom, left, right };
+  } catch (_error) {
+    // A position the view cannot place — the DOM a frame behind the
+    // document, a view being torn down — is not worth losing the event for.
+    // An application that has nowhere to put the list can still filter it.
+    return null;
+  }
+};
+
 // functions and neither can come from Elixir, which is why they are taken
 // here rather than exported with the schema.
 export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
@@ -1352,6 +1409,41 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       this.says = (key, fallback) =>
         key in this._fieldLabels ? this._fieldLabels[key] : fallback;
 
+      this.readSuggest = () => {
+        this._suggest = JSON.parse(el.dataset.coelhoSuggest || "[]");
+      };
+
+      this.readSuggest();
+      this._suggestion = null;
+
+      // Pushed whenever what the writer is typing after a trigger changes,
+      // and pushed again with `query: null` when there is no longer one:
+      // an application draws its list from this event and has nothing else
+      // to close it with. A selection that moves ends a query as surely as
+      // a space does, so this runs on every transaction rather than on the
+      // ones that changed the document.
+      this.refreshSuggestion = () => {
+        if (!this._suggest.length) return;
+
+        const found = suggestionAt(this._view.state, this._suggest);
+        const was = this._suggestion;
+
+        if (found && was && found.event === was.event && found.query === was.query) return;
+        if (!found && !was) return;
+
+        this._suggestion = found;
+
+        if (found) {
+          ctx.push(found.event, {
+            trigger: found.trigger,
+            query: found.query,
+            rect: caretRect(this._view, found.from)
+          });
+        } else {
+          ctx.push(was.event, { trigger: was.trigger, query: null, rect: null });
+        }
+      };
+
       this._flushEvent = el.dataset.coelhoFlushEvent;
       this._flushToken = el.dataset.coelhoFlushToken ?? null;
       this._name = input?.name ?? null;
@@ -1395,6 +1487,8 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
           // never quite equals what the editor wrote, and the two would
           // trade rounds forever.
           if (transaction.docChanged && !transaction.getMeta(REMOTE)) this.syncInput();
+
+          this.refreshSuggestion();
         }
       });
 
@@ -1814,7 +1908,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       // Anything the server decides to put in the document arrives here: an
       // attachment it has just stored, a mention it has just resolved, an
       // embed. The node is the server's, built against the same schema.
-      this.insertNode = (nodeJSON, preview, { focus = true } = {}) => {
+      this.insertNode = (nodeJSON, preview, { focus = true, replace = null } = {}) => {
         // A node can arrive after the editor is gone: a server round trip,
         // or a capture giving up. There is no view left to dispatch into.
         if (this._destroyed) return;
@@ -1832,17 +1926,26 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         if (focus) this._view.focus();
 
         const { state } = this._view;
-        const transaction = this._view.hasFocus()
-          ? state.tr.replaceSelectionWith(node)
-          : state.tr.insert(state.doc.content.size, node);
+
+        // What the writer typed to open the list goes with the node that
+        // closed it. The range is the one held now rather than the one that
+        // was pushed, because they kept typing while the server was
+        // answering — and it is that longer query they meant to be rid of.
+        const query = replace === "query" ? this._suggestion : null;
+
+        const transaction = query
+          ? state.tr.replaceWith(query.from, Math.min(query.to, state.doc.content.size), node)
+          : this._view.hasFocus()
+            ? state.tr.replaceSelectionWith(node)
+            : state.tr.insert(state.doc.content.size, node);
 
         this._view.dispatch(transaction.scrollIntoView());
       };
 
       // push_event reaches the whole page, so an insertion meant for one
       // editor would otherwise land in every editor on it.
-      ctx.handle("coelho:insert", ({ node, id, preview }) => {
-        if (id == null || id === el.id) this.insertNode(node, preview);
+      ctx.handle("coelho:insert", ({ node, id, preview, replace }) => {
+        if (id == null || id === el.id) this.insertNode(node, preview, { replace });
       });
 
       const uploadName = el.dataset.coelhoUpload;
@@ -1966,6 +2069,7 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       if (ctx.el.dataset.coelhoToolbarVersion !== this._toolbarVersion) {
         this._toolbarVersion = ctx.el.dataset.coelhoToolbarVersion;
         this.readFieldLabels();
+        this.readSuggest();
         this.findLinkField();
         this.refreshToolbar();
       }
