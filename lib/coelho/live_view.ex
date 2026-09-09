@@ -191,14 +191,17 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
         socket
         |> Coelho.LiveView.insert_node(Coelho.Attachment.to_node(attachment),
-             id: editor_id(@form[:body]),
+             editor: @form[:body],
              preview: MyApp.Uploads.url(attachment.key))
 
     ## Options
 
-      * `:id` — which editor to insert into, as `editor_id/1` returns it.
-        `push_event/3` reaches the whole page, so **without this every editor
-        on it inserts the node**, which is only ever right when there is one.
+      * `:editor` — which editor to insert into, as the form field or the
+        name the component was rendered for. `push_event/3` reaches the
+        whole page, so **without this every editor on it inserts the node**,
+        which is only ever right when there is one.
+      * `:id` — the same, as the DOM id `editor_id/1` derives, for an editor
+        whose id was given by hand.
       * `:preview` — for the editor's eyes only: an attachment's URL, which
         the document does not carry and the renderer resolves again on every
         render.
@@ -215,10 +218,23 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def insert_node(socket, node, opts \\ []) when is_map(node) do
       Phoenix.LiveView.push_event(socket, "coelho:insert", %{
         node: node,
-        id: Keyword.get(opts, :id),
+        id: Keyword.get(opts, :id) || target_id(Keyword.get(opts, :editor)),
         preview: Keyword.get(opts, :preview),
         replace: replace_option!(Keyword.get(opts, :replace))
       })
+    end
+
+    # The field or the name, the way `coelho_editor/1` took it, so that the
+    # derivation of an id lives in one place and an application never has to
+    # spell it.
+    defp target_id(nil), do: nil
+    defp target_id(%Phoenix.HTML.FormField{} = field), do: editor_id(field)
+    defp target_id(name) when is_binary(name), do: editor_id(name)
+
+    defp target_id(other) do
+      raise ArgumentError,
+            "editor takes the form field or the name the editor was rendered for, " <>
+              "got #{inspect(other)}"
     end
 
     defp replace_option!(nil), do: nil

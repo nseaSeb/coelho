@@ -2,167 +2,108 @@
 
 ## Unreleased
 
-### Clicking away closes the list, and there is nothing to write for it
+Tables, a list the writer opens by typing, and the ground both were built on:
+the places where a term this library did not build reaches code that does
+something with it, written down and, where it mattered most, held to what
+they promised by a property. Eight defects went with them, all of the same
+shape — a value nobody validated, trusted anyway — and three of them were
+found by the properties on their first run.
 
-A click elsewhere on the page changes nothing about the document, so no
-`nil` query was coming and the list stayed drawn until the writer happened
-to type again. The editor says so itself now.
-
-The reason it was left to the application at first is real, and it is why
-this took a shape rather than a line: a click *on* the list blurs the editor
-on the way down and lands on the way up, so closing at once takes the list
-out from under the mouse and the choice is never made. Two things were being
-held as one and are now apart — what the application has drawn, and the
-range an insertion replaces. A blur takes down the drawing after a moment
-and keeps the range, because the click that caused it may be the one
-choosing from the list, and the node then has to land on the query rather
-than beside it.
-
-A list dismissed that way stays dismissed until the writer types: the query
-is what opens one.
-
-### Tables, in the editor
-
-Tab and Shift+Tab move from cell to cell, a drag selects a rectangle of them,
-and five commands act on the table the caret is in: `table_row_after`,
-`table_row_delete`, `table_column_after`, `table_column_delete` and
-`table_delete`. Filtered like every other command — a schema without tables
-draws none of them — and each does something rather than turning something
-on, so none reports a pressed state.
-
-Putting a table *in* is not among them, and that is the rule in
-`CONTRIBUTING.md` rather than an omission: how many rows and how many columns
-is a decision no schema can be asked for. It goes through
-`Coelho.LiveView.insert_node/3` like every other decision an application owns,
-and the demo shows the whole of it.
-
-`prosemirror-tables` joins the browser packages `mix coelho.install` puts in.
-An application that never declares tables carries it and never runs it: the
-plugin is added only where the schema has them.
-
-Two things a table needs cannot come from Elixir and are written in the hook
-beside the rest: the role `prosemirror-tables` recognises each of the four
-nodes by, and a cell's own DOM. A cell's Elixir render is a function — it
-writes a span only when there is one to write — and a function does not cross
-to the browser. Both halves are there, `toDOM` and `parseDOM`: the editor
-serialises a copied selection through one and reads it back through the
-other, so a span written by only one of them is a span lost on copy and
-paste.
-
-### A list the writer opens by typing
-
-The seam `CONTRIBUTING.md` said a suggestion list would get instead of a
-command now exists, and mentions are what it is for.
-
-```heex
-<.coelho_editor field={@form[:body]} suggest={[{"@", event: "mention_query"}]} />
-```
-
-The editor pushes that event with what is being typed after the trigger, and
-pushes it again with `"query" => nil` when there is no longer a query, which
-is what closes the list. `"rect"` carries the caret's place in the viewport,
-for putting the list beside it. A trigger has to start a word — `a@b` is an
-address — and the query ends at the first space.
-
-`Coelho.LiveView.insert_node/3` takes **`replace: :query`**, and that is the
-half that is easy to miss: without it the node goes in beside the `@ad` the
-writer typed and they are left to delete it themselves. The range replaced is
-the one the editor holds when the node arrives rather than the one that was
-pushed, so a writer who kept typing while the list was open still loses
-exactly their query.
-
-Nothing about the list reaches the schema, which is the point. What it holds,
-how it filters and what a click does are the application's, and a schema
-cannot be asked what a name matches. The node it settles on is an ordinary
-one, declared the way a variable is.
-
-The demo does the whole thing, and the browser suite drives it in all three
-engines: typing `@ad` opens a list, picking `@ada` replaces the typing with
-the node, a space closes the list without choosing anything, and `@ada`
-typed in two paragraphs is two queries rather than one — the same four
-characters in another place are not the same place, and the positions are
-what an insertion replaces.
-
-### A table a browser wrote imports without a word
-
-Every table a browser serialises carries a `tbody`, and a word processor adds
-a `colgroup` besides. Those hold nothing of their own — their rows lift
-straight through — so an import reported a loss on every real table there
-was, on the one path tables were added for. `tbody`, `thead`, `tfoot`,
-`colgroup` and `col` say nothing now. A `caption` still does: what it holds
-is text, and the text is lost.
-
-### What else a review found in the seam
-
-Five more, all of them in what the editor decides a query is:
-
-- **A line break before the trigger closed the list.** Everything between the
-  trigger and the start of the block is read as text, and a line break is not
-  text — it is a node, and it reads as one character that is not a space.
-  Taking that for the middle of a word meant no list ever opened after
-  Shift+Enter, after an image, or after a mention already put in, while the
-  same characters at the start of a paragraph opened one.
-- **The list opened inside a code block**, where `@Override` and `@media` are
-  code and a list is in the way.
-- **A document replaced under an open list** — a schema changing, a rebuild —
-  left the positions pointing into a document that was gone. The list is told
-  it is over now, rather than answering later against offsets that mean
-  something else.
-- **The triggers taken away under an open list** left it drawn with nothing
-  to close it, and kept a range that could still be replaced against.
-- **A position counted from the window** rather than back from the caret drifts
-  by two for every inline node with content between them. It is counted back
-  from the caret now, which is exact whatever the text is made of.
-
-And two suggestions can no longer share a trigger: the editor looks for the
-character rather than the event behind it, so the second could never have
-been pushed.
-
-Blur is the one the editor cannot answer, and the documentation says so: a
-click elsewhere on the page changes nothing about the document, and the
-editor cannot tell it from a click on the list itself — which it has to
-survive for the insertion to have a range to replace. Closing the list on
-blur is the application's.
-
-### An attachment has one name
-
-The block form built its label from the filename attribute directly where
-the inline form and the text extraction both ask `label/1` for it, so a
-stored row whose filename is the empty string — which the schema accepts —
-rendered an anchor with no text on the page while the inline form fell back
-to the key and said something. All three ask the same question now, which is
-the second time this month that turned out to be the fix.
-
-### Tables, on the server
+### Tables
 
 ```elixir
 Coelho.Schema.Default.build(tables: true)
 ```
 
 Four nodes — `table`, `table_row`, `table_cell`, `table_header` — with
-`colspan` and `rowspan` on the two kinds of cell, and blocks rather than
-text inside one, so a paragraph, a list or a quote goes in a cell.
+`colspan` and `rowspan` on the two kinds of cell, and blocks rather than text
+inside one, so a paragraph, a list or a quote goes in a cell. Off unless
+asked for, so nothing already declared moves.
 
-Off unless asked for, and the reason is the browser rather than the server.
-Everything a stored table needs is here: it validates, it renders to
-`<table>`, it extracts to text a row at a time, and it **survives an import
-that used to drop it** — `from_html/3` warned about an unknown `table` and
-handed back the document without it, which is the one shape a migration
-cannot afford to lose silently. What is not here is cell navigation and the
-row and column commands, so a table is easier to write in the HTML being
-migrated than in the editor it is migrated to. That half is
-`prosemirror-tables` and is not wired up.
+On the server, a table validates, renders to `<table>`, extracts to text a
+row at a time, and **survives an import that used to drop it**: `from_html/3`
+warned about an unknown `table` and handed the document back without it,
+which is the one shape a migration cannot afford to lose silently. The
+wrappers a browser writes — `tbody`, `thead`, `tfoot`, `colgroup`, `col` —
+hold nothing of their own and say nothing; a `caption` still warns, because
+what it holds is text and the text is lost.
 
-Nothing in the library changed to make this work, which is the part worth
-knowing: the content expressions a table needs — `table_row+`,
-`(table_cell | table_header)+`, `block+` — were already expressible, and so
-was everything else. An application that wants a different table today can
-declare one with `Coelho.Schema.extend/2` and get the same treatment.
+In the editor, Tab and Shift+Tab move from cell to cell, a drag selects a
+rectangle of them, and five commands act on the table the caret is in:
+`table_row_after`, `table_row_delete`, `table_column_after`,
+`table_column_delete` and `table_delete`. Filtered like every other command —
+a schema without tables draws none of them — and each does something rather
+than turning something on, so none reports a pressed state.
+
+Putting a table *in* is not among them, and that is the rule in
+`CONTRIBUTING.md` rather than an omission: how many rows and how many columns
+is a decision no schema can be asked for. It goes through
+`Coelho.LiveView.insert_node/3` like every other decision an application
+owns, and the demo shows the whole of it.
 
 A span is a count of cells, bounded at 1000, refused when it is anything
-else, and left out of the markup when it is one. The same pair a heading's
-level already had, because a stored row was written under whatever schema
-was in force then.
+else, and left out of the markup when it is one — the pair a heading's level
+already had, because a stored row was written under whatever schema was in
+force then.
+
+`prosemirror-tables` joins the browser packages `mix coelho.install` puts in.
+An application that never declares tables carries it and never runs it: the
+plugin is added only where the schema has them. Nothing in the library
+changed for the server half to work, which is the part worth knowing: the
+content expressions a table needs were already expressible, and an
+application wanting a different table can declare one with
+`Coelho.Schema.extend/2` and get the same treatment.
+
+### A list the writer opens by typing
+
+The seam `CONTRIBUTING.md` said a suggestion list would get instead of a
+command now exists, and mentions are what it is for:
+
+```heex
+<.coelho_editor field={@form[:body]} suggest={[{"@", event: "mention_query"}]} />
+```
+
+The editor pushes that event with what is being typed after the trigger, and
+again with `"query" => nil` when there is no longer a query, which is what
+closes the list. `"rect"` carries the caret's place in the viewport, for
+putting the list beside it. A trigger has to start a word — `a@b` is an
+address — the query ends at the first space, a node before the trigger
+counts as a word boundary, and no list opens inside a code block, where
+`@media` is code.
+
+`Coelho.LiveView.insert_node/3` takes **`replace: :query`**, and that is the
+half that is easy to miss: without it the node goes in beside the `@ad` the
+writer typed and they are left to delete it themselves. The range replaced is
+the one the editor holds when the node arrives rather than the one that was
+pushed, so a writer who kept typing while the list was open still loses
+exactly their query — and `@ada` typed in two paragraphs is two queries, not
+one.
+
+Clicking away closes the list, and there is nothing to write for that. The
+editor waits a moment first, because a click *on* the list blurs the editor
+on the way down and lands on the way up, and it keeps the range through that
+blur so the node still lands on the query. A list dismissed that way stays
+dismissed until the writer types: the query is what opens one.
+
+Nothing about the list reaches the schema, which is the point. What it
+holds, how it filters and what a click does are the application's, and a
+schema cannot be asked what a name matches. The node it settles on is an
+ordinary one, declared the way a variable is. Two suggestions cannot share a
+trigger: the editor looks for the character rather than the event behind it,
+so the second could never have been pushed.
+
+The demo does the whole thing, and the browser suite drives it in all three
+engines.
+
+### `insert_node/3` takes the editor's field
+
+```elixir
+insert_node(socket, node, editor: @form[:body])
+```
+
+`:id` still works for an editor whose id was given by hand, but the field or
+the name the component was rendered for is what an application has in hand,
+and deriving the id from it was the one thing every call site had to spell.
 
 ### The seams are written down
 
@@ -174,7 +115,7 @@ toolbar's words and markup, the stored-type overrides, and the browser hook's
 node views. Each row says what holds it to what it promised, and most say
 "nothing yet" — which is the point of writing it down.
 
-Every defect found this month lived on one of those rows.
+Every defect in this release lived on one of those rows.
 
 ### Three properties for what reaches the renderer without being validated
 
@@ -182,12 +123,7 @@ Every defect found this month lived on one of those rows.
 existed, because HTML plainly comes from outside. The renderer reads two
 things that come from outside just as much and had no such promise: a row
 written under whatever schema was in force when it was stored, and a value
-handed back by a function the application wrote. Every defect found in
-rendering an attribute this month lived in that gap, and each was found by
-reading rather than by a test.
-
-Three properties close it, and they found three more defects on the first
-run:
+handed back by a function the application wrote.
 
 - **A row written under any schema at all still renders.** Every attribute
   of a generated document, node and mark alike, set to an arbitrary term.
@@ -198,10 +134,10 @@ run:
   differently: a literal is encoded into the schema's fingerprint when the
   schema is built, so a value that cannot be exported is refused there. What
   a function returns at render time meets nothing.
-- **A value that renders alone is still there beside a spec's class.** The
-  invariant the `class` merge kept failing. Two values do not accumulate and
-  now say so: the empty string, which has nothing to add, and a boolean,
-  which is whether the attribute is written rather than what it holds.
+- **A value that renders alone is still there beside a spec's class.** Two
+  values do not accumulate and say so: the empty string, which has nothing to
+  add, and a boolean, which is whether the attribute is written rather than
+  what it holds.
 
 ### What they found
 
@@ -209,20 +145,9 @@ run:
   declared as iodata and builds it out of a row, so it hands back whatever
   that row held — and a filename that is `false` made the join for the whole
   document raise. One row would take down the extraction a search index runs
-  over every one of them. What a `:to_text` returns is checked now, and the
-  default schema's own clamps its filename the way the heading level is
-  clamped.
-- **An attachment rendered its label through `to_string/1`.** It draws its
-  own markup, so it escapes its own text rather than going through the
-  attribute path fixed earlier this month, and it raised on a map exactly
-  the way that path used to.
-- **One attachment, three renderers, three answers.** Which of a caption and
-  a filename to show was decided with `||` and "is it `nil`", and every
-  value but `false` and `nil` is truthy: a caption a looser row wrote took
-  the place of a filename that was there, so the search index lost the only
-  name the row had. The page drew an empty `figcaption` for the same row and
-  the inline form drew nothing. All three ask the same question now, the one
-  the inline form already asked: is this text somebody typed.
+  over every one of them. What a `:to_text` returns is checked now.
+- **An attachment rendered its label through `to_string/1`**, and raised on
+  a map exactly the way the attribute path used to.
 - **Counting characters raised on bytes that are not text.** `String.length/1`
   walks a binary as text and raises on some sequences that are not one, in
   six places: `text_length/1`, the `:max_text_length` bound, the trim that
@@ -244,33 +169,44 @@ what a `nil` value already did.
 What a schema has reason to return is untouched: a string, a number, an
 atom, a struct that says how it prints — a `Date`, a `URI`, a `Decimal` —
 and the iodata `Coelho.Render.tag/3` has always accepted, which is a tree of
-strings, improper tail and all.
+strings, improper tail and all. That iodata is joined byte for byte now
+rather than through `to_string/1`, which decodes, so a list holding a binary
+that is not valid UTF-8 renders the same bytes a bare binary always did
+instead of raising.
+
+`class` and `style` accumulate across every value that renders, not only
+across strings. They are the two attributes that join rather than replace —
+a spec's `:class` on top of what its `:render` put there — and joining was
+between binaries, which failed differently on each side: iodata already in
+place was silently replaced, iodata arriving to join it **raised**, and a
+number was dropped in the join though `class="7"` renders on its own.
 
 One value pays for this: a **charlist**, which is a list of numbers and
 cannot be told apart from a stored array at render — `~c"hi"` and the JSON
 `[104, 105]` are the same term. A schema handing back what an Erlang
 function returned should wrap it in `List.to_string/1`.
 
-The joining changed with the filtering. An attribute's iodata is joined byte
-for byte now rather than through `to_string/1`, which decodes: a list
-holding a binary that is not valid UTF-8 used to raise where the same bytes
-in a bare binary rendered, and the two paths could not both be right.
+### One attachment, one name
 
-And `class` and `style` accumulate across every value that renders, not
-only across strings. They are the two attributes that join rather than
-replace — a spec's `:class` on top of what its `:render` put there — and
-joining was between binaries, which failed differently on each side: iodata
-already in place was silently replaced, and iodata arriving to join it
-**raised**, so a page that had been rendering could start returning 500
-rather than quietly losing a class. A number was the third case, dropped in
-the join though `class="7"` renders on its own.
+Three renderers read one row — the block, the inline form and the plain
+text — and a row written under a looser validator got three answers out of
+them. Which of a caption and a filename to show was decided with `||` and
+"is it `nil`", and every value but `false` and `nil` is truthy: a caption a
+looser row wrote took the place of a filename that was there, so the search
+index lost the only name the row had, while the page drew an empty
+`figcaption` and the inline form drew nothing. A filename stored as the
+empty string — which the schema accepts — drew an anchor with no text. All
+three ask the same question now, the one the inline form already asked: is
+this text somebody typed.
 
 ### `reduce/4` folds `nil` to `nil`
 
 `to_html/3` renders a `nil` document as nothing, because that is what a
 nullable column holds and the README promises it. `reduce/4` raised on the
 same value. It folds to `nil` now; a `nil` *inside* a document is not a
-document and still raises.
+document and still raises, and a callback map missing its `:node` is refused
+whatever the document holds — a fold that answered for every empty column and
+raised on the first row holding a document was a typo found in production.
 
 The specs went with it. Every render function accepted a `nil` document and
 declared `map()`, so an application running Dialyzer over the very call the
@@ -279,25 +215,29 @@ column — was warned about it. `to_iodata/3`, `to_html/3`, `to_inline_html/3`,
 `to_inline_iodata/3`, their safe forms, `to_text/2` and the delegates in
 `Coelho` all say `map() | nil` now.
 
-### The Ash type refuses a stored value that is not a document
+### The Ash type refuses a stored value that is not a document — **and this one can bite an upgrade**
 
 `Coelho.Ash.Type.cast_stored/2` read anything that was not a map as `nil`,
 so a column holding something else came back as an absent document with
 nothing said about it. It returns `:error` now, as `Coelho.Ecto.Type.load/3`
-always has. An application overriding `cast_stored/2` to read legacy text —
-the pattern in the moduledoc — is unaffected: it decides what the bytes are
-before calling `super`.
+always has.
+
+**What changes for you:** an Ash resource whose column holds rows that are
+not documents — text written before the type was adopted, a value another
+tool put there — read them as empty documents before and **fails to load
+them now**. That is the row saying what it holds rather than hiding it, but
+it is a read that used to succeed. The way through is the override the
+moduledoc shows: `cast_stored/2` deciding what the bytes are before calling
+`super`, which is unaffected by this change.
 
 ### Two tests measured the machine
 
 The two ratio tests that guard the linear paths of 0.14.0 timed their runs
 with the wall clock, and the wall clock measures the machine as much as the
-work: with two other suites and a documentation build running beside it,
-the best of three linear runs of the content-expression matcher came out at
-16.1 times the work for 4 times the input — the square exactly, from a
-function that had not changed. Both count reductions now, which are steps
-this process took however busy the schedulers are, and both hold under six
-processes spinning beside them.
+work: on a busy machine the content-expression matcher came out at 16.1
+times the work for 4 times the input — the square exactly, from a function
+that had not changed. Both count reductions now, which are steps this
+process took however busy the schedulers are.
 
 ### `mix docs` is quiet again
 

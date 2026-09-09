@@ -178,7 +178,7 @@ defmodule DemoWeb.EditorLive do
      |> assign(:mentions, [])
      |> insert_node(
        %{"type" => "mention", "attrs" => %{"user_id" => String.to_integer(id), "label" => label}},
-       id: editor_id(socket.assigns.form[:body]),
+       editor: socket.assigns.form[:body],
        replace: :query
      )}
   end
@@ -211,7 +211,7 @@ defmodule DemoWeb.EditorLive do
       ]
     }
 
-    {:noreply, insert_node(socket, table, id: editor_id(socket.assigns.form[:body]))}
+    {:noreply, insert_node(socket, table, editor: socket.assigns.form[:body])}
   end
 
   def handle_event("mention", _params, socket) do
@@ -221,7 +221,7 @@ defmodule DemoWeb.EditorLive do
      insert_node(
        socket,
        %{"type" => "mention", "attrs" => %{"user_id" => 7, "label" => "@ada"}},
-       id: editor_id(socket.assigns.form[:body])
+       editor: socket.assigns.form[:body]
      )}
   end
 
@@ -273,7 +273,7 @@ defmodule DemoWeb.EditorLive do
         {:ok, attachment} ->
           {:noreply,
            insert_node(socket, Coelho.Attachment.to_node(attachment),
-             id: editor_id(socket.assigns.form[:body]),
+             editor: socket.assigns.form[:body],
              preview: Demo.Uploads.url(attachment.key)
            )}
 

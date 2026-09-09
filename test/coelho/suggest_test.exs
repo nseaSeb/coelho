@@ -89,6 +89,20 @@ defmodule Coelho.SuggestTest do
       assert ["coelho:insert", %{replace: "query"}] = pushed(replace: :query)
     end
 
+    test "finds the editor from the field or the name it was rendered for" do
+      # The one thing every call site had to spell: the id is derived the way
+      # `coelho_editor/1` derives it, in one place, from what the application
+      # already has in hand.
+      field = Phoenix.Component.to_form(%{"body" => nil}, as: :post)[:body]
+
+      assert ["coelho:insert", %{id: "post_body-editor"}] = pushed(editor: field)
+      assert ["coelho:insert", %{id: "page_intro_doc-editor"}] = pushed(editor: "page[intro_doc]")
+      assert ["coelho:insert", %{id: "by-hand"}] = pushed(id: "by-hand", editor: field)
+      assert ["coelho:insert", %{id: nil}] = pushed([])
+
+      assert_raise ArgumentError, ~r/form field or the name/, fn -> pushed(editor: :body) end
+    end
+
     test "refuses a range it has no way to find" do
       assert_raise ArgumentError, ~r/takes :query or nothing/, fn ->
         pushed(replace: :selection)

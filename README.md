@@ -18,6 +18,47 @@ What the column actually holds is the JSON — and the attachment's URL, with
 its expiry and its signature, exists only in the rendered output. It is never
 in the document.
 
+## Five minutes
+
+```elixir
+# mix.exs
+{:coelho, "~> 0.14"}
+```
+
+```
+mix deps.get
+mix coelho.install        # browser packages, the hook, the stylesheet, the migration
+```
+
+```elixir
+# A :map column, and the field that reads it
+alter table(:posts) do
+  add :body, :map
+end
+
+defmodule MyApp.Post do
+  use Ecto.Schema
+  import Coelho.Ecto
+
+  schema "posts" do
+    field :title, :string
+    rich_text :body
+  end
+end
+```
+
+```heex
+<.form for={@form} phx-change="validate" phx-submit="save">
+  <.coelho_editor field={@form[:body]} />
+</.form>
+
+<div class="prose">{Coelho.to_safe_html(@post.body)}</div>
+```
+
+That is an editor whose document is validated on every change, stored as
+JSON, and rendered by the server. Everything below is what you can do from
+there; the rest of this page is why it is shaped this way.
+
 ## Why not HTML
 
 The usual arrangement stores the editor's HTML output and filters it with a
@@ -640,7 +681,7 @@ def handle_event("mention_pick", %{"id" => id, "label" => label}, socket) do
        "type" => "mention",
        "attrs" => %{"user_id" => String.to_integer(id), "label" => label}
      },
-     id: Coelho.LiveView.editor_id(socket.assigns.form[:body]),
+     editor: socket.assigns.form[:body],
      replace: :query
    )}
 end
@@ -1000,7 +1041,7 @@ def handle_progress(:attachment, entry, socket) when entry.done? do
 
   {:noreply,
    Coelho.LiveView.insert_node(socket, Coelho.Attachment.to_node(attachment),
-     id: Coelho.LiveView.editor_id(socket.assigns.form[:body]),
+     editor: socket.assigns.form[:body],
      preview: MyApp.Uploads.url(attachment.key)
    )}
 end
@@ -1253,7 +1294,7 @@ Anything the server decides on reaches the document through one call:
 
 ```elixir
 Coelho.LiveView.insert_node(socket, %{"type" => "mention", "attrs" => %{"user_id" => 7}},
-  id: Coelho.LiveView.editor_id(@form[:body])
+  editor: @form[:body]
 )
 ```
 
