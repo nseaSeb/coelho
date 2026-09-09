@@ -396,7 +396,11 @@ defmodule Coelho.Schema.Default do
   @doc false
   def render_attachment(node, _inner, context) do
     url = Coelho.Attachments.url(context, node)
-    label = attr(node, "filename", nil) || attr(node, "key", "")
+
+    # `label/1` and not the attribute: a filename can be stored empty, and
+    # the anchor would have no text at all — a link a reader cannot see,
+    # where the inline form falls back to the key and says something.
+    label = label(node)
 
     body =
       cond do

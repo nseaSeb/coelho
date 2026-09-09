@@ -1410,7 +1410,8 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         key in this._fieldLabels ? this._fieldLabels[key] : fallback;
 
       this.readSuggest = () => {
-        this._suggest = JSON.parse(el.dataset.coelhoSuggest || "[]");
+        this._suggestRaw = el.dataset.coelhoSuggest;
+        this._suggest = JSON.parse(this._suggestRaw || "[]");
       };
 
       this.readSuggest();
@@ -1428,10 +1429,29 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         const found = suggestionAt(this._view.state, this._suggest);
         const was = this._suggestion;
 
-        if (found && was && found.event === was.event && found.query === was.query) return;
-        if (!found && !was) return;
-
+        // Kept whatever happens, and before anything is compared: the same
+        // word can be typed after a trigger in two places, and it is the
+        // *positions* an insertion replaces. Holding the ones from the first
+        // of them would put the node in a paragraph the writer left.
         this._suggestion = found;
+
+        const same =
+          found &&
+          was &&
+          found.event === was.event &&
+          found.trigger === was.trigger &&
+          found.query === was.query &&
+          found.from === was.from;
+
+        if (same || (!found && !was)) return;
+
+        // A query that ends leaves a list open with nothing to close it, and
+        // so does one that moves to another trigger — the event the list was
+        // drawn from has to hear that it is over even when another event is
+        // being pushed in the same breath, or two lists are drawn at once.
+        if (was && (!found || found.event !== was.event)) {
+          ctx.push(was.event, { trigger: was.trigger, query: null, rect: null });
+        }
 
         if (found) {
           ctx.push(found.event, {
@@ -1439,8 +1459,6 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
             query: found.query,
             rect: caretRect(this._view, found.from)
           });
-        } else {
-          ctx.push(was.event, { trigger: was.trigger, query: null, rect: null });
         }
       };
 
@@ -2061,6 +2079,12 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
         return;
       }
 
+      // What the writer types after a trigger is not a button: an editor can
+      // change its triggers with the same toolbar, or carry no toolbar at
+      // all — and a toolbar-less editor has no version for the branch below
+      // to compare, so it would never re-read them there.
+      if (ctx.el.dataset.coelhoSuggest !== this._suggestRaw) this.readSuggest();
+
       // New buttons, or the same buttons in another language. LiveView has
       // already replaced the toolbar — its id carries this fingerprint — so
       // the hook only has to find the link field inside the new one and
@@ -2069,7 +2093,6 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
       if (ctx.el.dataset.coelhoToolbarVersion !== this._toolbarVersion) {
         this._toolbarVersion = ctx.el.dataset.coelhoToolbarVersion;
         this.readFieldLabels();
-        this.readSuggest();
         this.findLinkField();
         this.refreshToolbar();
       }

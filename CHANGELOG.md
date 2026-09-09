@@ -31,7 +31,19 @@ one, declared the way a variable is.
 
 The demo does the whole thing, and the browser suite drives it in all three
 engines: typing `@ad` opens a list, picking `@ada` replaces the typing with
-the node, and a space closes the list without choosing anything.
+the node, a space closes the list without choosing anything, and `@ada`
+typed in two paragraphs is two queries rather than one — the same four
+characters in another place are not the same place, and the positions are
+what an insertion replaces.
+
+### An attachment has one name
+
+The block form built its label from the filename attribute directly where
+the inline form and the text extraction both ask `label/1` for it, so a
+stored row whose filename is the empty string — which the schema accepts —
+rendered an anchor with no text on the page while the inline form fell back
+to the key and said something. All three ask the same question now, which is
+the second time this month that turned out to be the fix.
 
 ### Tables, on the server
 

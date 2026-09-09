@@ -1342,6 +1342,40 @@ const run = async () => {
       await page.waitForSelector("#mentions", { state: "detached", timeout: 5000 });
     });
 
+    await test("the same query in another paragraph is another query", async () => {
+      // The positions are what an insertion replaces, and they are not the
+      // query text: `@ada` typed twice is the same four characters in two
+      // places. Holding the first one's positions puts the mention in a
+      // paragraph the writer has left, and leaves their typing behind in the
+      // one they are in. The caret moves with ArrowUp alone, which lands on
+      // the same column — `End` is answered differently by each engine.
+      await typeInEditor(page, "@ada");
+      await page.keyboard.press("Enter");
+      await page.keyboard.type("@ada");
+
+      await page.waitForSelector("#mentions", { timeout: 5000 });
+      await page.keyboard.press("ArrowUp");
+      await settle(page);
+
+      await page.click("#mentions button");
+
+      await documentEventually(
+        page,
+        "the mention did not land in the paragraph the caret was in",
+        `return (() => {
+           const blocks = doc.content.filter((block) => block.type === "paragraph");
+           const textOf = (block) =>
+             (block.content ?? []).map((node) => node.text ?? "").join("");
+
+           return (
+             (blocks[0].content ?? []).some((node) => node.type === "mention") &&
+             !textOf(blocks[0]).includes("@") &&
+             textOf(blocks[1]) === "@ada"
+           );
+         })()`
+      );
+    });
+
     await test("a space ends the query, which is what closes the list", async () => {
       await typeInEditor(page, "hi @ad");
       await page.waitForSelector("#mentions", { timeout: 5000 });
