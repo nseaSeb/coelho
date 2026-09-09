@@ -153,8 +153,11 @@ handed back by a function the application wrote.
   six places: `text_length/1`, the `:max_text_length` bound, the trim that
   enforces it, and the attribute budget's own count of a key and a value. A
   document holding those bytes could not be counted, trimmed, validated or
-  read. Characters stay the unit wherever the bytes are text; where they are
-  not, a byte is the only honest answer and it never raises.
+  read. A character stays the unit wherever `String` can walk one, which is
+  almost always: giving up on every binary that is merely *invalid* would
+  trim `"héllo" <> <<255>>` to half of an `é`, which is a document
+  `sanitize/2` produced and `JSON.encode!` refuses. Only the sequences that
+  actually raise fall back to counting bytes.
 
 ### An attribute `to_string/1` cannot answer for is dropped at render
 

@@ -1204,10 +1204,11 @@ const buildKeymap = (schema) => {
   if (marks.italic) bindings["Mod-i"] = toggleMark(marks.italic);
   if (marks.code) bindings["Mod-e"] = toggleMark(marks.code);
 
-  // Tab is the only way through a table that everyone already knows, and it
-  // is bound before the list bindings so that a list *inside* a cell does not
-  // take it: `goToNextCell` returns false outside a table, which hands the
-  // key on to whatever is bound after it.
+  // Tab is the only way through a table that everyone already knows.
+  // `goToNextCell` answers false outside a table, so the key falls through to
+  // the *next keymap plugin* — `baseKeymap` — and not to a later binding in
+  // this object: one keymap holds one binding per key, and a second
+  // `bindings["Tab"]` written below would replace this one without a word.
   if (nodes.table) {
     bindings["Tab"] = goToNextCell(1);
     bindings["Shift-Tab"] = goToNextCell(-1);

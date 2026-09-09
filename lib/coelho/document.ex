@@ -1079,20 +1079,29 @@ defmodule Coelho.Document do
   defp spend_key(key, budget) when is_binary(key), do: take(budget, characters(key))
   defp spend_key(_key, budget), do: take(budget, 1)
 
-  # `String.length/1` walks a binary as text, and a binary that is not text
-  # makes it raise — which is a document refused with a stack trace rather
-  # than with an error, and a stored row that cannot be counted, trimmed or
-  # even read. A character is the unit a bound is written in, so it stays
-  # the unit wherever the bytes are text; where they are not, a byte is the
-  # only honest answer and it never raises.
+  # A character is the unit every bound here is written in, and `String`
+  # walks one whatever the bytes are — right up to the few sequences that
+  # make it raise. `<<255, 254>>` counts as two and slices as one; a real
+  # codepoint followed by rubbish raises out of `unicode_util`, which is a
+  # document refused with a stack trace rather than with an error, and a
+  # stored row that cannot be counted, trimmed or even read.
+  #
+  # So the answer is tried and only then given up on. Asking `String.valid?`
+  # first and counting bytes when it says no was the shorter way to write
+  # this and the wrong one: it gives up on every binary `String` would have
+  # walked perfectly, and a byte count then *cuts a character in half* —
+  # `"héllo" <> <<255>>` trimmed to two characters became `<<104, 195>>`,
+  # which is a document `sanitize/2` produced and `JSON.encode!` refuses.
   defp characters(value) do
-    if String.valid?(value), do: String.length(value), else: byte_size(value)
+    String.length(value)
+  rescue
+    ArgumentError -> byte_size(value)
   end
 
   defp first_characters(value, count) do
-    if String.valid?(value),
-      do: String.slice(value, 0, count),
-      else: binary_part(value, 0, min(count, byte_size(value)))
+    String.slice(value, 0, count)
+  rescue
+    ArgumentError -> binary_part(value, 0, min(count, byte_size(value)))
   end
 
   defp take(:infinity, _cost), do: :infinity
