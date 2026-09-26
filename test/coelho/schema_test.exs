@@ -227,9 +227,10 @@ defmodule Coelho.SchemaTest do
       json = Schema.to_json(Schema.default())
       nodes = Map.new(json["nodes"], fn [name, spec] -> {name, spec} end)
 
-      # What `### ` typed in the editor asks before it makes a heading.
-      assert nodes["heading"]["attrValues"]["level"] == [1, 2, 3, 4, 5, 6]
-      assert nodes["paragraph"]["attrValues"] == %{"align" => ~w(left center right justify)}
+      # What `### ` typed in the editor asks before it makes a heading —
+      # and the one list the browser asks about, so the one exported.
+      assert nodes["heading"]["attrValues"] == %{"level" => [1, 2, 3, 4, 5, 6]}
+      refute Map.has_key?(nodes["paragraph"], "attrValues")
       # Inside an attribute's object it would be handed to ProseMirror as
       # part of the attribute spec, which is free to give the key a meaning.
       refute Map.has_key?(nodes["heading"]["attrs"]["level"], "values")
@@ -283,6 +284,14 @@ defmodule Coelho.SchemaTest do
       assert heading.(:integer)["attrValues"] == %{"level" => [1, 2, 3, 4, 5, 6]}
       # Nothing accepted: no list, and the browser makes no heading at all.
       refute Map.has_key?(heading.(fn _level -> {:error, "never"} end), "attrValues")
+      # A validator written for the levels it takes has refused the others,
+      # rather than raising inside Schema.new before any document exists.
+      assert heading.(fn 1 -> :ok end)["attrValues"] == %{"level" => [1]}
+    end
+
+    test "heading_levels/1 is the toolbar's answer too, computed once" do
+      assert Schema.heading_levels(Schema.default()) == [1, 2, 3, 4, 5, 6]
+      assert Schema.heading_levels(Schema.restrict(Schema.default(), nodes: [:paragraph])) == []
     end
 
     test "carries the code flag, so the browser keeps it when it draws the node itself" do

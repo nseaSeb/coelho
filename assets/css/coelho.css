@@ -199,6 +199,12 @@
   outline: none;
   overflow-y: auto;
   padding: var(--coelho-pad);
+  /* The containing block of both cursors below: the gap cursor is
+   * positioned, and would otherwise sit on some ancestor and stay put while
+   * the editor scrolls; the drop cursor is appended to the nearest
+   * positioned ancestor, and this keeps it inside `.coelho`, where the
+   * colour it reads is declared. */
+  position: relative;
 }
 
 /* The placeholder is an attribute rather than a node: a node would be
@@ -250,11 +256,11 @@
 }
 
 /* The line a drag would land on. prosemirror-dropcursor sizes and places
- * it — inside the editor, when the editor is positioned, which is why it is
+ * it, inside the editor since the editor is positioned, which is why it is
  * named beside the gap cursor above; the colour is left to this file so both
  * cursors follow the theme. */
 .coelho-dropcursor {
-  background-color: var(--coelho-text);
+  background-color: var(--coelho-text, currentColor);
 }
 
 /* -- What the document is made of ---------------------------------------- */

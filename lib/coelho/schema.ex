@@ -136,6 +136,10 @@ defmodule Coelho.Schema do
             node_names: %{},
             mark_names: %{},
             mark_ranks: %{},
+            # Derived in `stamp/1` too, before `:json` is, which carries it:
+            # the heading levels the `:level` validator accepts, asked once
+            # of the validator rather than once per toolbar button.
+            heading_levels: [],
             # Derived in `stamp/1`, like `:json` and `:empty`: a MapSet
             # literal as a struct default is an opaque term built outside the
             # module that owns it, which is exactly what Dialyzer's opacity
@@ -206,6 +210,7 @@ defmodule Coelho.Schema do
   # would grow it without bound. A value that carries its own derivations is
   # collected with the schema it belongs to.
   defp stamp(schema) do
+    schema = %{schema | heading_levels: build_heading_levels(schema)}
     exported = to_json(schema)
 
     %{
@@ -708,21 +713,24 @@ defmodule Coelho.Schema do
       "topNode" => Atom.to_string(schema.top_node),
       "limits" => limits_to_json(schema.limits),
       "nodes" =>
-        Enum.map(schema.node_order, &[Atom.to_string(&1), node_to_json(schema.nodes[&1])]),
+        Enum.map(
+          schema.node_order,
+          &[Atom.to_string(&1), node_to_json(schema.nodes[&1], heading_values(schema, &1))]
+        ),
       "marks" =>
         Enum.map(schema.mark_order, &[Atom.to_string(&1), mark_to_json(schema.marks[&1])])
     }
     |> put_unless_nil("version", schema.version)
   end
 
-  defp node_to_json(%NodeSpec{} = spec) do
+  defp node_to_json(%NodeSpec{} = spec, attr_values) do
     %{}
     |> put_unless_nil("content", spec.content_source)
     |> put_unless_nil("group", groups_to_json(spec.group))
     |> put_unless_nil("marks", marks_to_json(spec.marks))
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
     |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
-    |> put_unless_nil("attrValues", attr_values_to_json(spec))
+    |> put_unless_nil("attrValues", attr_values)
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, spec.void))
     |> put_unless_nil("editorText", editor_text_to_json(spec.editor_text))
@@ -858,44 +866,54 @@ defmodule Coelho.Schema do
     if rendered == %{}, do: nil, else: rendered
   end
 
-  # The closed lists, by attribute name, for the browser to ask before it
-  # makes something by itself — which today is the heading level a typed
-  # `### ` asks for. Beside `attrs` rather than inside an attribute's own
-  # object, for the reason `attrRenderAs` is.
-  #
-  # The heading's `level` is the one list read off a validator that need
-  # not be a list, through `heading_levels/1`, so what the typed `#` makes
-  # and what the toolbar offers are one answer. An empty list exports
-  # nothing, and no list is no rule: the browser makes no heading rather
-  # than one the changeset would refuse.
-  defp attr_values_to_json(%NodeSpec{} = spec) do
-    values =
-      for {name, %Attr{} = attr} <- spec.attrs,
-          list = closed_list(spec, name, attr),
-          list != [],
-          into: %{},
-          do: {Atom.to_string(name), list}
+  # The one closed list the browser asks about before it makes something by
+  # itself: the heading level a typed `### ` asks for. Beside `attrs` rather
+  # than inside the attribute's own object, for the reason `attrRenderAs`
+  # is. An empty list exports nothing, and no list is no rule: the browser
+  # makes no heading rather than one the changeset would refuse.
+  defp heading_values(%__MODULE__{heading_levels: []}, _name), do: nil
 
-    if values == %{}, do: nil, else: values
+  defp heading_values(%__MODULE__{} = schema, name) do
+    case resolve_node_name(schema, "heading") do
+      {:ok, ^name} -> %{"level" => schema.heading_levels}
+      _other -> nil
+    end
   end
 
-  defp closed_list(%NodeSpec{name: :heading} = spec, :level, _attr), do: heading_levels(spec)
-  defp closed_list(_spec, _name, attr), do: Attr.values(attr)
-
-  @levels Enum.to_list(1..6)
+  @html_levels Enum.to_list(1..6)
 
   @doc """
-  The heading levels a node's `:level` validator accepts, of the six HTML
-  has.
-
-  Asked of the validator itself, whatever its shape, so the toolbar and the
-  editor's typing rules agree on it. A node without a `:level` accepts none.
+  The six heading levels HTML has.
   """
-  @spec heading_levels(NodeSpec.t()) :: [pos_integer()]
-  def heading_levels(%NodeSpec{attrs: %{level: %Attr{validate: validate}}}),
-    do: Enum.filter(@levels, &(Attr.validate(validate, &1) == :ok))
+  @spec html_heading_levels() :: [pos_integer()]
+  def html_heading_levels, do: @html_levels
 
-  def heading_levels(%NodeSpec{}), do: []
+  @doc """
+  The heading levels the schema's `heading` accepts, of the six HTML has.
+
+  Asked of the `:level` validator itself when the schema is built, whatever
+  its shape, so the toolbar and the editor's typing rules agree on it and
+  neither asks twice. A validator that raises on a level — a function
+  written for the two it takes — has refused it. No `heading`, or one
+  without a `:level`, accepts none.
+  """
+  @spec heading_levels(t()) :: [pos_integer()]
+  def heading_levels(%__MODULE__{heading_levels: levels}), do: levels
+
+  defp build_heading_levels(%__MODULE__{} = schema) do
+    with {:ok, name} <- resolve_node_name(schema, "heading"),
+         %NodeSpec{attrs: %{level: %Attr{validate: validate}}} <- node_spec(schema, name) do
+      Enum.filter(@html_levels, &accepts?(validate, &1))
+    else
+      _no -> []
+    end
+  end
+
+  defp accepts?(validate, level) do
+    Attr.validate(validate, level) == :ok
+  rescue
+    _refused -> false
+  end
 
   defp render_as_to_json({:style, property}, attr) do
     %{"style" => property, "values" => Attr.render_values(attr)}

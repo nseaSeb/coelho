@@ -1248,31 +1248,18 @@ const buildInputRules = (schema) => {
   if (nodes.blockquote) rules.push(outsideCode(wrappingInputRule(/^\s*>\s$/, nodes.blockquote)));
   if (nodes.code_block) rules.push(outsideCode(textblockTypeInputRule(/^```$/, nodes.code_block)));
 
-  // Written out rather than through `textblockTypeInputRule`, because that
-  // one reads a `null` from getAttrs as "the defaults" and fires anyway: a
-  // schema accepting levels 1 and 3 would turn `## ` into a level-one
-  // heading instead of leaving the two characters alone.
-  // No list means the server could not say which levels it accepts, and no
-  // list is no rule.
+  // Only the levels the server said it accepts are in the pattern, so a
+  // `#### ` in a schema of three levels matches nothing and stays as typed.
+  // No list means the server could not say, and no list is no rule.
   const levels = nodes.heading?.spec.attrValues?.level;
 
-  if (nodes.heading && levels) {
-    rules.push(
-      new InputRule(/^(#{1,6})\s$/, (state, match, start, end) => {
-        const level = match[1].length;
-        const $start = state.doc.resolve(start);
+  if (nodes.heading && levels?.length) {
+    const pattern = new RegExp(`^(${levels.map((level) => "#".repeat(level)).join("|")})\\s$`);
 
-        const parent = $start.node(-1);
-        const fits = parent.canReplaceWith($start.index(-1), $start.indexAfter(-1), nodes.heading);
+    // `keeping`, as the toolbar does: a centred paragraph stays centred.
+    const attrs = (match) => keeping({ level: match[1].length });
 
-        if (!levels.includes(level) || !fits) return null;
-
-        // `keeping`, as the toolbar does: a centred paragraph stays centred.
-        const attrs = keeping({ level });
-
-        return state.tr.delete(start, end).setBlockType(start, start, nodes.heading, attrs);
-      }, { inCodeMark: false })
-    );
+    rules.push(outsideCode(textblockTypeInputRule(pattern, nodes.heading, attrs)));
   }
 
   return rules;

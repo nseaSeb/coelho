@@ -1030,18 +1030,13 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     # A heading that names its level, the way an alignment names its value.
     # Kept when the schema declares `heading` and its `:level` accepts the
-    # number — asked of the attribute's own validator, so a schema allowing
-    # two levels shows two buttons and not six.
-    @levels ~w(1 2 3 4 5 6)
+    # number — asked of the attribute's own validator once, when the schema
+    # was built, so a schema allowing two levels shows two buttons and not
+    # six, and the typed `##` reads the same answer.
+    @levels Enum.map(Schema.html_heading_levels(), &Integer.to_string/1)
 
     defp supported?(schema, "heading_" <> level) when level in @levels do
-      case Schema.resolve_node_name(schema, "heading") do
-        {:ok, name} ->
-          String.to_integer(level) in Schema.heading_levels(Schema.node_spec(schema, name))
-
-        :error ->
-          false
-      end
+      String.to_integer(level) in Schema.heading_levels(schema)
     end
 
     defp supported?(schema, command) when command in @node_commands do

@@ -106,17 +106,6 @@ defmodule Coelho.Schema.Attr do
 
   def render_values(%__MODULE__{}), do: nil
 
-  @doc """
-  The values a `{:one_of, list}` validator accepts (nullable or not), or
-  `nil` for any other validator.
-
-  Exported to the browser as `attrValues`, so that what the writer's typing
-  makes — `### ` for a heading of level three — is asked of the same list
-  the server checks the stored value against.
-  """
-  @spec values(t()) :: [term()] | nil
-  def values(%__MODULE__{validate: validate}), do: one_of(validate)
-
   defp build_render_as!(nil, _validate), do: nil
 
   # A style attribute carries a value straight into markup that nothing
