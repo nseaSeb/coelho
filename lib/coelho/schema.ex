@@ -720,6 +720,7 @@ defmodule Coelho.Schema do
     |> put_unless_nil("marks", marks_to_json(spec.marks))
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
     |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
+    |> put_unless_nil("attrValues", attr_values_to_json(spec.attrs))
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, spec.void))
     |> put_unless_nil("editorText", editor_text_to_json(spec.editor_text))
@@ -851,6 +852,21 @@ defmodule Coelho.Schema do
           do: {Atom.to_string(name), render_as_to_json(render_as, attr)}
 
     if rendered == %{}, do: nil, else: rendered
+  end
+
+  # The closed lists, by attribute name, for the browser to ask before it
+  # makes something by itself — which today is the heading level a typed
+  # `### ` asks for. Beside `attrs` rather than inside an attribute's own
+  # object, for the reason `attrRenderAs` is.
+  defp attr_values_to_json(attrs) do
+    values =
+      for {name, %Attr{} = attr} <- attrs,
+          list = Attr.values(attr),
+          list != nil,
+          into: %{},
+          do: {Atom.to_string(name), list}
+
+    if values == %{}, do: nil, else: values
   end
 
   defp render_as_to_json({:style, property}, attr) do

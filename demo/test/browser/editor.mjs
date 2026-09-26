@@ -1517,6 +1517,74 @@ const run = async () => {
       await documentEventually(page, "the table was not deleted", `return !${table}`);
     });
 
+    // What typing at the start of a paragraph makes. Each one clears the
+    // editor by typing something first — `typeInEditor` waits for the text
+    // it was given, which a rule has consumed — then starts a fresh block.
+    const typeRule = async (typed) => {
+      await typeInEditor(page, "x");
+      await page.keyboard.press("Enter");
+      await page.keyboard.type(typed);
+      await settle(page);
+    };
+
+    await test("`# ` makes a heading", async () => {
+      await typeRule("## two");
+      await documentEventually(
+        page,
+        "no heading was made",
+        'return doc.content[1].type === "heading" && doc.content[1].attrs.level === 2 && doc.content[1].content[0].text === "two"'
+      );
+    });
+
+    await test("and Backspace right after puts the characters back", async () => {
+      await typeRule("# ");
+      await documentEventually(page, "no heading was made", 'return doc.content[1].type === "heading"');
+      await page.keyboard.press("Backspace");
+      await documentEventually(
+        page,
+        "the heading did not turn back into its characters",
+        // The trailing space comes back as the no-break one the editor
+        // holds it as, the way `typeInEditor` reads its text.
+        'return doc.content[1].type === "paragraph" && doc.content[1].content[0].text.replaceAll("\\u00a0", " ") === "# "'
+      );
+    });
+
+    await test("`- ` makes a bullet list and `1. ` an ordered one", async () => {
+      await typeRule("- item");
+      await documentEventually(
+        page,
+        "no bullet list was made",
+        'return doc.content[1].type === "bullet_list" && doc.content[1].content[0].content[0].content[0].text === "item"'
+      );
+
+      await typeRule("3. third");
+      await documentEventually(
+        page,
+        "no ordered list was made",
+        'return doc.content[1].type === "ordered_list" && doc.content[1].attrs.start === 3'
+      );
+    });
+
+    await test("`> ` makes a quote and three backticks a code block", async () => {
+      await typeRule("> said");
+      await documentEventually(page, "no quote was made", 'return doc.content[1].type === "blockquote"');
+
+      await typeRule("```");
+      await documentEventually(page, "no code block was made", 'return doc.content[1].type === "code_block"');
+    });
+
+    await test("nothing fires inside a code block", async () => {
+      await typeRule("```");
+      await documentEventually(page, "no code block was made", 'return doc.content[1].type === "code_block"');
+      await page.keyboard.type("# comment");
+      await settle(page);
+      await documentEventually(
+        page,
+        "the comment became a heading",
+        'return doc.content[1].type === "code_block" && doc.content[1].content[0].text === "# comment"'
+      );
+    });
+
     await test("nothing threw along the way", () => {
       assert.deepEqual(errors, []);
     });

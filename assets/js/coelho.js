@@ -27,6 +27,15 @@ import {
   exitCode
 } from "prosemirror-commands";
 import { history, undo, redo } from "prosemirror-history";
+import {
+  InputRule,
+  inputRules,
+  undoInputRule,
+  wrappingInputRule,
+  textblockTypeInputRule
+} from "prosemirror-inputrules";
+import { dropCursor } from "prosemirror-dropcursor";
+import { gapCursor } from "prosemirror-gapcursor";
 import { wrapInList, splitListItem, liftListItem, sinkListItem } from "prosemirror-schema-list";
 
 // The document model, its validation and its server-side rendering all live
@@ -1184,19 +1193,85 @@ const cachedCommandFor = (name, schema, options) => {
 // and is what every command below reads its rectangle from. Added only where
 // the schema has tables, so an application without them carries the plugin
 // but never runs it.
+// `gapCursor` draws a caret where no textblock is — before a rule, between
+// two tables — and `dropCursor` the line a drag would land on.
 const editorPlugins = (schema) => [
   history(),
+  inputRules({ rules: buildInputRules(schema) }),
   keymap(buildKeymap(schema)),
   keymap(baseKeymap),
-  ...(schema.nodes.table ? [tableEditing()] : [])
+  ...(schema.nodes.table ? [tableEditing()] : []),
+  dropCursor(),
+  gapCursor()
 ];
+
+// What typing at the start of a paragraph turns it into: `# ` a heading,
+// `- ` a list, `> ` a quote, three backticks a code block. Each rule exists
+// only where the schema declares the node it makes, and a heading is made
+// only at a level the schema's own validator accepts — the list travels as
+// `attrValues`, read off the validator the way the toolbar reads it on the
+// server, so `#### ` in a schema of three levels stays four characters
+// rather than becoming a block the changeset refuses.
+//
+// Nothing here fires inside a code block: prosemirror-inputrules skips a
+// textblock whose spec says `code`, which the schema's code_block does.
+const buildInputRules = (schema) => {
+  const { nodes } = schema;
+  const rules = [];
+
+  if (nodes.bullet_list) rules.push(wrappingInputRule(/^\s*([-+*])\s$/, nodes.bullet_list));
+
+  // A list typed as `3. ` starts at three, and an item typed under an
+  // existing list joins it only where the number follows on.
+  if (nodes.ordered_list) {
+    rules.push(
+      wrappingInputRule(
+        /^(\d+)\.\s$/,
+        nodes.ordered_list,
+        (match) => ({ start: Number(match[1]) }),
+        (match, node) => node.childCount + node.attrs.start === Number(match[1])
+      )
+    );
+  }
+
+  if (nodes.blockquote) rules.push(wrappingInputRule(/^\s*>\s$/, nodes.blockquote));
+  if (nodes.code_block) rules.push(textblockTypeInputRule(/^```$/, nodes.code_block));
+
+  // Written out rather than through `textblockTypeInputRule`, because that
+  // one reads a `null` from getAttrs as "the defaults" and fires anyway: a
+  // schema accepting levels 1 and 3 would turn `## ` into a level-one
+  // heading instead of leaving the two characters alone.
+  if (nodes.heading) {
+    const levels = nodes.heading.spec.attrValues?.level ?? [1, 2, 3, 4, 5, 6];
+
+    rules.push(
+      new InputRule(/^(#{1,6})\s$/, (state, match, start, end) => {
+        const level = match[1].length;
+        const $start = state.doc.resolve(start);
+
+        const parent = $start.node(-1);
+        const fits = parent.canReplaceWith($start.index(-1), $start.indexAfter(-1), nodes.heading);
+
+        if (!levels.includes(level) || !fits) return null;
+
+        return state.tr.delete(start, end).setBlockType(start, start, nodes.heading, { level });
+      })
+    );
+  }
+
+  return rules;
+};
 
 const buildKeymap = (schema) => {
   const { nodes, marks } = schema;
+  // Backspace right after a rule fired puts the characters back — `# ` was
+  // meant literally — and answers false otherwise, so the key falls through
+  // to `baseKeymap` the way Tab does below.
   const bindings = {
     "Mod-z": undo,
     "Shift-Mod-z": redo,
-    "Mod-y": redo
+    "Mod-y": redo,
+    Backspace: undoInputRule
   };
 
   if (marks.bold) bindings["Mod-b"] = toggleMark(marks.bold);

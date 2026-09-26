@@ -22,7 +22,7 @@ in the document.
 
 ```elixir
 # mix.exs
-{:coelho, "~> 0.14"}
+{:coelho, "~> 0.15"}
 ```
 
 ```
@@ -114,9 +114,9 @@ See `CONTRIBUTING.md` for the ones worth writing.
 ## Status
 
 Early, but complete enough to use: the document core — schema, content
-expressions, validation, rendering, plain text extraction — the Ecto layer,
-the LiveView editor and attachments are in place and tested. What is left is
-a demo application and the polish that comes with it.
+expressions, validation, rendering, plain text extraction — the Ecto and Ash
+layers, the LiveView editor, attachments and the demo are in place and
+tested. What is left is what only more applications can find.
 
 Requires Elixir 1.18 or later, for the standard library's `JSON` module.
 Ecto is an optional dependency: the core has none at all.
@@ -860,9 +860,22 @@ two properties, which is the whole of its editor styling.
 | `Mod-[`, `Mod-]` | lift the item out, sink it in |
 | `Shift-Enter`, `Mod-Enter` | a line break, and out of a code block |
 | `Enter`, `Escape` in the link field | confirm, close |
+| `Backspace` right after one of the below | the characters back, literally |
 
 Bound only for the nodes and marks the schema declares, on top of
 ProseMirror's base keymap.
+
+And what typing at the start of a paragraph turns it into:
+
+| Typed | What |
+| --- | --- |
+| `# ` to `###### ` | a heading, at a level the schema's `:level` accepts |
+| `- `, `* `, `+ ` | a bullet list |
+| `1. ` | an ordered list, starting where the number says |
+| `> ` | a quote |
+| ` ``` ` | a code block |
+
+None of them fires inside a code block, where `# comment` is a comment.
 
 ### Testing it
 
@@ -880,9 +893,10 @@ assert document(view, "page[intro_doc]") == paragraph("bonjour")
 `params/3` builds the same parameters for a test that sends them its own way.
 
 ```
-npm install @nseaprotector/acme-script prosemirror-state prosemirror-view \
-  prosemirror-model prosemirror-keymap prosemirror-commands \
-  prosemirror-history prosemirror-schema-list orderedmap
+npm install prosemirror-state prosemirror-view prosemirror-model \
+  prosemirror-keymap prosemirror-commands prosemirror-history \
+  prosemirror-schema-list prosemirror-inputrules prosemirror-dropcursor \
+  prosemirror-gapcursor prosemirror-tables orderedmap
 ```
 
 `pnpm add` or `yarn add` where that is what the application uses — Coelho

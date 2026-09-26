@@ -223,6 +223,35 @@ defmodule Coelho.SchemaTest do
       assert nodes["image"]["attrs"]["src"] == %{}
     end
 
+    test "carries the closed list an attribute accepts, beside the attrs" do
+      json = Schema.to_json(Schema.default())
+      nodes = Map.new(json["nodes"], fn [name, spec] -> {name, spec} end)
+
+      # What `### ` typed in the editor asks before it makes a heading.
+      assert nodes["heading"]["attrValues"]["level"] == [1, 2, 3, 4, 5, 6]
+      assert nodes["paragraph"]["attrValues"] == %{"align" => ~w(left center right justify)}
+      # Inside an attribute's object it would be handed to ProseMirror as
+      # part of the attribute spec, which is free to give the key a meaning.
+      refute Map.has_key?(nodes["heading"]["attrs"]["level"], "values")
+      refute Map.has_key?(nodes["blockquote"], "attrValues")
+
+      narrow =
+        Schema.extend(Schema.default(),
+          nodes: [
+            heading: [
+              content: "inline*",
+              group: "block",
+              attrs: [level: [default: 1, validate: {:one_of, [1, 2]}]],
+              render: {"h1", []},
+              parse: ["h1"]
+            ]
+          ]
+        )
+
+      narrow_nodes = Map.new(Schema.to_json(narrow)["nodes"], fn [name, spec] -> {name, spec} end)
+      assert narrow_nodes["heading"]["attrValues"] == %{"level" => [1, 2]}
+    end
+
     test "spells 'no marks allowed' as an empty string" do
       json = Schema.to_json(Schema.default())
       nodes = Map.new(json["nodes"], fn [name, spec] -> {name, spec} end)

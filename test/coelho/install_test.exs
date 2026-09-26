@@ -349,9 +349,9 @@ defmodule Coelho.InstallTest do
       names = Enum.map(Mix.Tasks.Coelho.Install.packages(), &elem(&1, 0))
 
       assert "prosemirror-view" in names
-      assert "@nseaprotector/acme-script" in names
+      assert "prosemirror-inputrules" in names
       assert "prosemirror-tables" in names
-      assert length(names) == 10
+      assert length(names) == 12
     end
 
     test "a name declared at another version is named, not called present", %{tmp_dir: tmp_dir} do
