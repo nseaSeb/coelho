@@ -291,6 +291,55 @@ defmodule Coelho.SchemaTest do
 
       assert nodes["code_block"]["code"] == true
       refute Map.has_key?(nodes["paragraph"], "code")
+
+      marks = Map.new(json["marks"], fn [name, spec] -> {name, spec} end)
+      assert marks["code"]["code"] == true
+      refute Map.has_key?(marks["bold"], "code")
+    end
+
+    test "probes a level validator on the heading only" do
+      # A callout's `level` takes words, and asking it about the integer 1
+      # used to raise inside Schema.extend, before any document existed.
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [
+            callout: [
+              content: "block+",
+              group: "block",
+              attrs: [
+                level: [
+                  default: "info",
+                  validate: fn
+                    "info" -> :ok
+                    "warn" -> :ok
+                  end
+                ]
+              ],
+              render: {"aside", []},
+              parse: ["aside"]
+            ]
+          ]
+        )
+
+      nodes = Map.new(Schema.to_json(schema)["nodes"], fn [name, spec] -> {name, spec} end)
+      refute Map.has_key?(nodes["callout"], "attrValues")
+
+      # And an empty closed list is no list.
+      empty =
+        Schema.extend(Schema.default(),
+          nodes: [
+            heading: [
+              content: "inline*",
+              group: "block",
+              attrs: [level: [default: 1, validate: {:one_of, []}]],
+              render: {"h1", []},
+              parse: ["h1"]
+            ]
+          ]
+        )
+
+      empty_nodes = Map.new(Schema.to_json(empty)["nodes"], fn [name, spec] -> {name, spec} end)
+      refute Map.has_key?(empty_nodes["heading"], "attrValues")
     end
 
     test "spells 'no marks allowed' as an empty string" do

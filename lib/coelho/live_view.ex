@@ -1035,11 +1035,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
     @levels ~w(1 2 3 4 5 6)
 
     defp supported?(schema, "heading_" <> level) when level in @levels do
-      with {:ok, name} <- Schema.resolve_node_name(schema, "heading"),
-           %{attrs: %{level: attr}} <- Schema.node_spec(schema, name) do
-        Coelho.Schema.Attr.validate(attr.validate, String.to_integer(level)) == :ok
-      else
-        _no -> false
+      case Schema.resolve_node_name(schema, "heading") do
+        {:ok, name} ->
+          String.to_integer(level) in Schema.heading_levels(Schema.node_spec(schema, name))
+
+        :error ->
+          false
       end
     end
 

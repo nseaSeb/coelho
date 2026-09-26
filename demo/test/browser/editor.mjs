@@ -1573,6 +1573,18 @@ const run = async () => {
       await documentEventually(page, "no code block was made", 'return doc.content[1].type === "code_block"');
     });
 
+    await test("nor inside a code mark", async () => {
+      await typeRule("");
+      await page.keyboard.press("ControlOrMeta+e");
+      await page.keyboard.type("- not a list");
+      await settle(page);
+      await documentEventually(
+        page,
+        "the code became a list",
+        'return doc.content[1].type === "paragraph" && doc.content[1].content[0].marks?.[0]?.type === "code"'
+      );
+    });
+
     await test("nothing fires inside a code block", async () => {
       await typeRule("```");
       await documentEventually(page, "no code block was made", 'return doc.content[1].type === "code_block"');

@@ -15,7 +15,9 @@ stays four characters rather than becoming a block the changeset refuses.
 Nothing fires inside a code block, where `# comment` is a comment: a node
 holding code now says so with `code: true` in its declaration, which
 `code_block` does and which travels to the browser with the rest of the
-schema, so an application drawing the node itself keeps the flag.
+schema, so an application drawing the node itself keeps the flag. The
+`code` mark says the same of the text it covers, and no rule fires there
+either.
 
 `Backspace` right after a rule fired puts the characters back — `# ` was
 meant literally — and falls through to the ordinary key otherwise.

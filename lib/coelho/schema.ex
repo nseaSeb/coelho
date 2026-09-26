@@ -328,6 +328,7 @@ defmodule Coelho.Schema do
     attrs: [:attrs],
     class: [:class],
     editor_attrs: [:editor_attrs],
+    code: [:code],
     render: [:render],
     parse: [:parse]
   ]
@@ -721,7 +722,7 @@ defmodule Coelho.Schema do
     |> put_unless_nil("marks", marks_to_json(spec.marks))
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
     |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
-    |> put_unless_nil("attrValues", attr_values_to_json(spec.attrs))
+    |> put_unless_nil("attrValues", attr_values_to_json(spec))
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, spec.void))
     |> put_unless_nil("editorText", editor_text_to_json(spec.editor_text))
@@ -745,6 +746,7 @@ defmodule Coelho.Schema do
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, false))
     |> put_unless_nil("parseDOM", parse_dom_to_json(spec.parse))
+    |> put_when_true("code", spec.code)
   end
 
   # A ProseMirror DOMOutputSpec, built here from the same declaration the
@@ -861,31 +863,39 @@ defmodule Coelho.Schema do
   # `### ` asks for. Beside `attrs` rather than inside an attribute's own
   # object, for the reason `attrRenderAs` is.
   #
-  # A `level` whose validator is not a list — a function, `:integer` — is
-  # asked about each of the six the way the toolbar asks it before showing
-  # `heading_4`, so the two agree on what a schema accepts. An empty answer
-  # exports nothing, and no list is no rule: the browser makes no heading
-  # rather than one the changeset would refuse.
-  defp attr_values_to_json(attrs) do
+  # The heading's `level` is the one list read off a validator that need
+  # not be a list, through `heading_levels/1`, so what the typed `#` makes
+  # and what the toolbar offers are one answer. An empty list exports
+  # nothing, and no list is no rule: the browser makes no heading rather
+  # than one the changeset would refuse.
+  defp attr_values_to_json(%NodeSpec{} = spec) do
     values =
-      for {name, %Attr{} = attr} <- attrs,
-          list = Attr.values(attr) || accepted_levels(name, attr),
+      for {name, %Attr{} = attr} <- spec.attrs,
+          list = closed_list(spec, name, attr),
+          list != [],
           into: %{},
           do: {Atom.to_string(name), list}
 
     if values == %{}, do: nil, else: values
   end
 
+  defp closed_list(%NodeSpec{name: :heading} = spec, :level, _attr), do: heading_levels(spec)
+  defp closed_list(_spec, _name, attr), do: Attr.values(attr)
+
   @levels Enum.to_list(1..6)
 
-  defp accepted_levels(:level, %Attr{validate: validate}) do
-    case Enum.filter(@levels, &(Attr.validate(validate, &1) == :ok)) do
-      [] -> nil
-      levels -> levels
-    end
-  end
+  @doc """
+  The heading levels a node's `:level` validator accepts, of the six HTML
+  has.
 
-  defp accepted_levels(_name, _attr), do: nil
+  Asked of the validator itself, whatever its shape, so the toolbar and the
+  editor's typing rules agree on it. A node without a `:level` accepts none.
+  """
+  @spec heading_levels(NodeSpec.t()) :: [pos_integer()]
+  def heading_levels(%NodeSpec{attrs: %{level: %Attr{validate: validate}}}),
+    do: Enum.filter(@levels, &(Attr.validate(validate, &1) == :ok))
+
+  def heading_levels(%NodeSpec{}), do: []
 
   defp render_as_to_json({:style, property}, attr) do
     %{"style" => property, "values" => Attr.render_values(attr)}
@@ -941,6 +951,7 @@ defmodule Coelho.Schema do
       attrs: build_attrs(Keyword.get(decl, :attrs, [])),
       class: build_class(name, Keyword.get(decl, :class)),
       editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
+      code: Keyword.get(decl, :code, false),
       render: Keyword.get(decl, :render),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
     }

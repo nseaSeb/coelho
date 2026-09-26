@@ -202,7 +202,7 @@ defmodule Coelho.Schema.Default do
         bold: [render: {"strong", []}, parse: ~w(strong b)],
         italic: [render: {"em", []}, parse: ~w(em i)],
         strike: [render: {"s", []}, parse: ~w(s del strike)],
-        code: [render: {"code", []}, parse: ["code"]],
+        code: [code: true, render: {"code", []}, parse: ["code"]],
         link: [
           attrs: [
             href: [required: true, validate: :safe_url],

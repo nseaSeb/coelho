@@ -1220,23 +1220,33 @@ const buildInputRules = (schema) => {
   const { nodes } = schema;
   const rules = [];
 
-  if (nodes.bullet_list) rules.push(wrappingInputRule(/^\s*([-+*])\s$/, nodes.bullet_list));
+  // The helpers build rules that fire inside a `code` mark too; the same
+  // rule, told not to. The mark says it holds code the way the node does.
+  const outsideCode = (rule) => new InputRule(rule.match, rule.handler, { inCodeMark: false });
+
+  if (nodes.bullet_list) {
+    rules.push(outsideCode(wrappingInputRule(/^\s*([-+*])\s$/, nodes.bullet_list)));
+  }
 
   // A list typed as `3. ` starts at three, and an item typed under an
   // existing list joins it only where the number follows on.
+  // Nine digits: past that a number stops being a safe integer, and the
+  // server stores `start` as one.
   if (nodes.ordered_list) {
     rules.push(
-      wrappingInputRule(
-        /^(\d+)\.\s$/,
-        nodes.ordered_list,
-        (match) => ({ start: Number(match[1]) }),
-        (match, node) => node.childCount + node.attrs.start === Number(match[1])
+      outsideCode(
+        wrappingInputRule(
+          /^(\d{1,9})\.\s$/,
+          nodes.ordered_list,
+          (match) => ({ start: Number(match[1]) }),
+          (match, node) => node.childCount + node.attrs.start === Number(match[1])
+        )
       )
     );
   }
 
-  if (nodes.blockquote) rules.push(wrappingInputRule(/^\s*>\s$/, nodes.blockquote));
-  if (nodes.code_block) rules.push(textblockTypeInputRule(/^```$/, nodes.code_block));
+  if (nodes.blockquote) rules.push(outsideCode(wrappingInputRule(/^\s*>\s$/, nodes.blockquote)));
+  if (nodes.code_block) rules.push(outsideCode(textblockTypeInputRule(/^```$/, nodes.code_block)));
 
   // Written out rather than through `textblockTypeInputRule`, because that
   // one reads a `null` from getAttrs as "the defaults" and fires anyway: a
@@ -1257,8 +1267,11 @@ const buildInputRules = (schema) => {
 
         if (!levels.includes(level) || !fits) return null;
 
-        return state.tr.delete(start, end).setBlockType(start, start, nodes.heading, { level });
-      })
+        // `keeping`, as the toolbar does: a centred paragraph stays centred.
+        const attrs = keeping({ level });
+
+        return state.tr.delete(start, end).setBlockType(start, start, nodes.heading, attrs);
+      }, { inCodeMark: false })
     );
   }
 
