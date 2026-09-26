@@ -314,6 +314,7 @@ defmodule Coelho.Schema do
     inline: [:inline],
     text: [:text],
     void: [:void],
+    code: [:code],
     class: [:class],
     editor_attrs: [:editor_attrs],
     render: [:render],
@@ -727,6 +728,7 @@ defmodule Coelho.Schema do
     |> put_unless_nil("parseDOM", parse_dom_to_json(spec.parse))
     |> put_when_true("inline", spec.inline)
     |> put_when_true("atom", spec.void)
+    |> put_when_true("code", spec.code)
   end
 
   # The browser draws it; the server never does. What the page carries is the
@@ -858,16 +860,32 @@ defmodule Coelho.Schema do
   # makes something by itself — which today is the heading level a typed
   # `### ` asks for. Beside `attrs` rather than inside an attribute's own
   # object, for the reason `attrRenderAs` is.
+  #
+  # A `level` whose validator is not a list — a function, `:integer` — is
+  # asked about each of the six the way the toolbar asks it before showing
+  # `heading_4`, so the two agree on what a schema accepts. An empty answer
+  # exports nothing, and no list is no rule: the browser makes no heading
+  # rather than one the changeset would refuse.
   defp attr_values_to_json(attrs) do
     values =
       for {name, %Attr{} = attr} <- attrs,
-          list = Attr.values(attr),
-          list != nil,
+          list = Attr.values(attr) || accepted_levels(name, attr),
           into: %{},
           do: {Atom.to_string(name), list}
 
     if values == %{}, do: nil, else: values
   end
+
+  @levels Enum.to_list(1..6)
+
+  defp accepted_levels(:level, %Attr{validate: validate}) do
+    case Enum.filter(@levels, &(Attr.validate(validate, &1) == :ok)) do
+      [] -> nil
+      levels -> levels
+    end
+  end
+
+  defp accepted_levels(_name, _attr), do: nil
 
   defp render_as_to_json({:style, property}, attr) do
     %{"style" => property, "values" => Attr.render_values(attr)}
@@ -906,6 +924,7 @@ defmodule Coelho.Schema do
       inline: Keyword.get(decl, :inline, false),
       text: Keyword.get(decl, :text, false),
       void: Keyword.get(decl, :void, false),
+      code: Keyword.get(decl, :code, false),
       class: build_class(name, Keyword.get(decl, :class)),
       editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
       render: Keyword.get(decl, :render),

@@ -252,6 +252,47 @@ defmodule Coelho.SchemaTest do
       assert narrow_nodes["heading"]["attrValues"] == %{"level" => [1, 2]}
     end
 
+    test "asks a level validator that is not a list about each of the six" do
+      # The toolbar asks `Attr.validate` before it shows `heading_4`; the
+      # typed `#### ` has to get the same answer, or a schema whose validator
+      # is a function makes a heading the changeset refuses.
+      heading = fn validate ->
+        Schema.default()
+        |> Schema.extend(
+          nodes: [
+            heading: [
+              content: "inline*",
+              group: "block",
+              attrs: [level: [default: 1, validate: validate]],
+              render: {"h1", []},
+              parse: ["h1"]
+            ]
+          ]
+        )
+        |> Schema.to_json()
+        |> Map.fetch!("nodes")
+        |> Enum.find(&(hd(&1) == "heading"))
+        |> Enum.at(1)
+      end
+
+      assert heading.(fn level -> if level in 1..3, do: :ok, else: {:error, "too deep"} end)[
+               "attrValues"
+             ] ==
+               %{"level" => [1, 2, 3]}
+
+      assert heading.(:integer)["attrValues"] == %{"level" => [1, 2, 3, 4, 5, 6]}
+      # Nothing accepted: no list, and the browser makes no heading at all.
+      refute Map.has_key?(heading.(fn _level -> {:error, "never"} end), "attrValues")
+    end
+
+    test "carries the code flag, so the browser keeps it when it draws the node itself" do
+      json = Schema.to_json(Schema.default())
+      nodes = Map.new(json["nodes"], fn [name, spec] -> {name, spec} end)
+
+      assert nodes["code_block"]["code"] == true
+      refute Map.has_key?(nodes["paragraph"], "code")
+    end
+
     test "spells 'no marks allowed' as an empty string" do
       json = Schema.to_json(Schema.default())
       nodes = Map.new(json["nodes"], fn [name, spec] -> {name, spec} end)

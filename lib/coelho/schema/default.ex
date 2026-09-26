@@ -155,6 +155,7 @@ defmodule Coelho.Schema.Default do
             content: "text*",
             group: "block",
             marks: :none,
+            code: true,
             attrs: [language: [default: nil, validate: {:nullable, &__MODULE__.language/1}]],
             render: &__MODULE__.render_code_block/2,
             parse: ["pre"]

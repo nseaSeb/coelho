@@ -249,13 +249,25 @@
   display: block;
 }
 
+/* The line a drag would land on. prosemirror-dropcursor sizes and places
+ * it; the colour is left to this file so both cursors follow the theme. */
+.coelho-dropcursor {
+  background-color: var(--coelho-text);
+}
+
 /* -- What the document is made of ---------------------------------------- */
 
-.coelho-content .ProseMirror > :first-child {
+/* The gap cursor is a child of the editor too, drawn before the first block
+ * or after the last when that is where the caret is — and a block that
+ * stops being first for the time the caret shows would get its margin back
+ * and move. */
+.coelho-content .ProseMirror > :first-child,
+.coelho-content .ProseMirror > .ProseMirror-gapcursor:first-child + * {
   margin-block-start: 0;
 }
 
-.coelho-content .ProseMirror > :last-child {
+.coelho-content .ProseMirror > :last-child,
+.coelho-content .ProseMirror > :has(+ .ProseMirror-gapcursor:last-child) {
   margin-block-end: 0;
 }
 

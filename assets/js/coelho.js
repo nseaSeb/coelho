@@ -1201,7 +1201,8 @@ const editorPlugins = (schema) => [
   keymap(buildKeymap(schema)),
   keymap(baseKeymap),
   ...(schema.nodes.table ? [tableEditing()] : []),
-  dropCursor(),
+  // Its colour is the stylesheet's to decide, beside the gap cursor's.
+  dropCursor({ color: false, class: "coelho-dropcursor" }),
   gapCursor()
 ];
 
@@ -1241,9 +1242,11 @@ const buildInputRules = (schema) => {
   // one reads a `null` from getAttrs as "the defaults" and fires anyway: a
   // schema accepting levels 1 and 3 would turn `## ` into a level-one
   // heading instead of leaving the two characters alone.
-  if (nodes.heading) {
-    const levels = nodes.heading.spec.attrValues?.level ?? [1, 2, 3, 4, 5, 6];
+  // No list means the server could not say which levels it accepts, and no
+  // list is no rule.
+  const levels = nodes.heading?.spec.attrValues?.level;
 
+  if (nodes.heading && levels) {
     rules.push(
       new InputRule(/^(#{1,6})\s$/, (state, match, start, end) => {
         const level = match[1].length;
@@ -2275,6 +2278,19 @@ export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) => ({
         if (!files.length) return;
 
         event.preventDefault();
+
+        // A dropped file lands where the drop cursor drew its line, which
+        // is where the pointer was and not where the caret is: ProseMirror
+        // moves the selection for a dropped slice, and a file is none.
+        if (event.type === "drop") {
+          const pos = this._view?.posAtCoords({ left: event.clientX, top: event.clientY });
+
+          if (pos) {
+            const { state } = this._view;
+            this._view.dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(pos.pos))));
+          }
+        }
+
         this.upload(uploadName, files);
       };
 

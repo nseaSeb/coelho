@@ -12,7 +12,10 @@ declares the node it makes, and a heading only at a level the schema's own
 `:level` validator accepts: the closed list travels to the browser beside
 the attributes, as `attrValues`, so `#### ` in a schema of three levels
 stays four characters rather than becoming a block the changeset refuses.
-Nothing fires inside a code block, where `# comment` is a comment.
+Nothing fires inside a code block, where `# comment` is a comment: a node
+holding code now says so with `code: true` in its declaration, which
+`code_block` does and which travels to the browser with the rest of the
+schema, so an application drawing the node itself keeps the flag.
 
 `Backspace` right after a rule fired puts the characters back — `# ` was
 meant literally — and falls through to the ordinary key otherwise.
