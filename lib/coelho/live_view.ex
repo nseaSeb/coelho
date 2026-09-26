@@ -145,10 +145,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
           hooks: { Coelho, ...otherHooks }
         })
 
-    It expects `@nseaprotector/acme-script`, `prosemirror-state`,
-    `prosemirror-view`, `prosemirror-model`, `prosemirror-keymap`,
-    `prosemirror-commands` and `prosemirror-history` to be installed in the
-    application.
+    It expects the ProseMirror packages named in `assets/package.json`'s
+    `peerDependencies` to be installed in the application, which
+    `mix coelho.install` does and names when one is missing.
 
     ## What stays the browser's
 
