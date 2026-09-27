@@ -107,6 +107,7 @@ defmodule Coelho.Schema do
           node_names: %{optional(String.t()) => atom()},
           mark_names: %{optional(String.t()) => atom()},
           mark_ranks: %{optional(atom()) => non_neg_integer()},
+          heading_levels: [pos_integer()],
           parse_tags: MapSet.t(String.t()) | nil
         }
 
@@ -709,13 +710,22 @@ defmodule Coelho.Schema do
   """
   @spec to_json(t()) :: map()
   def to_json(%__MODULE__{} = schema) do
+    heading =
+      case resolve_node_name(schema, "heading") do
+        {:ok, name} -> name
+        :error -> nil
+      end
+
     %{
       "topNode" => Atom.to_string(schema.top_node),
       "limits" => limits_to_json(schema.limits),
       "nodes" =>
         Enum.map(
           schema.node_order,
-          &[Atom.to_string(&1), node_to_json(schema.nodes[&1], heading_values(schema, &1))]
+          &[
+            Atom.to_string(&1),
+            node_to_json(schema.nodes[&1], heading_values(schema, &1, heading))
+          ]
         ),
       "marks" =>
         Enum.map(schema.mark_order, &[Atom.to_string(&1), mark_to_json(schema.marks[&1])])
@@ -871,14 +881,9 @@ defmodule Coelho.Schema do
   # than inside the attribute's own object, for the reason `attrRenderAs`
   # is. An empty list exports nothing, and no list is no rule: the browser
   # makes no heading rather than one the changeset would refuse.
-  defp heading_values(%__MODULE__{heading_levels: []}, _name), do: nil
-
-  defp heading_values(%__MODULE__{} = schema, name) do
-    case resolve_node_name(schema, "heading") do
-      {:ok, ^name} -> %{"level" => schema.heading_levels}
-      _other -> nil
-    end
-  end
+  defp heading_values(%__MODULE__{heading_levels: []}, _name, _heading), do: nil
+  defp heading_values(%__MODULE__{} = schema, name, name), do: %{"level" => schema.heading_levels}
+  defp heading_values(%__MODULE__{}, _name, _heading), do: nil
 
   @html_levels Enum.to_list(1..6)
 
@@ -909,10 +914,15 @@ defmodule Coelho.Schema do
     end
   end
 
+  # A function written for the levels it takes — `fn 1 -> :ok end` — has
+  # refused the others. Anything else a validator raises is its author's to
+  # see, not a level to leave out: swallowing an undefined function here
+  # would ship an editor with no heading buttons and nothing pointing at why.
   defp accepts?(validate, level) do
     Attr.validate(validate, level) == :ok
   rescue
-    _refused -> false
+    FunctionClauseError -> false
+    CaseClauseError -> false
   end
 
   defp render_as_to_json({:style, property}, attr) do

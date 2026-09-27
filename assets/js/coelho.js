@@ -28,7 +28,6 @@ import {
 } from "prosemirror-commands";
 import { history, undo, redo } from "prosemirror-history";
 import {
-  InputRule,
   inputRules,
   undoInputRule,
   wrappingInputRule,
@@ -1220,9 +1219,15 @@ const buildInputRules = (schema) => {
   const { nodes } = schema;
   const rules = [];
 
-  // The helpers build rules that fire inside a `code` mark too; the same
-  // rule, told not to. The mark says it holds code the way the node does.
-  const outsideCode = (rule) => new InputRule(rule.match, rule.handler, { inCodeMark: false });
+  // The helpers build rules that fire inside a `code` mark too, and take no
+  // option saying otherwise; `inCodeMark` is the rule's own public field,
+  // the one the option sets. The mark says it holds code the way the node
+  // does.
+  const outsideCode = (rule) => {
+    rule.inCodeMark = false;
+
+    return rule;
+  };
 
   if (nodes.bullet_list) {
     rules.push(outsideCode(wrappingInputRule(/^\s*([-+*])\s$/, nodes.bullet_list)));

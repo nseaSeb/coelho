@@ -287,6 +287,10 @@ defmodule Coelho.SchemaTest do
       # A validator written for the levels it takes has refused the others,
       # rather than raising inside Schema.new before any document exists.
       assert heading.(fn 1 -> :ok end)["attrValues"] == %{"level" => [1]}
+      # And a validator that is broken says so, rather than refusing six times.
+      assert_raise UndefinedFunctionError, fn ->
+        heading.(Function.capture(Missing.Levels, :ok?, 1))
+      end
     end
 
     test "heading_levels/1 is the toolbar's answer too, computed once" do

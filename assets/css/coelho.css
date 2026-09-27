@@ -199,11 +199,16 @@
   outline: none;
   overflow-y: auto;
   padding: var(--coelho-pad);
-  /* The containing block of both cursors below: the gap cursor is
-   * positioned, and would otherwise sit on some ancestor and stay put while
-   * the editor scrolls; the drop cursor is appended to the nearest
-   * positioned ancestor, and this keeps it inside `.coelho`, where the
-   * colour it reads is declared. */
+  /* The gap cursor's containing block: it is positioned, and would
+   * otherwise sit on some ancestor and stay put while the editor scrolls. */
+  position: relative;
+}
+
+/* Where the drop cursor lands: prosemirror-dropcursor appends it to the
+ * editor's offsetParent, the nearest positioned ancestor *above* the
+ * editor, and this keeps that inside `.coelho`, where the colour it reads
+ * is declared. */
+.coelho-content {
   position: relative;
 }
 
@@ -256,9 +261,8 @@
 }
 
 /* The line a drag would land on. prosemirror-dropcursor sizes and places
- * it, inside the editor since the editor is positioned, which is why it is
- * named beside the gap cursor above; the colour is left to this file so both
- * cursors follow the theme. */
+ * it, in `.coelho-content`; the colour is left to this file so both cursors
+ * follow the theme. */
 .coelho-dropcursor {
   background-color: var(--coelho-text, currentColor);
 }
@@ -275,8 +279,7 @@
 }
 
 .coelho-content .ProseMirror > :last-child,
-.coelho-content .ProseMirror > :has(+ .ProseMirror-gapcursor:last-child),
-.coelho-content .ProseMirror > :has(+ .coelho-dropcursor:last-child) {
+.coelho-content .ProseMirror > :has(+ .ProseMirror-gapcursor:last-child) {
   margin-block-end: 0;
 }
 
