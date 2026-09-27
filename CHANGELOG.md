@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0 — 2026-09-27
 
 What typing makes, and one dependency fewer.
 
@@ -39,7 +39,7 @@ to run, since the task never removes anything.
 
 ### README
 
-The dependency line names the version hex serves, and the status paragraph
+The dependency line names the current release, and the status paragraph
 no longer says the demo is still to come.
 
 ## 0.15.0 — 2026-09-09
