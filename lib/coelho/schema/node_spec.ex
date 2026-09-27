@@ -13,6 +13,9 @@ defmodule Coelho.Schema.NodeSpec do
     * `:inline` — whether the node is inline rather than block
     * `:text` — set only on the built-in `text` node
     * `:void` — rendered as a self-closing tag, without children
+    * `:code` — holds code: the editor neither turns `# ` at the start of a
+      line into a heading nor opens a suggestion list inside it. Exported to
+      the browser, so an application drawing the node itself keeps the flag
     * `:class` — a CSS class merged into the rendered element *and* exported
       to the browser, so the editor shows the class the public page will use
     * `:editor_attrs` — extra DOM attributes for the editor only, exported
@@ -54,6 +57,7 @@ defmodule Coelho.Schema.NodeSpec do
           inline: boolean(),
           text: boolean(),
           void: boolean(),
+          code: boolean(),
           class: String.t() | nil,
           editor_attrs: %{optional(String.t()) => String.t()},
           render: render(),
@@ -74,6 +78,7 @@ defmodule Coelho.Schema.NodeSpec do
     inline: false,
     text: false,
     void: false,
+    code: false,
     class: nil,
     editor_attrs: %{},
     render: nil,

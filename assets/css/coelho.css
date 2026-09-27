@@ -199,6 +199,17 @@
   outline: none;
   overflow-y: auto;
   padding: var(--coelho-pad);
+  /* The gap cursor's containing block: it is positioned, and would
+   * otherwise sit on some ancestor and stay put while the editor scrolls. */
+  position: relative;
+}
+
+/* Where the drop cursor lands: prosemirror-dropcursor appends it to the
+ * editor's offsetParent, the nearest positioned ancestor *above* the
+ * editor, and this keeps that inside `.coelho`, where the colour it reads
+ * is declared. */
+.coelho-content {
+  position: relative;
 }
 
 /* The placeholder is an attribute rather than a node: a node would be
@@ -219,13 +230,56 @@
   order: 1;
 }
 
+/* The caret ProseMirror draws where there is no text to put one in — before
+ * a rule at the top of the document, between two tables. From
+ * prosemirror-gapcursor's own stylesheet, so an application has one file to
+ * import and not two, in the text colour rather than black. */
+.ProseMirror-gapcursor {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+}
+
+.ProseMirror-gapcursor::after {
+  animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite;
+  border-top: 1px solid var(--coelho-text);
+  content: "";
+  display: block;
+  position: absolute;
+  top: -2px;
+  width: 20px;
+}
+
+@keyframes ProseMirror-cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+
+/* The line a drag would land on. prosemirror-dropcursor sizes and places
+ * it, in `.coelho-content`; the colour is left to this file so both cursors
+ * follow the theme. */
+.coelho-dropcursor {
+  background-color: var(--coelho-text, currentColor);
+}
+
 /* -- What the document is made of ---------------------------------------- */
 
-.coelho-content .ProseMirror > :first-child {
+/* The gap cursor is a child of the editor too, drawn before the first block
+ * or after the last when that is where the caret is — and a block that
+ * stops being first for the time the caret shows would get its margin back
+ * and move. */
+.coelho-content .ProseMirror > :first-child,
+.coelho-content .ProseMirror > .ProseMirror-gapcursor:first-child + * {
   margin-block-start: 0;
 }
 
-.coelho-content .ProseMirror > :last-child {
+.coelho-content .ProseMirror > :last-child,
+.coelho-content .ProseMirror > :has(+ .ProseMirror-gapcursor:last-child) {
   margin-block-end: 0;
 }
 

@@ -107,6 +107,7 @@ defmodule Coelho.Schema do
           node_names: %{optional(String.t()) => atom()},
           mark_names: %{optional(String.t()) => atom()},
           mark_ranks: %{optional(atom()) => non_neg_integer()},
+          heading_levels: [pos_integer()],
           parse_tags: MapSet.t(String.t()) | nil
         }
 
@@ -136,6 +137,10 @@ defmodule Coelho.Schema do
             node_names: %{},
             mark_names: %{},
             mark_ranks: %{},
+            # Derived in `stamp/1` too, before `:json` is, which carries it:
+            # the heading levels the `:level` validator accepts, asked once
+            # of the validator rather than once per toolbar button.
+            heading_levels: [],
             # Derived in `stamp/1`, like `:json` and `:empty`: a MapSet
             # literal as a struct default is an opaque term built outside the
             # module that owns it, which is exactly what Dialyzer's opacity
@@ -206,6 +211,7 @@ defmodule Coelho.Schema do
   # would grow it without bound. A value that carries its own derivations is
   # collected with the schema it belongs to.
   defp stamp(schema) do
+    schema = %{schema | heading_levels: build_heading_levels(schema)}
     exported = to_json(schema)
 
     %{
@@ -314,6 +320,7 @@ defmodule Coelho.Schema do
     inline: [:inline],
     text: [:text],
     void: [:void],
+    code: [:code],
     class: [:class],
     editor_attrs: [:editor_attrs],
     render: [:render],
@@ -327,6 +334,7 @@ defmodule Coelho.Schema do
     attrs: [:attrs],
     class: [:class],
     editor_attrs: [:editor_attrs],
+    code: [:code],
     render: [:render],
     parse: [:parse]
   ]
@@ -702,30 +710,44 @@ defmodule Coelho.Schema do
   """
   @spec to_json(t()) :: map()
   def to_json(%__MODULE__{} = schema) do
+    heading =
+      case resolve_node_name(schema, "heading") do
+        {:ok, name} -> name
+        :error -> nil
+      end
+
     %{
       "topNode" => Atom.to_string(schema.top_node),
       "limits" => limits_to_json(schema.limits),
       "nodes" =>
-        Enum.map(schema.node_order, &[Atom.to_string(&1), node_to_json(schema.nodes[&1])]),
+        Enum.map(
+          schema.node_order,
+          &[
+            Atom.to_string(&1),
+            node_to_json(schema.nodes[&1], heading_values(schema, &1, heading))
+          ]
+        ),
       "marks" =>
         Enum.map(schema.mark_order, &[Atom.to_string(&1), mark_to_json(schema.marks[&1])])
     }
     |> put_unless_nil("version", schema.version)
   end
 
-  defp node_to_json(%NodeSpec{} = spec) do
+  defp node_to_json(%NodeSpec{} = spec, attr_values) do
     %{}
     |> put_unless_nil("content", spec.content_source)
     |> put_unless_nil("group", groups_to_json(spec.group))
     |> put_unless_nil("marks", marks_to_json(spec.marks))
     |> put_unless_nil("attrs", attrs_to_json(spec.attrs))
     |> put_unless_nil("attrRenderAs", attr_render_as_to_json(spec.attrs))
+    |> put_unless_nil("attrValues", attr_values)
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, spec.void))
     |> put_unless_nil("editorText", editor_text_to_json(spec.editor_text))
     |> put_unless_nil("parseDOM", parse_dom_to_json(spec.parse))
     |> put_when_true("inline", spec.inline)
     |> put_when_true("atom", spec.void)
+    |> put_when_true("code", spec.code)
   end
 
   # The browser draws it; the server never does. What the page carries is the
@@ -742,6 +764,7 @@ defmodule Coelho.Schema do
     |> put_unless_nil("editorAttrs", editor_attrs_to_json(spec.class, spec.editor_attrs))
     |> put_unless_nil("renderDOM", render_dom_to_json(spec.render, false))
     |> put_unless_nil("parseDOM", parse_dom_to_json(spec.parse))
+    |> put_when_true("code", spec.code)
   end
 
   # A ProseMirror DOMOutputSpec, built here from the same declaration the
@@ -853,6 +876,55 @@ defmodule Coelho.Schema do
     if rendered == %{}, do: nil, else: rendered
   end
 
+  # The one closed list the browser asks about before it makes something by
+  # itself: the heading level a typed `### ` asks for. Beside `attrs` rather
+  # than inside the attribute's own object, for the reason `attrRenderAs`
+  # is. An empty list exports nothing, and no list is no rule: the browser
+  # makes no heading rather than one the changeset would refuse.
+  defp heading_values(%__MODULE__{heading_levels: []}, _name, _heading), do: nil
+  defp heading_values(%__MODULE__{} = schema, name, name), do: %{"level" => schema.heading_levels}
+  defp heading_values(%__MODULE__{}, _name, _heading), do: nil
+
+  @html_levels Enum.to_list(1..6)
+
+  @doc """
+  The six heading levels HTML has.
+  """
+  @spec html_heading_levels() :: [pos_integer()]
+  def html_heading_levels, do: @html_levels
+
+  @doc """
+  The heading levels the schema's `heading` accepts, of the six HTML has.
+
+  Asked of the `:level` validator itself when the schema is built, whatever
+  its shape, so the toolbar and the editor's typing rules agree on it and
+  neither asks twice. A validator that raises on a level — a function
+  written for the two it takes — has refused it. No `heading`, or one
+  without a `:level`, accepts none.
+  """
+  @spec heading_levels(t()) :: [pos_integer()]
+  def heading_levels(%__MODULE__{heading_levels: levels}), do: levels
+
+  defp build_heading_levels(%__MODULE__{} = schema) do
+    with {:ok, name} <- resolve_node_name(schema, "heading"),
+         %NodeSpec{attrs: %{level: %Attr{validate: validate}}} <- node_spec(schema, name) do
+      Enum.filter(@html_levels, &accepts?(validate, &1))
+    else
+      _no -> []
+    end
+  end
+
+  # A function written for the levels it takes — `fn 1 -> :ok end` — has
+  # refused the others. Anything else a validator raises is its author's to
+  # see, not a level to leave out: swallowing an undefined function here
+  # would ship an editor with no heading buttons and nothing pointing at why.
+  defp accepts?(validate, level) do
+    Attr.validate(validate, level) == :ok
+  rescue
+    FunctionClauseError -> false
+    CaseClauseError -> false
+  end
+
   defp render_as_to_json({:style, property}, attr) do
     %{"style" => property, "values" => Attr.render_values(attr)}
   end
@@ -890,6 +962,7 @@ defmodule Coelho.Schema do
       inline: Keyword.get(decl, :inline, false),
       text: Keyword.get(decl, :text, false),
       void: Keyword.get(decl, :void, false),
+      code: Keyword.get(decl, :code, false),
       class: build_class(name, Keyword.get(decl, :class)),
       editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
       render: Keyword.get(decl, :render),
@@ -906,6 +979,7 @@ defmodule Coelho.Schema do
       attrs: build_attrs(Keyword.get(decl, :attrs, [])),
       class: build_class(name, Keyword.get(decl, :class)),
       editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
+      code: Keyword.get(decl, :code, false),
       render: Keyword.get(decl, :render),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
     }

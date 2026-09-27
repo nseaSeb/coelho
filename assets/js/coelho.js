@@ -1,4 +1,3 @@
-import { createHook } from "@nseaprotector/acme-script";
 import OrderedMap from "orderedmap";
 import {
   Schema,
@@ -28,6 +27,14 @@ import {
   exitCode
 } from "prosemirror-commands";
 import { history, undo, redo } from "prosemirror-history";
+import {
+  inputRules,
+  undoInputRule,
+  wrappingInputRule,
+  textblockTypeInputRule
+} from "prosemirror-inputrules";
+import { dropCursor } from "prosemirror-dropcursor";
+import { gapCursor } from "prosemirror-gapcursor";
 import { wrapInList, splitListItem, liftListItem, sinkListItem } from "prosemirror-schema-list";
 
 // The document model, its validation and its server-side rendering all live
@@ -1185,19 +1192,94 @@ const cachedCommandFor = (name, schema, options) => {
 // and is what every command below reads its rectangle from. Added only where
 // the schema has tables, so an application without them carries the plugin
 // but never runs it.
+// `gapCursor` draws a caret where no textblock is — before a rule, between
+// two tables — and `dropCursor` the line a drag would land on.
 const editorPlugins = (schema) => [
   history(),
+  inputRules({ rules: buildInputRules(schema) }),
   keymap(buildKeymap(schema)),
   keymap(baseKeymap),
-  ...(schema.nodes.table ? [tableEditing()] : [])
+  ...(schema.nodes.table ? [tableEditing()] : []),
+  // Its colour is the stylesheet's to decide, beside the gap cursor's.
+  dropCursor({ color: false, class: "coelho-dropcursor" }),
+  gapCursor()
 ];
+
+// What typing at the start of a paragraph turns it into: `# ` a heading,
+// `- ` a list, `> ` a quote, three backticks a code block. Each rule exists
+// only where the schema declares the node it makes, and a heading is made
+// only at a level the schema's own validator accepts — the list travels as
+// `attrValues`, read off the validator the way the toolbar reads it on the
+// server, so `#### ` in a schema of three levels stays four characters
+// rather than becoming a block the changeset refuses.
+//
+// Nothing here fires inside a code block: prosemirror-inputrules skips a
+// textblock whose spec says `code`, which the schema's code_block does.
+const buildInputRules = (schema) => {
+  const { nodes } = schema;
+  const rules = [];
+
+  // The helpers build rules that fire inside a `code` mark too, and take no
+  // option saying otherwise; `inCodeMark` is the rule's own public field,
+  // the one the option sets. The mark says it holds code the way the node
+  // does.
+  const outsideCode = (rule) => {
+    rule.inCodeMark = false;
+
+    return rule;
+  };
+
+  if (nodes.bullet_list) {
+    rules.push(outsideCode(wrappingInputRule(/^\s*([-+*])\s$/, nodes.bullet_list)));
+  }
+
+  // A list typed as `3. ` starts at three, and an item typed under an
+  // existing list joins it only where the number follows on.
+  // Nine digits: past that a number stops being a safe integer, and the
+  // server stores `start` as one.
+  if (nodes.ordered_list) {
+    rules.push(
+      outsideCode(
+        wrappingInputRule(
+          /^(\d{1,9})\.\s$/,
+          nodes.ordered_list,
+          (match) => ({ start: Number(match[1]) }),
+          (match, node) => node.childCount + node.attrs.start === Number(match[1])
+        )
+      )
+    );
+  }
+
+  if (nodes.blockquote) rules.push(outsideCode(wrappingInputRule(/^\s*>\s$/, nodes.blockquote)));
+  if (nodes.code_block) rules.push(outsideCode(textblockTypeInputRule(/^```$/, nodes.code_block)));
+
+  // Only the levels the server said it accepts are in the pattern, so a
+  // `#### ` in a schema of three levels matches nothing and stays as typed.
+  // No list means the server could not say, and no list is no rule.
+  const levels = nodes.heading?.spec.attrValues?.level;
+
+  if (nodes.heading && levels?.length) {
+    const pattern = new RegExp(`^(${levels.map((level) => "#".repeat(level)).join("|")})\\s$`);
+
+    // `keeping`, as the toolbar does: a centred paragraph stays centred.
+    const attrs = (match) => keeping({ level: match[1].length });
+
+    rules.push(outsideCode(textblockTypeInputRule(pattern, nodes.heading, attrs)));
+  }
+
+  return rules;
+};
 
 const buildKeymap = (schema) => {
   const { nodes, marks } = schema;
+  // Backspace right after a rule fired puts the characters back — `# ` was
+  // meant literally — and answers false otherwise, so the key falls through
+  // to `baseKeymap` the way Tab does below.
   const bindings = {
     "Mod-z": undo,
     "Shift-Mod-z": redo,
-    "Mod-y": redo
+    "Mod-y": redo,
+    Backspace: undoInputRule
   };
 
   if (marks.bold) bindings["Mod-b"] = toggleMark(marks.bold);
@@ -1436,1011 +1518,1023 @@ const caretRect = (view, pos) => {
 
 // functions and neither can come from Elixir, which is why they are taken
 // here rather than exported with the schema.
-export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) =>
-  createHook({
-    mounted(ctx) {
-      const el = ctx.el;
-      const input = document.getElementById(el.dataset.coelhoInput);
-      const content = el.querySelector(".coelho-content");
+export const createCoelhoHook = ({ nodeViews = {}, ...dom } = {}) => ({
+  mounted() {
+    const el = this.el;
+    const input = document.getElementById(el.dataset.coelhoInput);
+    const content = el.querySelector(".coelho-content");
 
-      // The schema in force and the two fingerprints that say when it moved,
-      // taken up together: `rebuild` does exactly this again, and a version
-      // captured in one place and not the other is an editor that never
-      // notices the next change.
-      this.adoptSchema = (built) => {
-        this._schema = built;
-        this._version = el.dataset.coelhoSchemaVersion;
-        this._toolbarVersion = el.dataset.coelhoToolbarVersion;
+    // The schema in force and the two fingerprints that say when it moved,
+    // taken up together: `rebuild` does exactly this again, and a version
+    // captured in one place and not the other is an editor that never
+    // notices the next change.
+    this.adoptSchema = (built) => {
+      this._schema = built;
+      this._version = el.dataset.coelhoSchemaVersion;
+      this._toolbarVersion = el.dataset.coelhoToolbarVersion;
 
-        return built;
-      };
+      return built;
+    };
 
-      const schema = this.adoptSchema(buildSchema(readSchema(el), dom));
-      this._input = input;
-      this._written = new Set();
-      this._writtenOrder = [];
-      this._writtenLimit = 200;
-      this._acknowledged = true;
-      this._pushedBackFor = null;
-      this._pending = new Map();
+    const schema = this.adoptSchema(buildSchema(readSchema(el), dom));
+    this._input = input;
+    this._written = new Set();
+    this._writtenOrder = [];
+    this._writtenLimit = 200;
+    this._acknowledged = true;
+    this._pushedBackFor = null;
+    this._pending = new Map();
 
-      // Everything the hook starts and nobody else will stop. A capture
-      // waits fifteen seconds for an upload that may never answer, and a
-      // fetch waits on someone else's host: both outlive `destroyed` by
-      // default, and both come back to a torn-down editor — dispatching on
-      // a destroyed view, and holding the document alive until they fire.
-      this._destroyed = false;
-      this._timers = new Set();
-      this._frame = null;
-      this._aborter = new AbortController();
+    // Everything the hook starts and nobody else will stop. A capture
+    // waits fifteen seconds for an upload that may never answer, and a
+    // fetch waits on someone else's host: both outlive `destroyed` by
+    // default, and both come back to a torn-down editor — dispatching on
+    // a destroyed view, and holding the document alive until they fire.
+    this._destroyed = false;
+    this._timers = new Set();
+    this._frame = null;
+    this._aborter = new AbortController();
 
-      this.later = (fn, ms) => {
-        const timer = setTimeout(() => {
-          this._timers.delete(timer);
-          if (!this._destroyed) fn();
-        }, ms);
+    this.later = (fn, ms) => {
+      const timer = setTimeout(() => {
+        this._timers.delete(timer);
+        if (!this._destroyed) fn();
+      }, ms);
 
-        this._timers.add(timer);
-      };
+      this._timers.add(timer);
+    };
 
-      this._maxlength = Number(el.dataset.coelhoMaxlength) || 0;
-      this._counter = el.querySelector(".coelho-counter");
-      this._count = el.querySelector("[data-coelho-count]");
+    this._maxlength = Number(el.dataset.coelhoMaxlength) || 0;
+    this._counter = el.querySelector(".coelho-counter");
+    this._count = el.querySelector("[data-coelho-count]");
 
-      // Captured once, and deliberately not refreshed in updated(). The token
-      // exists so the application can refuse a flush from before whatever it
-      // just did — cancelling a draft re-renders the editors, and the ones
-      // being torn down would otherwise push back the content the cancel
-      // threw away. An editor that read the *new* token on its way out would
-      // have its stale content accepted, which is the bug the token is for.
-      // What the field says, when the application has said. Anything left
-      // out keeps its English, so a partial translation is a partial
-      // translation rather than a blank label.
-      // Re-read whenever the toolbar is redrawn, because that is what a
-      // language switched mid-session looks like from here — read once at
-      // mount and the buttons change while the field keeps the words it was
-      // born with.
-      this.readFieldLabels = () => {
-        this._fieldLabels = JSON.parse(el.dataset.coelhoFieldLabels ?? "{}");
-      };
+    // Captured once, and deliberately not refreshed in updated(). The token
+    // exists so the application can refuse a flush from before whatever it
+    // just did — cancelling a draft re-renders the editors, and the ones
+    // being torn down would otherwise push back the content the cancel
+    // threw away. An editor that read the *new* token on its way out would
+    // have its stale content accepted, which is the bug the token is for.
+    // What the field says, when the application has said. Anything left
+    // out keeps its English, so a partial translation is a partial
+    // translation rather than a blank label.
+    // Re-read whenever the toolbar is redrawn, because that is what a
+    // language switched mid-session looks like from here — read once at
+    // mount and the buttons change while the field keeps the words it was
+    // born with.
+    this.readFieldLabels = () => {
+      this._fieldLabels = JSON.parse(el.dataset.coelhoFieldLabels ?? "{}");
+    };
 
-      this.readFieldLabels();
+    this.readFieldLabels();
 
-      // `in` and not `||`: an application that passes "" means "say nothing
-      // here", and falling back on it would answer with the English.
-      this.says = (key, fallback) =>
-        key in this._fieldLabels ? this._fieldLabels[key] : fallback;
+    // `in` and not `||`: an application that passes "" means "say nothing
+    // here", and falling back on it would answer with the English.
+    this.says = (key, fallback) =>
+      key in this._fieldLabels ? this._fieldLabels[key] : fallback;
 
-      this.readSuggest = () => {
-        this._suggestRaw = el.dataset.coelhoSuggest;
-        this._suggest = JSON.parse(this._suggestRaw || "[]");
-      };
+    this.readSuggest = () => {
+      this._suggestRaw = el.dataset.coelhoSuggest;
+      this._suggest = JSON.parse(this._suggestRaw || "[]");
+    };
 
-      this.readSuggest();
-      this._suggestion = null;
+    this.readSuggest();
+    this._suggestion = null;
 
-      // Pushed whenever what the writer is typing after a trigger changes,
-      // and pushed again with `query: null` when there is no longer one:
-      // an application draws its list from this event and has nothing else
-      // to close it with. A selection that moves ends a query as surely as
-      // a space does, so this runs on every transaction rather than on the
-      // ones that changed the document.
-      // Said when the positions stop meaning anything: a document replaced
-      // under the list, or the triggers taken away. Without it the
-      // application's list stays on the page with nothing to close it, and
-      // an insertion answers it against positions in a document that is
-      // gone — which is a `RangeError` out of the event handler, or worse,
-      // text replaced somewhere the writer was not looking.
-      // Two things, kept apart on purpose. `_suggestion` is the range an
-      // insertion replaces; `_drawn` is what the application has on screen.
-      // A blur takes the second down without touching the first, because the
-      // click that caused it may be the one choosing from the list — and the
-      // node then has to land on the query rather than beside it.
+    // Pushed whenever what the writer is typing after a trigger changes,
+    // and pushed again with `query: null` when there is no longer one:
+    // an application draws its list from this event and has nothing else
+    // to close it with. A selection that moves ends a query as surely as
+    // a space does, so this runs on every transaction rather than on the
+    // ones that changed the document.
+    // Said when the positions stop meaning anything: a document replaced
+    // under the list, or the triggers taken away. Without it the
+    // application's list stays on the page with nothing to close it, and
+    // an insertion answers it against positions in a document that is
+    // gone — which is a `RangeError` out of the event handler, or worse,
+    // text replaced somewhere the writer was not looking.
+    // Two things, kept apart on purpose. `_suggestion` is the range an
+    // insertion replaces; `_drawn` is what the application has on screen.
+    // A blur takes the second down without touching the first, because the
+    // click that caused it may be the one choosing from the list — and the
+    // node then has to land on the query rather than beside it.
+    this._drawn = null;
+
+    this.drawSuggestion = (found) => {
+      this._drawn = { event: found.event, trigger: found.trigger };
+
+      this.pushEvent(found.event, {
+        trigger: found.trigger,
+        query: found.query,
+        rect: caretRect(this._view, found.from)
+      });
+    };
+
+    this.closeSuggestion = () => {
+      const drawn = this._drawn;
+
       this._drawn = null;
 
-      this.drawSuggestion = (found) => {
-        this._drawn = { event: found.event, trigger: found.trigger };
+      if (drawn) this.pushEvent(drawn.event, { trigger: drawn.trigger, query: null, rect: null });
+    };
 
-        ctx.push(found.event, {
-          trigger: found.trigger,
-          query: found.query,
-          rect: caretRect(this._view, found.from)
-        });
-      };
+    // The positions as well as the drawing: for a document replaced under
+    // the list, the triggers taken away, or the editor going.
+    this.endSuggestion = () => {
+      this._suggestion = null;
+      this.closeSuggestion();
+    };
 
-      this.closeSuggestion = () => {
-        const drawn = this._drawn;
-
-        this._drawn = null;
-
-        if (drawn) ctx.push(drawn.event, { trigger: drawn.trigger, query: null, rect: null });
-      };
-
-      // The positions as well as the drawing: for a document replaced under
-      // the list, the triggers taken away, or the editor going.
-      this.endSuggestion = () => {
-        this._suggestion = null;
-        this.closeSuggestion();
-      };
-
-      this.refreshSuggestion = () => {
-        if (!this._suggest.length) {
-          this.endSuggestion();
-          return;
-        }
-
-        const found = suggestionAt(this._view.state, this._suggest);
-        const was = this._suggestion;
-
-        // Kept whatever happens, and before anything is compared: the same
-        // word can be typed after a trigger in two places, and it is the
-        // *positions* an insertion replaces. Holding the ones from the first
-        // of them would put the node in a paragraph the writer left.
-        this._suggestion = found;
-
-        const same =
-          found &&
-          was &&
-          found.event === was.event &&
-          found.trigger === was.trigger &&
-          found.query === was.query &&
-          found.from === was.from;
-
-        // Nothing has moved. A list the writer dismissed by clicking away
-        // stays dismissed until they type: the query is what reopens it.
-        if (same) return;
-
-        // A query that ends leaves a list open with nothing to close it, and
-        // so does one that moves to another trigger — the event the list was
-        // drawn from has to hear that it is over even when another event is
-        // being pushed in the same breath, or two lists are drawn at once.
-        if (!found || (this._drawn && found.event !== this._drawn.event)) {
-          this.closeSuggestion();
-        }
-
-        if (found) this.drawSuggestion(found);
-      };
-
-      this._flushEvent = el.dataset.coelhoFlushEvent;
-      this._flushToken = el.dataset.coelhoFlushToken ?? null;
-      this._name = input?.name ?? null;
-
-      // A bounded memory of what this editor has put in the input.
-      this.remember = (json) => {
-        const written = digest(json);
-
-        if (this._written.has(written)) return;
-
-        this._written.add(written);
-        this._writtenOrder.push(written);
-
-        if (this._writtenOrder.length > this._writtenLimit) {
-          this._written.delete(this._writtenOrder.shift());
-        }
-      };
-
-      this.wrote = (json) => this._written.has(digest(json));
-
-      const state = EditorState.create({
-        doc: parseDoc(schema, input.value) ?? schema.topNodeType.createAndFill(),
-        plugins: editorPlugins(schema)
-      });
-
-      this._view = new EditorView(content, {
-        state,
-        nodeViews,
-        // Neither handles anything: they say when the list the application
-        // drew is still wanted. `false` leaves the event to ProseMirror.
-        handleDOMEvents: {
-          focus: () => {
-            clearTimeout(this._blurTimer);
-            return false;
-          },
-          blur: () => {
-            clearTimeout(this._blurTimer);
-            this._blurTimer = setTimeout(() => this.closeSuggestion(), BLUR_CLOSE_DELAY);
-            return false;
-          }
-        },
-        transformPastedHTML: (html) => (uploadName ? this.captureFrom(html) : html),
-        dispatchTransaction: (transaction) => {
-          this._view.updateState(this._view.state.apply(transaction));
-          this.refreshToolbar();
-
-          // `_pendingLink` is a pair of positions, and any edit shifts them.
-          // With the field still open, confirming afterwards would have put
-          // the link on a stretch of text that is no longer the one aimed at.
-          if (transaction.docChanged && this._pendingField) this.closeField({ focus: false });
-
-          // Writing the input back when the change *came from* the server
-          // would post it straight back: the server normalises, so its copy
-          // never quite equals what the editor wrote, and the two would
-          // trade rounds forever.
-          if (transaction.docChanged && !transaction.getMeta(REMOTE)) this.syncInput();
-
-          this.refreshSuggestion();
-        }
-      });
-
-      // Runs while the paste is still being parsed, so it is synchronous:
-      // the images come out of the HTML now, and their bytes follow.
-      this.captureFrom = (html) => {
-        const urls = [];
-
-        // The tags are cut out of the string rather than out of a parsed
-        // document: clipboard HTML is often a context-sensitive fragment — a
-        // table row, a list item — and a DOMParser round trip through
-        // `body.innerHTML` throws away exactly those.
-        const stripped = html.replace(IMG_TAG, (tag) => {
-          const src = srcOf(tag);
-
-          if (!isRemote(src)) return tag;
-
-          urls.push(src);
-          return "";
-        });
-
-        if (!urls.length) return html;
-
-        this.captureImages(urls);
-        return stripped;
-      };
-
-      this.syncInput = () => {
-        const snapshot = this._view.state.doc.toJSON();
-        const json = JSON.stringify(snapshot);
-        // Remember what we wrote — and not only the last one. The server
-        // echoes asynchronously, so an echo arriving now may answer a
-        // keystroke from several ago; applying it would roll the writer back
-        // to what they had typed by then.
-        this.remember(json);
-
-        this._lastWritten = json;
-
-        if (input.value !== json) {
-          // Something the server has not answered yet, so an older copy of it
-          // coming back is an echo rather than a decision.
-          this._acknowledged = false;
-          input.value = json;
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-        // On the editor's own element, which lives inside the ignored
-        // container: LiveView patches an element's attributes even when it
-        // spares its children, so a class set on the root or on the
-        // container is undone by the next render.
-        this._view.dom.classList.toggle("coelho-empty", !hasText(this._view.state.doc));
-        this.refreshCount(snapshot);
-      };
-
-      // The same unit `Coelho.Document.text_length/1` counts, so the number
-      // on screen and the number the schema's `max_text_length` is checked
-      // against are the same number. Counting the rendered text instead
-      // would refuse a document the editor still shows as under the limit,
-      // with nothing on screen to explain the gap.
-      // Counting walks the whole document and segments every text node into
-      // graphemes, which is a second full pass on a path that already runs
-      // on every keystroke. The number is for a reader, so it is written
-      // once per frame rather than once per key: the last snapshot wins.
-      this.refreshCount = (snapshot) => {
-        if (!this._count) return;
-
-        this._countOf = snapshot;
-        if (this._frame !== null) return;
-
-        this._frame = requestAnimationFrame(() => {
-          this._frame = null;
-          if (this._destroyed) return;
-
-          // The snapshot it was last given, or the document itself: called
-          // with nothing — which its signature allows — reading `undefined`
-          // paints a zero over a counter that was right.
-          const length = textLength(this._countOf ?? this._view.state.doc.toJSON());
-
-          this._count.textContent = String(length);
-          this._counter?.classList.toggle(
-            "coelho-over",
-            this._maxlength > 0 && length > this._maxlength
-          );
-        });
-      };
-
-      // A schema changed under a mounted editor used to go unnoticed: the
-      // container carries phx-update="ignore", so nothing about the new
-      // vocabulary — its node types, its marks, the classes they carry —
-      // reached the view, and the writer went on seeing the old one. The
-      // server stamps a fingerprint on the hook's own element, which is not
-      // ignored, and this follows it.
-      //
-      // The document is re-parsed against the new schema, so a node it no
-      // longer knows goes; the undo history is dropped with the old schema,
-      // because it is a history of edits the new one may have no words for.
-      this.rebuild = () => {
-        const rebuilt = buildSchema(readSchema(el), dom);
-        const doc = reinterpret(this._view.state.doc, this._schema, rebuilt);
-
-        this.adoptSchema(rebuilt);
-        this._view.updateState(
-          EditorState.create({
-            doc,
-            plugins: editorPlugins(rebuilt)
-          })
-        );
-
-        this.readFieldLabels();
-        this.findLinkField();
-        this.refreshToolbar();
-        // The triggers travel on the same element as the schema, and a patch
-        // that moved one can have moved the other: `updated` returns here
-        // rather than reaching its own check.
-        this.readSuggest();
-        // `updateState` is not a transaction, so nothing above ran the
-        // suggestion refresh, and the positions it holds are in the document
-        // that was just replaced.
+    this.refreshSuggestion = () => {
+      if (!this._suggest.length) {
         this.endSuggestion();
-        // The input still holds the document as it was written under the old
-        // schema. Leaving it there would show one thing and post another, and
-        // the next keystroke would post whatever the rebuild had dropped.
-        this.syncInput();
-      };
-
-      const buttonIn = (event) => {
-        const button = event.target.closest("[data-coelho-command]");
-        return button && el.contains(button) ? button : null;
-      };
-
-      // `this._view.state.schema` and not the schema read at mount: after a
-      // rebuild the two are different objects, and a command built against
-      // the old one dispatches node types the current state cannot hold.
-      this.runCommand = (button) => {
-        const { state } = this._view;
-        const command = cachedCommandFor(button.dataset.coelhoCommand, state.schema, button.dataset);
-        if (!command) return;
-
-        command(this._view.state, this._view.dispatch, this._view);
-
-        // Unless the command opened the field, which has just taken the focus
-        // on purpose. Taking it back leaves the field on screen with the
-        // caret still in the document, so what the writer types goes into
-        // their text and Enter never reaches the field.
-        if (!this._pendingField) this._view.focus();
-      };
-
-      // A mouse press runs the command *here*, at `mousedown`, because this
-      // is the last moment the selection is still the writer's: preventing
-      // the default keeps focus, but the browser moves the caret on mouseup
-      // anyway, and a command reading the selection after that acts on the
-      // wrong place. Only the primary button: a right-click opens a menu.
-      this._onToolbarDown = (event) => {
-        const button = buttonIn(event);
-        if (!button || event.button !== 0) return;
-
-        event.preventDefault();
-        this.runCommand(button);
-      };
-
-      // A keyboard press produces a `click` and no `mousedown`, which is what
-      // makes the toolbar reachable without a mouse. `detail` is the click
-      // count — zero when no pointer was involved — so the browser says which
-      // it was, and no flag has to be kept in step. Anything that leaves a
-      // flag behind would swallow the next keyboard press of the same button:
-      // releasing off the button, a right-click, or a command that disables
-      // the button it was on, none of which produce a `click` at all.
-      this._onToolbar = (event) => {
-        const button = buttonIn(event);
-        if (!button || event.detail !== 0) return;
-
-        event.preventDefault();
-        this.runCommand(button);
-      };
-
-      el.addEventListener("mousedown", this._onToolbarDown);
-      el.addEventListener("click", this._onToolbar);
-
-      // Re-found rather than captured once: the toolbar's id carries the
-      // schema fingerprint, so a schema change makes LiveView replace the
-      // whole toolbar — and with it the link field. Holding the node from
-      // mount would leave `openField` focusing something no longer in the
-      // document, with the visible field carrying no key handler and the
-      // button appearing to do nothing at all.
-      this.findLinkField = () => {
-        if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
-
-        this._buttons = null;
-
-        this._linkZone = el.querySelector("[data-coelho-link-zone]");
-        this._linkInput = el.querySelector("[data-coelho-link-input]");
-        this._linkHint = el.querySelector("[data-coelho-link-hint]");
-
-        // The new input describes nothing until the field is opened again.
-        this._linkInput?.removeAttribute("aria-describedby");
-
-        if (this._linkInput && this._onLinkKey) {
-          this._linkInput.addEventListener("keydown", this._onLinkKey);
-        }
-      };
-
-      // The same three lookups the toolbar's replacement goes through, and
-      // through the same function: written out here as well, the two came to
-      // disagree about which of them resets what.
-      this.findLinkField();
-
-      // One field, whatever asked for it. What it does on Enter is decided
-      // when it opens, because the selection is what says what to act on and
-      // a field that took the focus would lose the answer.
-      this.openField = ({ value, label, apply, hint = "", type = "text", placeholder = "" }) => {
-        if (!this._linkInput) return;
-
-        this._pendingField = apply;
-        this._linkZone.hidden = false;
-
-        // No hint unless there is one to give: an empty line under the field
-        // reserves space for nothing.
-        if (this._linkHint) {
-          this._linkHint.textContent = hint;
-          this._linkHint.hidden = !hint;
-
-          // Drawn is not said. The field is focused a few lines below, and a
-          // screen reader announces the label and whatever aria-describedby
-          // points at — which is the whole audience for a hint describing a
-          // gesture nobody was told about.
-          if (hint && this._linkHint.id) {
-            this._linkInput.setAttribute("aria-describedby", this._linkHint.id);
-          } else {
-            this._linkInput.removeAttribute("aria-describedby");
-          }
-        }
-
-        this._linkInput.value = value ?? "";
-        this._linkInput.setAttribute("aria-label", label);
-        // The field serves more than links, so what it asks for changes with
-        // it: a caption left under `type="url"` matches `:invalid` while
-        // being perfectly good, and a phone offers a keyboard with no space
-        // key for it.
-        this._linkInput.type = type;
-        this._linkInput.placeholder = placeholder;
-        this._linkInput.focus();
-        this._linkInput.select();
-      };
-
-      this.closeField = ({ focus = true } = {}) => {
-        this._pendingField = null;
-
-        if (this._linkZone) this._linkZone.hidden = true;
-        if (this._linkInput) this._linkInput.value = "";
-        if (this._linkHint) this._linkHint.hidden = true;
-        if (this._linkInput) this._linkInput.removeAttribute("aria-describedby");
-        if (focus) this._view.focus();
-      };
-
-      this.confirmField = (value) => {
-        if (!this._pendingField) return this.closeField();
-
-        const refusal = this._pendingField(value);
-
-        // An apply that hands back a reason keeps the field open with it
-        // showing, rather than letting the writer walk away from a change
-        // that never happened.
-        if (typeof refusal === "string") {
-          this._linkInput.setCustomValidity(refusal);
-          this._linkInput.reportValidity();
-          return undefined;
-        }
-
-        return this.closeField();
-      };
-
-      this.applyLink = ({ from, to }) => (href) => {
-        const link = this._schema.marks.link;
-        if (!link) return undefined;
-
-        if (href && EXECUTABLE.test(href)) return "This kind of address cannot be linked.";
-
-        const { state } = this._view;
-
-        // An emptied field removes the link and leaves the text alone, which
-        // is the gesture people reach for; the button then only ever opens
-        // the field.
-        const transaction = href
-          ? state.tr.removeMark(from, to, link).addMark(from, to, link.create({ href }))
-          : state.tr.removeMark(from, to, link);
-
-        this._view.dispatch(transaction);
-        return undefined;
-      };
-
-      // A caption is an attribute of the node, not content inside it, so it
-      // is set rather than typed into: the alternative is a node view that
-      // mirrors an editable region back into an attribute, which is a lot of
-      // machinery for one line of text.
-      this.applyCaption = (pos) => (caption) => {
-        const { state } = this._view;
-        const node = state.doc.nodeAt(pos);
-        if (!node) return undefined;
-
-        this._view.dispatch(
-          state.tr.setNodeMarkup(pos, null, { ...node.attrs, caption: caption || null })
-        );
-
-        return undefined;
-      };
-
-      this.editCaption = () => {
-        const selected = captionable(this._view.state);
-        if (!selected) return;
-
-        this.openField({
-          value: selected.node.attrs.caption ?? "",
-          label: this.says("caption_label", "Caption"),
-          placeholder: this.says("caption_placeholder", "Describe this attachment"),
-          hint: this.says("caption_hint", ""),
-          apply: this.applyCaption(selected.pos)
-        });
-      };
-
-      this.editLink = () => {
-        const link = this._schema.marks.link;
-        if (!link) return;
-
-        // An application with its own link UI takes over from here.
-        const event = new CustomEvent("coelho:link", {
-          bubbles: true,
-          cancelable: true,
-          detail: {
-            selection: this._view.state.selection,
-            apply: (href) => this.confirmField(href)
-          }
-        });
-
-        el.dispatchEvent(event);
-        if (event.defaultPrevented) return;
-
-        const { state } = this._view;
-        const existing = linkAround(state, link);
-
-        // The selection wins: it says what the writer is aiming at. Serving
-        // the link under the cursor first would quietly ignore a selection
-        // reaching past it, and "extend this link" would extend nothing.
-        if (!state.selection.empty) {
-          const { from, to } = state.selection;
-          this.openField({
-            value: existing?.href ?? "",
-            label: this.says("link_label", "Link address"),
-            type: "url",
-            placeholder: this.says("link_placeholder", "https://…"),
-            hint: this.says("link_hint", ""),
-            apply: this.applyLink({ from, to })
-          });
-        } else if (existing) {
-          this.openField({
-            value: existing.href,
-            label: this.says("link_label", "Link address"),
-            type: "url",
-            placeholder: this.says("link_placeholder", "https://…"),
-            hint: this.says("link_hint", ""),
-            apply: this.applyLink(existing)
-          });
-        }
-      };
-
-      // Built whatever the toolbar looks like right now: a field that only
-      // appears with a later toolbar — one command added, one language
-      // switched — would otherwise find `findLinkField` with nothing to
-      // attach, and come up with no key handler for the rest of the session.
-      this._onLinkKey = (event) => {
-        this._linkInput.setCustomValidity("");
-
-        if (event.key === "Enter") {
-          event.preventDefault();
-          this.confirmField(this._linkInput.value.trim());
-        } else if (event.key === "Escape") {
-          event.preventDefault();
-          this.closeField();
-        }
-      };
-
-      this._linkInput?.addEventListener("keydown", this._onLinkKey);
-
-      // Found once and kept: this runs on every keystroke and on every step
-      // of a caret drag. `findLinkField` drops the list, and it is called
-      // from the only two places where LiveView has replaced the toolbar.
-      this.toolbarButtons = () => {
-        if (!this._buttons) this._buttons = [...el.querySelectorAll("[data-coelho-command]")];
-
-        return this._buttons;
-      };
-
-      this.refreshToolbar = () => {
-        const { state } = this._view;
-
-        for (const button of this.toolbarButtons()) {
-          const name = button.dataset.coelhoCommand;
-          const active = commandActive(state, name, button.dataset);
-
-          // `null` is "no state to show", and the attribute is *removed*
-          // rather than left as it was: an alignment button answers null
-          // the moment the selection leaves every alignable block, and a
-          // kept attribute would go on announcing pressed — to a screen
-          // reader above all — about a block that is no longer there.
-          //
-          // Compared before being written: a caret move that changes nothing
-          // would otherwise dirty every button's attributes, and an
-          // attribute written again is a mutation a screen reader may
-          // announce for a state that never moved.
-          const pressed = active === null ? null : String(active);
-
-          if (button.getAttribute("aria-pressed") !== pressed) {
-            if (pressed === null) button.removeAttribute("aria-pressed");
-            else button.setAttribute("aria-pressed", pressed);
-          }
-
-          // A button with no command behind it — a name the schema knows
-          // but the hook has no verb for — is greyed out rather than left
-          // clickable and inert.
-          const command = cachedCommandFor(name, state.schema, button.dataset);
-          const disabled = !command || !command(state, null, this._view);
-
-          if (button.disabled !== disabled) button.disabled = disabled;
-        }
-      };
-
-      // Anything the server decides to put in the document arrives here: an
-      // attachment it has just stored, a mention it has just resolved, an
-      // embed. The node is the server's, built against the same schema.
-      this.insertNode = (nodeJSON, preview, { focus = true, replace = null } = {}) => {
-        // A node can arrive after the editor is gone: a server round trip,
-        // or a capture giving up. There is no view left to dispatch into.
-        if (this._destroyed) return;
-
-        setPreviewUrl(nodeJSON.attrs?.key, preview);
-        this._pending.delete(nodeJSON.attrs?.filename);
-
-        const node = PMNode.fromJSON(this._schema, nodeJSON);
-
-        // Whatever asked for the node took focus away, so the editor is
-        // focused first and the node lands at the caret. If the writer has
-        // since moved on — an insertion arriving seconds later, a failed
-        // capture — replacing their selection would destroy what they are
-        // doing, so it goes at the end instead.
-        if (focus) this._view.focus();
-
-        const { state } = this._view;
-
-        // What the writer typed to open the list goes with the node that
-        // closed it. The range is the one held now rather than the one that
-        // was pushed, because they kept typing while the server was
-        // answering — and it is that longer query they meant to be rid of.
-        const query = replace === "query" ? this._suggestion : null;
-
-        const size = state.doc.content.size;
-
-        const transaction = query
-          ? state.tr.replaceWith(Math.min(query.from, size), Math.min(query.to, size), node)
-          : this._view.hasFocus()
-            ? state.tr.replaceSelectionWith(node)
-            : state.tr.insert(state.doc.content.size, node);
-
-        this._view.dispatch(transaction.scrollIntoView());
-      };
-
-      // push_event reaches the whole page, so an insertion meant for one
-      // editor would otherwise land in every editor on it.
-      ctx.handle("coelho:insert", ({ node, id, preview, replace }) => {
-        if (id == null || id === el.id) this.insertNode(node, preview, { replace });
-      });
-
-      const uploadName = el.dataset.coelhoUpload;
-
-      // An image pasted from a web page arrives as a URL on someone else's
-      // host. Storing that is a hotlink: it leaks every reader's address to
-      // that host, and breaks the day the file moves. When an upload is
-      // configured, the bytes are fetched and go through the same path as a
-      // dropped file; when it is not, the URL is kept as it always was.
-      this.captureOne = async (url) => {
-        try {
-          const response = await fetch(url, {
-            mode: "cors",
-            credentials: "omit",
-            // Torn down while the host is still thinking: the answer would
-            // come back to an editor that no longer exists, and upload bytes
-            // nobody can be shown.
-            signal: this._aborter.signal
-          });
-          if (!response.ok) throw new Error(`responded ${response.status}`);
-
-          const blob = await response.blob();
-          const filename = filenameFor(url, blob);
-
-          this._pending.set(filename, url);
-          ctx.upload(uploadName, [new File([blob], filename, { type: blob.type })]);
-
-          // `upload` is fire and forget: an entry refused for being one too
-          // many, too large, or the wrong type raises nothing here, and the
-          // image would vanish without a word. If nothing comes back for it,
-          // the URL goes in after all — unless the editor is gone by then,
-          // which `later` is what makes true.
-          this.later(() => this.captureFailed(filename, "the upload never came back"), 15000);
-        } catch (error) {
-          // An abort is the teardown, not a failure to tell anyone about.
-          if (error?.name === "AbortError") return;
-
-          // Usually CORS: the bytes can be displayed but not read.
-          this.captureFailed(filenameFor(url, { type: "" }), error, url);
-        }
-      };
-
-      // Three at a time rather than one after another: a slow host held up
-      // every image pasted behind it, each of them already waiting on a
-      // network round trip of its own.
-      this.captureImages = async (urls) => {
-        const queue = [...urls];
-        const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
-          for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
-            if (this._destroyed) return;
-            await this.captureOne(url);
-          }
-        });
-
-        await Promise.all(workers);
-      };
-
-      this.captureFailed = (filename, reason, url = this._pending.get(filename)) => {
-        if (url === undefined || this._destroyed) return;
-
-        this._pending.delete(filename);
-        el.dispatchEvent(
-          new CustomEvent("coelho:capture-failed", { bubbles: true, detail: { url, reason } })
-        );
-
-        if (this._schema.nodes.image) {
-          this.insertNode({ type: "image", attrs: { src: url } }, null, { focus: false });
-        }
-      };
-
-      if (uploadName) {
-        this._onFiles = (event) => {
-          const files = [...(event.dataTransfer ?? event.clipboardData)?.files ?? []];
-          if (!files.length) return;
-
-          event.preventDefault();
-          ctx.upload(uploadName, files);
-        };
-
-        content.addEventListener("drop", this._onFiles);
-        content.addEventListener("paste", this._onFiles);
-      }
-
-      // The link command only gets `(state, dispatch, view)`, so the view is
-      // where it can find its way back to the editor's own machinery.
-      this._view.coelhoEditLink = () => this.editLink();
-      this._view.coelhoEditCaption = () => this.editCaption();
-
-      this._content = content;
-
-      // Same reason: the server renders the placeholder onto the container,
-      // and it is carried inside where nothing will patch it away.
-      if (content.dataset.placeholder) {
-        this._view.dom.dataset.placeholder = content.dataset.placeholder;
-      }
-
-      this.syncInput();
-      this.refreshToolbar();
-
-      // Moving the caret changes what is in force without changing the
-      // document, and that never reaches dispatchTransaction as a doc change.
-      this._onSelection = () => this.refreshToolbar();
-      document.addEventListener("selectionchange", this._onSelection);
-    },
-
-    updated(ctx) {
-      if (!this._view) return;
-
-      // A new vocabulary is not a new document: rebuilding reads the input
-      // itself, so the value sync below has nothing left to do.
-      if (ctx.el.dataset.coelhoSchemaVersion !== this._version) {
-        this.rebuild();
         return;
       }
 
-      // What the writer types after a trigger is not a button: an editor can
-      // change its triggers with the same toolbar, or carry no toolbar at
-      // all — and a toolbar-less editor has no version for the branch below
-      // to compare, so it would never re-read them there.
-      if (ctx.el.dataset.coelhoSuggest !== this._suggestRaw) {
-        this.readSuggest();
+      const found = suggestionAt(this._view.state, this._suggest);
+      const was = this._suggestion;
 
-        // Triggers taken away do not end a query on their own: nothing has
-        // been typed, so no transaction is coming to notice. The list would
-        // stay on the page until the writer happened to type again.
+      // Kept whatever happens, and before anything is compared: the same
+      // word can be typed after a trigger in two places, and it is the
+      // *positions* an insertion replaces. Holding the ones from the first
+      // of them would put the node in a paragraph the writer left.
+      this._suggestion = found;
+
+      const same =
+        found &&
+        was &&
+        found.event === was.event &&
+        found.trigger === was.trigger &&
+        found.query === was.query &&
+        found.from === was.from;
+
+      // Nothing has moved. A list the writer dismissed by clicking away
+      // stays dismissed until they type: the query is what reopens it.
+      if (same) return;
+
+      // A query that ends leaves a list open with nothing to close it, and
+      // so does one that moves to another trigger — the event the list was
+      // drawn from has to hear that it is over even when another event is
+      // being pushed in the same breath, or two lists are drawn at once.
+      if (!found || (this._drawn && found.event !== this._drawn.event)) {
+        this.closeSuggestion();
+      }
+
+      if (found) this.drawSuggestion(found);
+    };
+
+    this._flushEvent = el.dataset.coelhoFlushEvent;
+    this._flushToken = el.dataset.coelhoFlushToken ?? null;
+    this._name = input?.name ?? null;
+
+    // A bounded memory of what this editor has put in the input.
+    this.remember = (json) => {
+      const written = digest(json);
+
+      if (this._written.has(written)) return;
+
+      this._written.add(written);
+      this._writtenOrder.push(written);
+
+      if (this._writtenOrder.length > this._writtenLimit) {
+        this._written.delete(this._writtenOrder.shift());
+      }
+    };
+
+    this.wrote = (json) => this._written.has(digest(json));
+
+    const state = EditorState.create({
+      doc: parseDoc(schema, input.value) ?? schema.topNodeType.createAndFill(),
+      plugins: editorPlugins(schema)
+    });
+
+    this._view = new EditorView(content, {
+      state,
+      nodeViews,
+      // Neither handles anything: they say when the list the application
+      // drew is still wanted. `false` leaves the event to ProseMirror.
+      handleDOMEvents: {
+        focus: () => {
+          clearTimeout(this._blurTimer);
+          return false;
+        },
+        blur: () => {
+          clearTimeout(this._blurTimer);
+          this._blurTimer = setTimeout(() => this.closeSuggestion(), BLUR_CLOSE_DELAY);
+          return false;
+        }
+      },
+      transformPastedHTML: (html) => (uploadName ? this.captureFrom(html) : html),
+      dispatchTransaction: (transaction) => {
+        this._view.updateState(this._view.state.apply(transaction));
+        this.refreshToolbar();
+
+        // `_pendingLink` is a pair of positions, and any edit shifts them.
+        // With the field still open, confirming afterwards would have put
+        // the link on a stretch of text that is no longer the one aimed at.
+        if (transaction.docChanged && this._pendingField) this.closeField({ focus: false });
+
+        // Writing the input back when the change *came from* the server
+        // would post it straight back: the server normalises, so its copy
+        // never quite equals what the editor wrote, and the two would
+        // trade rounds forever.
+        if (transaction.docChanged && !transaction.getMeta(REMOTE)) this.syncInput();
+
         this.refreshSuggestion();
       }
+    });
 
-      // New buttons, or the same buttons in another language. LiveView has
-      // already replaced the toolbar — its id carries this fingerprint — so
-      // the hook only has to find the link field inside the new one and
-      // repaint the pressed states. Rebuilding here would throw away the
-      // undo history and move the caret to change a word.
-      if (ctx.el.dataset.coelhoToolbarVersion !== this._toolbarVersion) {
-        this._toolbarVersion = ctx.el.dataset.coelhoToolbarVersion;
-        this.readFieldLabels();
-        this.findLinkField();
-        this.refreshToolbar();
+    // Runs while the paste is still being parsed, so it is synchronous:
+    // the images come out of the HTML now, and their bytes follow.
+    this.captureFrom = (html) => {
+      const urls = [];
+
+      // The tags are cut out of the string rather than out of a parsed
+      // document: clipboard HTML is often a context-sensitive fragment — a
+      // table row, a list item — and a DOMParser round trip through
+      // `body.innerHTML` throws away exactly those.
+      const stripped = html.replace(IMG_TAG, (tag) => {
+        const src = srcOf(tag);
+
+        if (!isRemote(src)) return tag;
+
+        urls.push(src);
+        return "";
+      });
+
+      if (!urls.length) return html;
+
+      this.captureImages(urls);
+      return stripped;
+    };
+
+    this.syncInput = () => {
+      const snapshot = this._view.state.doc.toJSON();
+      const json = JSON.stringify(snapshot);
+      // Remember what we wrote — and not only the last one. The server
+      // echoes asynchronously, so an echo arriving now may answer a
+      // keystroke from several ago; applying it would roll the writer back
+      // to what they had typed by then.
+      this.remember(json);
+
+      this._lastWritten = json;
+
+      if (input.value !== json) {
+        // Something the server has not answered yet, so an older copy of it
+        // coming back is an echo rather than a decision.
+        this._acknowledged = false;
+        input.value = json;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
       }
+      // On the editor's own element, which lives inside the ignored
+      // container: LiveView patches an element's attributes even when it
+      // spares its children, so a class set on the root or on the
+      // container is undone by the next render.
+      this._view.dom.classList.toggle("coelho-empty", !hasText(this._view.state.doc));
+      this.refreshCount(snapshot);
+    };
 
-      // The editor's own subtree carries phx-update="ignore", but the hidden
-      // input does not: the server can legitimately replace the document, and
-      // when it does the editor has to follow.
-      const value = this._input?.value;
+    // The same unit `Coelho.Document.text_length/1` counts, so the number
+    // on screen and the number the schema's `max_text_length` is checked
+    // against are the same number. Counting the rendered text instead
+    // would refuse a document the editor still shows as under the limit,
+    // with nothing on screen to explain the gap.
+    // Counting walks the whole document and segments every text node into
+    // graphemes, which is a second full pass on a path that already runs
+    // on every keystroke. The number is for a reader, so it is written
+    // once per frame rather than once per key: the last snapshot wins.
+    this.refreshCount = (snapshot) => {
+      if (!this._count) return;
 
-      // Exactly what this editor last put there: the ordinary case, and the
-      // one that must cost nothing.
-      if (value === undefined || value === this._lastWritten) return;
+      this._countOf = snapshot;
+      if (this._frame !== null) return;
 
-      const doc = parseDoc(this._schema, value);
+      this._frame = requestAnimationFrame(() => {
+        this._frame = null;
+        if (this._destroyed) return;
 
-      // The input does not always hold a document: a rejected one comes back
-      // as the raw text that was posted, so the writer can fix it. Rebuilding
-      // the editor from that is not possible, and losing their work over it
-      // would be worse than ignoring the round trip.
-      if (!doc) {
-        this.remember(value);
-        return;
-      }
+        // The snapshot it was last given, or the document itself: called
+        // with nothing — which its signature allows — reading `undefined`
+        // paints a zero over a counter that was right.
+        const length = textLength(this._countOf ?? this._view.state.doc.toJSON());
 
-      // Validation normalises, so the server's copy is rarely byte-identical
-      // to what the editor wrote even when it says the same thing. Comparing
-      // documents rather than text is what tells an echo from a replacement.
-      // Same document, whichever way it is spelled: nothing to do, and the
-      // field is deliberately left carrying the server's spelling — writing
-      // ours back would post it, and the server would answer with its own
-      // again, for as long as anyone kept watching.
-      if (doc.eq(this._view.state.doc)) {
-        this.remember(value);
+        this._count.textContent = String(length);
+        this._counter?.classList.toggle(
+          "coelho-over",
+          this._maxlength > 0 && length > this._maxlength
+        );
+      });
+    };
 
-        // The server has caught up: what it holds is what the editor holds,
-        // whatever either of them calls it. Anything it sends after this is
-        // something it decided, not an answer to a keystroke — and the field
-        // now agrees with the editor, so the fast path above can take it.
-        this._acknowledged = true;
-        this._lastWritten = value;
-        return;
-      }
+    // A schema changed under a mounted editor used to go unnoticed: the
+    // container carries phx-update="ignore", so nothing about the new
+    // vocabulary — its node types, its marks, the classes they carry —
+    // reached the view, and the writer went on seeing the old one. The
+    // server stamps a fingerprint on the hook's own element, which is not
+    // ignored, and this follows it.
+    //
+    // The document is re-parsed against the new schema, so a node it no
+    // longer knows goes; the undo history is dropped with the old schema,
+    // because it is a history of edits the new one may have no words for.
+    this.rebuild = () => {
+      const rebuilt = buildSchema(readSchema(el), dom);
+      const doc = reinterpret(this._view.state.doc, this._schema, rebuilt);
 
-      // A different document, one this editor wrote, and the server has not
-      // yet answered the latest thing it was sent: an echo of a keystroke the
-      // writer has already moved past. Run back through ProseMirror the
-      // server's copy is spelled the way the editor spells it, so it is
-      // recognised however validation reordered or trimmed it.
-      //
-      // The field is then put back to what the editor holds, which is the
-      // half that was missing: LiveView patches the input with the server's
-      // copy whatever the reason it re-rendered — an upload finishing is
-      // enough — so leaving it is an editor showing one document and a form
-      // holding another, and the next thing to read the field posts the older
-      // one. Found as an attachment inserted by the server vanishing from a
-      // debounced form, seconds after it was inserted.
-      //
-      // `_acknowledged` is what keeps this from swallowing a *decision*. An
-      // application that puts a stored document back — a Discard button, a
-      // reset, a moderation step — sends something this editor may well have
-      // held earlier in the session, and that is a replacement, not an echo.
-      // The difference is not in the document: it is whether the server was
-      // still behind when it spoke.
-      //
-      // And once per value, so that a server insisting on a document the
-      // editor once wrote is obeyed rather than argued with — a second round
-      // for the same answer is the server's, not a race we should keep
-      // running.
-      const ours = this.wrote(value) || this.wrote(JSON.stringify(doc.toJSON()));
+      this.adoptSchema(rebuilt);
+      this._view.updateState(
+        EditorState.create({
+          doc,
+          plugins: editorPlugins(rebuilt)
+        })
+      );
 
-      if (ours && !this._acknowledged && this._pushedBackFor !== value) {
-        this._pushedBackFor = value;
-        this.remember(value);
-        this.syncInput();
-        return;
-      }
+      this.readFieldLabels();
+      this.findLinkField();
+      this.refreshToolbar();
+      // The triggers travel on the same element as the schema, and a patch
+      // that moved one can have moved the other: `updated` returns here
+      // rather than reaching its own check.
+      this.readSuggest();
+      // `updateState` is not a transaction, so nothing above ran the
+      // suggestion refresh, and the positions it holds are in the document
+      // that was just replaced.
+      this.endSuggestion();
+      // The input still holds the document as it was written under the old
+      // schema. Leaving it there would show one thing and post another, and
+      // the next keystroke would post whatever the rebuild had dropped.
+      this.syncInput();
+    };
 
-      // Replacing the content through a transaction rather than building a
-      // fresh EditorState: a new state starts with a default selection, so
-      // the caret would jump to the top of the document every time the
-      // server's normalisation differed from what the editor wrote. The
-      // transaction maps the selection across, and stays out of the undo
-      // history — it is not an edit anyone made.
+    const buttonIn = (event) => {
+      const button = event.target.closest("[data-coelho-command]");
+      return button && el.contains(button) ? button : null;
+    };
+
+    // `this._view.state.schema` and not the schema read at mount: after a
+    // rebuild the two are different objects, and a command built against
+    // the old one dispatches node types the current state cannot hold.
+    this.runCommand = (button) => {
       const { state } = this._view;
-      const { from, to } = state.selection;
-      const transaction = state.tr
-        .replaceWith(0, state.doc.content.size, doc.content)
-        .setMeta("addToHistory", false)
-        .setMeta(REMOTE, true);
+      const command = cachedCommandFor(button.dataset.coelhoCommand, state.schema, button.dataset);
+      if (!command) return;
 
-      // The replace spans the whole document, so every position falls inside
-      // the deleted range and maps to its end. Mapping cannot preserve the
-      // caret here; it has to be put back by hand, at the offsets it held.
-      transaction.setSelection(selectionAt(transaction.doc, from, to));
+      command(this._view.state, this._view.dispatch, this._view);
 
-      this.remember(value);
-      this._view.dispatch(transaction);
-    },
+      // Unless the command opened the field, which has just taken the focus
+      // on purpose. Taking it back leaves the field on screen with the
+      // caret still in the document, so what the writer types goes into
+      // their text and Enter never reaches the field.
+      if (!this._pendingField) this._view.focus();
+    };
 
-    destroyed(ctx) {
-      // The editor writes into its hidden input and lets phx-change carry it,
-      // so a phx-debounce can still be holding the last edit when the element
-      // goes. LiveView cancels the timer with the element and the change is
-      // simply lost — the writer's last few characters, gone, with nothing to
-      // show it happened. This is the way out.
-      if (this._flushEvent && this._view) {
-        // `pushEvent` answers with a promise, and rejects it rather than
-        // throwing when the socket has gone — a full page navigation destroys
-        // every hook on the way out. A try/catch never sees that, and the
-        // rejection nobody handles is reported as an uncaught error, which is
-        // exactly what a page's error reporting is watching for.
-        Promise.resolve(
-          ctx.push(this._flushEvent, {
-            token: this._flushToken,
-            name: this._name,
-            document: this._view.state.doc.toJSON()
-          })
-        ).catch((error) => console.warn("coelho: could not flush on destroy", error));
-      }
+    // A mouse press runs the command *here*, at `mousedown`, because this
+    // is the last moment the selection is still the writer's: preventing
+    // the default keeps focus, but the browser moves the caret on mouseup
+    // anyway, and a command reading the selection after that acts on the
+    // wrong place. Only the primary button: a right-click opens a menu.
+    this._onToolbarDown = (event) => {
+      const button = buttonIn(event);
+      if (!button || event.button !== 0) return;
 
-      // An editor taken off the page with a query open — a modal closing, a
-      // patch swapping it out — leaves a list drawn over a page that no
-      // longer has an editor under it. The close is pushed before the flag
-      // below stops everything, and the blur that teardown itself causes has
-      // nothing left to fire on.
-      clearTimeout(this._blurTimer);
-      this.endSuggestion?.();
+      event.preventDefault();
+      this.runCommand(button);
+    };
 
-      // Said before anything is torn down, and read by everything that can
-      // come back later: a capture giving up, an insertion from the server,
-      // the frame the counter is waiting for.
-      this._destroyed = true;
+    // A keyboard press produces a `click` and no `mousedown`, which is what
+    // makes the toolbar reachable without a mouse. `detail` is the click
+    // count — zero when no pointer was involved — so the browser says which
+    // it was, and no flag has to be kept in step. Anything that leaves a
+    // flag behind would swallow the next keyboard press of the same button:
+    // releasing off the button, a right-click, or a command that disables
+    // the button it was on, none of which produce a `click` at all.
+    this._onToolbar = (event) => {
+      const button = buttonIn(event);
+      if (!button || event.detail !== 0) return;
 
-      this.el.removeEventListener("mousedown", this._onToolbarDown);
-      this.el.removeEventListener("click", this._onToolbar);
+      event.preventDefault();
+      this.runCommand(button);
+    };
+
+    el.addEventListener("mousedown", this._onToolbarDown);
+    el.addEventListener("click", this._onToolbar);
+
+    // Re-found rather than captured once: the toolbar's id carries the
+    // schema fingerprint, so a schema change makes LiveView replace the
+    // whole toolbar — and with it the link field. Holding the node from
+    // mount would leave `openField` focusing something no longer in the
+    // document, with the visible field carrying no key handler and the
+    // button appearing to do nothing at all.
+    this.findLinkField = () => {
       if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
-      document.removeEventListener("selectionchange", this._onSelection);
 
-      if (this._onFiles) {
-        this._content?.removeEventListener("drop", this._onFiles);
-        this._content?.removeEventListener("paste", this._onFiles);
-      }
-
-      // A timer holds the whole editor — element, view, schema, and the
-      // documents it remembers — until it fires, and then dispatches into a
-      // view that is gone. A fetch does the same for as long as the other
-      // host takes to answer.
-      // Optional, like everything else read here: `mounted` can throw before
-      // any of this exists — a schema the browser cannot build is exactly
-      // that — and a teardown that throws in turn buries the error that
-      // caused it and skips the cleanup below.
-      for (const timer of this._timers ?? []) clearTimeout(timer);
-      this._timers?.clear();
-
-      if (this._frame != null) cancelAnimationFrame(this._frame);
-      this._aborter?.abort();
-
-      this._view?.destroy();
-
-      // The field's apply closes over the view, and the view carries two
-      // closures back to the hook: left as they are, the pair keeps each
-      // other alive for as long as anything holds either one.
-      this._pendingField = null;
       this._buttons = null;
-      this._countOf = null;
-      this._lastWritten = null;
-      this._pushedBackFor = null;
-      this._written?.clear();
-      this._writtenOrder = [];
-      this._pending?.clear();
 
-      if (this._view) {
-        delete this._view.coelhoEditLink;
-        delete this._view.coelhoEditCaption;
+      this._linkZone = el.querySelector("[data-coelho-link-zone]");
+      this._linkInput = el.querySelector("[data-coelho-link-input]");
+      this._linkHint = el.querySelector("[data-coelho-link-hint]");
+
+      // The new input describes nothing until the field is opened again.
+      this._linkInput?.removeAttribute("aria-describedby");
+
+      if (this._linkInput && this._onLinkKey) {
+        this._linkInput.addEventListener("keydown", this._onLinkKey);
+      }
+    };
+
+    // The same three lookups the toolbar's replacement goes through, and
+    // through the same function: written out here as well, the two came to
+    // disagree about which of them resets what.
+    this.findLinkField();
+
+    // One field, whatever asked for it. What it does on Enter is decided
+    // when it opens, because the selection is what says what to act on and
+    // a field that took the focus would lose the answer.
+    this.openField = ({ value, label, apply, hint = "", type = "text", placeholder = "" }) => {
+      if (!this._linkInput) return;
+
+      this._pendingField = apply;
+      this._linkZone.hidden = false;
+
+      // No hint unless there is one to give: an empty line under the field
+      // reserves space for nothing.
+      if (this._linkHint) {
+        this._linkHint.textContent = hint;
+        this._linkHint.hidden = !hint;
+
+        // Drawn is not said. The field is focused a few lines below, and a
+        // screen reader announces the label and whatever aria-describedby
+        // points at — which is the whole audience for a hint describing a
+        // gesture nobody was told about.
+        if (hint && this._linkHint.id) {
+          this._linkInput.setAttribute("aria-describedby", this._linkHint.id);
+        } else {
+          this._linkInput.removeAttribute("aria-describedby");
+        }
       }
 
-      this._view = null;
+      this._linkInput.value = value ?? "";
+      this._linkInput.setAttribute("aria-label", label);
+      // The field serves more than links, so what it asks for changes with
+      // it: a caption left under `type="url"` matches `:invalid` while
+      // being perfectly good, and a phone offers a keyboard with no space
+      // key for it.
+      this._linkInput.type = type;
+      this._linkInput.placeholder = placeholder;
+      this._linkInput.focus();
+      this._linkInput.select();
+    };
+
+    this.closeField = ({ focus = true } = {}) => {
+      this._pendingField = null;
+
+      if (this._linkZone) this._linkZone.hidden = true;
+      if (this._linkInput) this._linkInput.value = "";
+      if (this._linkHint) this._linkHint.hidden = true;
+      if (this._linkInput) this._linkInput.removeAttribute("aria-describedby");
+      if (focus) this._view.focus();
+    };
+
+    this.confirmField = (value) => {
+      if (!this._pendingField) return this.closeField();
+
+      const refusal = this._pendingField(value);
+
+      // An apply that hands back a reason keeps the field open with it
+      // showing, rather than letting the writer walk away from a change
+      // that never happened.
+      if (typeof refusal === "string") {
+        this._linkInput.setCustomValidity(refusal);
+        this._linkInput.reportValidity();
+        return undefined;
+      }
+
+      return this.closeField();
+    };
+
+    this.applyLink = ({ from, to }) => (href) => {
+      const link = this._schema.marks.link;
+      if (!link) return undefined;
+
+      if (href && EXECUTABLE.test(href)) return "This kind of address cannot be linked.";
+
+      const { state } = this._view;
+
+      // An emptied field removes the link and leaves the text alone, which
+      // is the gesture people reach for; the button then only ever opens
+      // the field.
+      const transaction = href
+        ? state.tr.removeMark(from, to, link).addMark(from, to, link.create({ href }))
+        : state.tr.removeMark(from, to, link);
+
+      this._view.dispatch(transaction);
+      return undefined;
+    };
+
+    // A caption is an attribute of the node, not content inside it, so it
+    // is set rather than typed into: the alternative is a node view that
+    // mirrors an editable region back into an attribute, which is a lot of
+    // machinery for one line of text.
+    this.applyCaption = (pos) => (caption) => {
+      const { state } = this._view;
+      const node = state.doc.nodeAt(pos);
+      if (!node) return undefined;
+
+      this._view.dispatch(
+        state.tr.setNodeMarkup(pos, null, { ...node.attrs, caption: caption || null })
+      );
+
+      return undefined;
+    };
+
+    this.editCaption = () => {
+      const selected = captionable(this._view.state);
+      if (!selected) return;
+
+      this.openField({
+        value: selected.node.attrs.caption ?? "",
+        label: this.says("caption_label", "Caption"),
+        placeholder: this.says("caption_placeholder", "Describe this attachment"),
+        hint: this.says("caption_hint", ""),
+        apply: this.applyCaption(selected.pos)
+      });
+    };
+
+    this.editLink = () => {
+      const link = this._schema.marks.link;
+      if (!link) return;
+
+      // An application with its own link UI takes over from here.
+      const event = new CustomEvent("coelho:link", {
+        bubbles: true,
+        cancelable: true,
+        detail: {
+          selection: this._view.state.selection,
+          apply: (href) => this.confirmField(href)
+        }
+      });
+
+      el.dispatchEvent(event);
+      if (event.defaultPrevented) return;
+
+      const { state } = this._view;
+      const existing = linkAround(state, link);
+
+      // The selection wins: it says what the writer is aiming at. Serving
+      // the link under the cursor first would quietly ignore a selection
+      // reaching past it, and "extend this link" would extend nothing.
+      if (!state.selection.empty) {
+        const { from, to } = state.selection;
+        this.openField({
+          value: existing?.href ?? "",
+          label: this.says("link_label", "Link address"),
+          type: "url",
+          placeholder: this.says("link_placeholder", "https://…"),
+          hint: this.says("link_hint", ""),
+          apply: this.applyLink({ from, to })
+        });
+      } else if (existing) {
+        this.openField({
+          value: existing.href,
+          label: this.says("link_label", "Link address"),
+          type: "url",
+          placeholder: this.says("link_placeholder", "https://…"),
+          hint: this.says("link_hint", ""),
+          apply: this.applyLink(existing)
+        });
+      }
+    };
+
+    // Built whatever the toolbar looks like right now: a field that only
+    // appears with a later toolbar — one command added, one language
+    // switched — would otherwise find `findLinkField` with nothing to
+    // attach, and come up with no key handler for the rest of the session.
+    this._onLinkKey = (event) => {
+      this._linkInput.setCustomValidity("");
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        this.confirmField(this._linkInput.value.trim());
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.closeField();
+      }
+    };
+
+    this._linkInput?.addEventListener("keydown", this._onLinkKey);
+
+    // Found once and kept: this runs on every keystroke and on every step
+    // of a caret drag. `findLinkField` drops the list, and it is called
+    // from the only two places where LiveView has replaced the toolbar.
+    this.toolbarButtons = () => {
+      if (!this._buttons) this._buttons = [...el.querySelectorAll("[data-coelho-command]")];
+
+      return this._buttons;
+    };
+
+    this.refreshToolbar = () => {
+      const { state } = this._view;
+
+      for (const button of this.toolbarButtons()) {
+        const name = button.dataset.coelhoCommand;
+        const active = commandActive(state, name, button.dataset);
+
+        // `null` is "no state to show", and the attribute is *removed*
+        // rather than left as it was: an alignment button answers null
+        // the moment the selection leaves every alignable block, and a
+        // kept attribute would go on announcing pressed — to a screen
+        // reader above all — about a block that is no longer there.
+        //
+        // Compared before being written: a caret move that changes nothing
+        // would otherwise dirty every button's attributes, and an
+        // attribute written again is a mutation a screen reader may
+        // announce for a state that never moved.
+        const pressed = active === null ? null : String(active);
+
+        if (button.getAttribute("aria-pressed") !== pressed) {
+          if (pressed === null) button.removeAttribute("aria-pressed");
+          else button.setAttribute("aria-pressed", pressed);
+        }
+
+        // A button with no command behind it — a name the schema knows
+        // but the hook has no verb for — is greyed out rather than left
+        // clickable and inert.
+        const command = cachedCommandFor(name, state.schema, button.dataset);
+        const disabled = !command || !command(state, null, this._view);
+
+        if (button.disabled !== disabled) button.disabled = disabled;
+      }
+    };
+
+    // Anything the server decides to put in the document arrives here: an
+    // attachment it has just stored, a mention it has just resolved, an
+    // embed. The node is the server's, built against the same schema.
+    this.insertNode = (nodeJSON, preview, { focus = true, replace = null } = {}) => {
+      // A node can arrive after the editor is gone: a server round trip,
+      // or a capture giving up. There is no view left to dispatch into.
+      if (this._destroyed) return;
+
+      setPreviewUrl(nodeJSON.attrs?.key, preview);
+      this._pending.delete(nodeJSON.attrs?.filename);
+
+      const node = PMNode.fromJSON(this._schema, nodeJSON);
+
+      // Whatever asked for the node took focus away, so the editor is
+      // focused first and the node lands at the caret. If the writer has
+      // since moved on — an insertion arriving seconds later, a failed
+      // capture — replacing their selection would destroy what they are
+      // doing, so it goes at the end instead.
+      if (focus) this._view.focus();
+
+      const { state } = this._view;
+
+      // What the writer typed to open the list goes with the node that
+      // closed it. The range is the one held now rather than the one that
+      // was pushed, because they kept typing while the server was
+      // answering — and it is that longer query they meant to be rid of.
+      const query = replace === "query" ? this._suggestion : null;
+
+      const size = state.doc.content.size;
+
+      const transaction = query
+        ? state.tr.replaceWith(Math.min(query.from, size), Math.min(query.to, size), node)
+        : this._view.hasFocus()
+          ? state.tr.replaceSelectionWith(node)
+          : state.tr.insert(state.doc.content.size, node);
+
+      this._view.dispatch(transaction.scrollIntoView());
+    };
+
+    // push_event reaches the whole page, so an insertion meant for one
+    // editor would otherwise land in every editor on it.
+    this.handleEvent("coelho:insert", ({ node, id, preview, replace }) => {
+      if (id == null || id === el.id) this.insertNode(node, preview, { replace });
+    });
+
+    const uploadName = el.dataset.coelhoUpload;
+
+    // An image pasted from a web page arrives as a URL on someone else's
+    // host. Storing that is a hotlink: it leaks every reader's address to
+    // that host, and breaks the day the file moves. When an upload is
+    // configured, the bytes are fetched and go through the same path as a
+    // dropped file; when it is not, the URL is kept as it always was.
+    this.captureOne = async (url) => {
+      try {
+        const response = await fetch(url, {
+          mode: "cors",
+          credentials: "omit",
+          // Torn down while the host is still thinking: the answer would
+          // come back to an editor that no longer exists, and upload bytes
+          // nobody can be shown.
+          signal: this._aborter.signal
+        });
+        if (!response.ok) throw new Error(`responded ${response.status}`);
+
+        const blob = await response.blob();
+        const filename = filenameFor(url, blob);
+
+        this._pending.set(filename, url);
+        this.upload(uploadName, [new File([blob], filename, { type: blob.type })]);
+
+        // `upload` is fire and forget: an entry refused for being one too
+        // many, too large, or the wrong type raises nothing here, and the
+        // image would vanish without a word. If nothing comes back for it,
+        // the URL goes in after all — unless the editor is gone by then,
+        // which `later` is what makes true.
+        this.later(() => this.captureFailed(filename, "the upload never came back"), 15000);
+      } catch (error) {
+        // An abort is the teardown, not a failure to tell anyone about.
+        if (error?.name === "AbortError") return;
+
+        // Usually CORS: the bytes can be displayed but not read.
+        this.captureFailed(filenameFor(url, { type: "" }), error, url);
+      }
+    };
+
+    // Three at a time rather than one after another: a slow host held up
+    // every image pasted behind it, each of them already waiting on a
+    // network round trip of its own.
+    this.captureImages = async (urls) => {
+      const queue = [...urls];
+      const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+        for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
+          if (this._destroyed) return;
+          await this.captureOne(url);
+        }
+      });
+
+      await Promise.all(workers);
+    };
+
+    this.captureFailed = (filename, reason, url = this._pending.get(filename)) => {
+      if (url === undefined || this._destroyed) return;
+
+      this._pending.delete(filename);
+      el.dispatchEvent(
+        new CustomEvent("coelho:capture-failed", { bubbles: true, detail: { url, reason } })
+      );
+
+      if (this._schema.nodes.image) {
+        this.insertNode({ type: "image", attrs: { src: url } }, null, { focus: false });
+      }
+    };
+
+    if (uploadName) {
+      this._onFiles = (event) => {
+        const files = [...(event.dataTransfer ?? event.clipboardData)?.files ?? []];
+        if (!files.length) return;
+
+        event.preventDefault();
+
+        // A dropped file lands where the drop cursor drew its line, which
+        // is where the pointer was and not where the caret is: ProseMirror
+        // moves the selection for a dropped slice, and a file is none.
+        if (event.type === "drop") {
+          const pos = this._view?.posAtCoords({ left: event.clientX, top: event.clientY });
+
+          if (pos) {
+            const { state } = this._view;
+            this._view.dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(pos.pos))));
+          }
+        }
+
+        this.upload(uploadName, files);
+      };
+
+      content.addEventListener("drop", this._onFiles);
+      content.addEventListener("paste", this._onFiles);
     }
-  });
+
+    // The link command only gets `(state, dispatch, view)`, so the view is
+    // where it can find its way back to the editor's own machinery.
+    this._view.coelhoEditLink = () => this.editLink();
+    this._view.coelhoEditCaption = () => this.editCaption();
+
+    this._content = content;
+
+    // Same reason: the server renders the placeholder onto the container,
+    // and it is carried inside where nothing will patch it away.
+    if (content.dataset.placeholder) {
+      this._view.dom.dataset.placeholder = content.dataset.placeholder;
+    }
+
+    this.syncInput();
+    this.refreshToolbar();
+
+    // Moving the caret changes what is in force without changing the
+    // document, and that never reaches dispatchTransaction as a doc change.
+    this._onSelection = () => this.refreshToolbar();
+    document.addEventListener("selectionchange", this._onSelection);
+  },
+
+  updated() {
+    if (!this._view) return;
+
+    // A new vocabulary is not a new document: rebuilding reads the input
+    // itself, so the value sync below has nothing left to do.
+    if (this.el.dataset.coelhoSchemaVersion !== this._version) {
+      this.rebuild();
+      return;
+    }
+
+    // What the writer types after a trigger is not a button: an editor can
+    // change its triggers with the same toolbar, or carry no toolbar at
+    // all — and a toolbar-less editor has no version for the branch below
+    // to compare, so it would never re-read them there.
+    if (this.el.dataset.coelhoSuggest !== this._suggestRaw) {
+      this.readSuggest();
+
+      // Triggers taken away do not end a query on their own: nothing has
+      // been typed, so no transaction is coming to notice. The list would
+      // stay on the page until the writer happened to type again.
+      this.refreshSuggestion();
+    }
+
+    // New buttons, or the same buttons in another language. LiveView has
+    // already replaced the toolbar — its id carries this fingerprint — so
+    // the hook only has to find the link field inside the new one and
+    // repaint the pressed states. Rebuilding here would throw away the
+    // undo history and move the caret to change a word.
+    if (this.el.dataset.coelhoToolbarVersion !== this._toolbarVersion) {
+      this._toolbarVersion = this.el.dataset.coelhoToolbarVersion;
+      this.readFieldLabels();
+      this.findLinkField();
+      this.refreshToolbar();
+    }
+
+    // The editor's own subtree carries phx-update="ignore", but the hidden
+    // input does not: the server can legitimately replace the document, and
+    // when it does the editor has to follow.
+    const value = this._input?.value;
+
+    // Exactly what this editor last put there: the ordinary case, and the
+    // one that must cost nothing.
+    if (value === undefined || value === this._lastWritten) return;
+
+    const doc = parseDoc(this._schema, value);
+
+    // The input does not always hold a document: a rejected one comes back
+    // as the raw text that was posted, so the writer can fix it. Rebuilding
+    // the editor from that is not possible, and losing their work over it
+    // would be worse than ignoring the round trip.
+    if (!doc) {
+      this.remember(value);
+      return;
+    }
+
+    // Validation normalises, so the server's copy is rarely byte-identical
+    // to what the editor wrote even when it says the same thing. Comparing
+    // documents rather than text is what tells an echo from a replacement.
+    // Same document, whichever way it is spelled: nothing to do, and the
+    // field is deliberately left carrying the server's spelling — writing
+    // ours back would post it, and the server would answer with its own
+    // again, for as long as anyone kept watching.
+    if (doc.eq(this._view.state.doc)) {
+      this.remember(value);
+
+      // The server has caught up: what it holds is what the editor holds,
+      // whatever either of them calls it. Anything it sends after this is
+      // something it decided, not an answer to a keystroke — and the field
+      // now agrees with the editor, so the fast path above can take it.
+      this._acknowledged = true;
+      this._lastWritten = value;
+      return;
+    }
+
+    // A different document, one this editor wrote, and the server has not
+    // yet answered the latest thing it was sent: an echo of a keystroke the
+    // writer has already moved past. Run back through ProseMirror the
+    // server's copy is spelled the way the editor spells it, so it is
+    // recognised however validation reordered or trimmed it.
+    //
+    // The field is then put back to what the editor holds, which is the
+    // half that was missing: LiveView patches the input with the server's
+    // copy whatever the reason it re-rendered — an upload finishing is
+    // enough — so leaving it is an editor showing one document and a form
+    // holding another, and the next thing to read the field posts the older
+    // one. Found as an attachment inserted by the server vanishing from a
+    // debounced form, seconds after it was inserted.
+    //
+    // `_acknowledged` is what keeps this from swallowing a *decision*. An
+    // application that puts a stored document back — a Discard button, a
+    // reset, a moderation step — sends something this editor may well have
+    // held earlier in the session, and that is a replacement, not an echo.
+    // The difference is not in the document: it is whether the server was
+    // still behind when it spoke.
+    //
+    // And once per value, so that a server insisting on a document the
+    // editor once wrote is obeyed rather than argued with — a second round
+    // for the same answer is the server's, not a race we should keep
+    // running.
+    const ours = this.wrote(value) || this.wrote(JSON.stringify(doc.toJSON()));
+
+    if (ours && !this._acknowledged && this._pushedBackFor !== value) {
+      this._pushedBackFor = value;
+      this.remember(value);
+      this.syncInput();
+      return;
+    }
+
+    // Replacing the content through a transaction rather than building a
+    // fresh EditorState: a new state starts with a default selection, so
+    // the caret would jump to the top of the document every time the
+    // server's normalisation differed from what the editor wrote. The
+    // transaction maps the selection across, and stays out of the undo
+    // history — it is not an edit anyone made.
+    const { state } = this._view;
+    const { from, to } = state.selection;
+    const transaction = state.tr
+      .replaceWith(0, state.doc.content.size, doc.content)
+      .setMeta("addToHistory", false)
+      .setMeta(REMOTE, true);
+
+    // The replace spans the whole document, so every position falls inside
+    // the deleted range and maps to its end. Mapping cannot preserve the
+    // caret here; it has to be put back by hand, at the offsets it held.
+    transaction.setSelection(selectionAt(transaction.doc, from, to));
+
+    this.remember(value);
+    this._view.dispatch(transaction);
+  },
+
+  destroyed() {
+    // The editor writes into its hidden input and lets phx-change carry it,
+    // so a phx-debounce can still be holding the last edit when the element
+    // goes. LiveView cancels the timer with the element and the change is
+    // simply lost — the writer's last few characters, gone, with nothing to
+    // show it happened. This is the way out.
+    if (this._flushEvent && this._view) {
+      // `pushEvent` answers with a promise, and rejects it rather than
+      // throwing when the socket has gone — a full page navigation destroys
+      // every hook on the way out. A try/catch never sees that, and the
+      // rejection nobody handles is reported as an uncaught error, which is
+      // exactly what a page's error reporting is watching for.
+      Promise.resolve(
+        this.pushEvent(this._flushEvent, {
+          token: this._flushToken,
+          name: this._name,
+          document: this._view.state.doc.toJSON()
+        })
+      ).catch((error) => console.warn("coelho: could not flush on destroy", error));
+    }
+
+    // An editor taken off the page with a query open — a modal closing, a
+    // patch swapping it out — leaves a list drawn over a page that no
+    // longer has an editor under it. The close is pushed before the flag
+    // below stops everything, and the blur that teardown itself causes has
+    // nothing left to fire on.
+    clearTimeout(this._blurTimer);
+    this.endSuggestion?.();
+
+    // Said before anything is torn down, and read by everything that can
+    // come back later: a capture giving up, an insertion from the server,
+    // the frame the counter is waiting for.
+    this._destroyed = true;
+
+    this.el.removeEventListener("mousedown", this._onToolbarDown);
+    this.el.removeEventListener("click", this._onToolbar);
+    if (this._onLinkKey) this._linkInput?.removeEventListener("keydown", this._onLinkKey);
+    document.removeEventListener("selectionchange", this._onSelection);
+
+    if (this._onFiles) {
+      this._content?.removeEventListener("drop", this._onFiles);
+      this._content?.removeEventListener("paste", this._onFiles);
+    }
+
+    // A timer holds the whole editor — element, view, schema, and the
+    // documents it remembers — until it fires, and then dispatches into a
+    // view that is gone. A fetch does the same for as long as the other
+    // host takes to answer.
+    // Optional, like everything else read here: `mounted` can throw before
+    // any of this exists — a schema the browser cannot build is exactly
+    // that — and a teardown that throws in turn buries the error that
+    // caused it and skips the cleanup below.
+    for (const timer of this._timers ?? []) clearTimeout(timer);
+    this._timers?.clear();
+
+    if (this._frame != null) cancelAnimationFrame(this._frame);
+    this._aborter?.abort();
+
+    this._view?.destroy();
+
+    // The field's apply closes over the view, and the view carries two
+    // closures back to the hook: left as they are, the pair keeps each
+    // other alive for as long as anything holds either one.
+    this._pendingField = null;
+    this._buttons = null;
+    this._countOf = null;
+    this._lastWritten = null;
+    this._pushedBackFor = null;
+    this._written?.clear();
+    this._writtenOrder = [];
+    this._pending?.clear();
+
+    if (this._view) {
+      delete this._view.coelhoEditLink;
+      delete this._view.coelhoEditCaption;
+    }
+
+    this._view = null;
+  }
+});
 
 export const Coelho = createCoelhoHook();
 export default Coelho;

@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+What typing makes, and one dependency fewer.
+
+### Typing at the start of a paragraph
+
+`# ` makes a heading, `- ` a bullet list, `1. ` an ordered one, `> ` a
+quote, three backticks a code block. Each rule exists only where the schema
+declares the node it makes, and a heading only at a level the schema's own
+`:level` validator accepts: the closed list travels to the browser beside
+the attributes, as `attrValues`, so `#### ` in a schema of three levels
+stays four characters rather than becoming a block the changeset refuses.
+Nothing fires inside a code block, where `# comment` is a comment: a node
+holding code now says so with `code: true` in its declaration, which
+`code_block` does and which travels to the browser with the rest of the
+schema, so an application drawing the node itself keeps the flag. The
+`code` mark says the same of the text it covers, and no rule fires there
+either.
+
+`Backspace` right after a rule fired puts the characters back — `# ` was
+meant literally — and falls through to the ordinary key otherwise.
+
+Two cursors ProseMirror does not draw by itself come with it: one where
+there is no text to put a caret in (before a rule at the top of the
+document, between two tables), and one showing where a drag will land. The
+first needs a stylesheet, which `coelho.css` now carries.
+
+### The hook no longer depends on `@nseaprotector/acme-script` — **and this one can bite an upgrade**
+
+It was a wrapper around three LiveView calls, and it is gone. Three
+ProseMirror packages take its place in `peerDependencies`:
+`prosemirror-inputrules`, `prosemirror-dropcursor` and
+`prosemirror-gapcursor`. **An application upgrading has to install them**:
+`mix coelho.install` names what is missing and installs it, and
+`npm uninstall @nseaprotector/acme-script` in `assets/` is the application's
+to run, since the task never removes anything.
+
+### README
+
+The dependency line names the version hex serves, and the status paragraph
+no longer says the demo is still to come.
+
 ## 0.15.0 — 2026-09-09
 
 Tables, a list the writer opens by typing, and the ground both were built on:

@@ -10,6 +10,8 @@ defmodule Coelho.Schema.MarkSpec do
       to the browser, so the editor shows the class the public page will use
     * `:editor_attrs` — extra DOM attributes for the editor only, exported
       with the schema and never emitted server side
+    * `:code` — marks code: the editor lets no typing rule fire on text it
+      covers. Exported to the browser
     * `:render` — how the mark is turned into HTML, see `Coelho.Render`
     * `:parse` — HTML this mark is imported from, see `Coelho.HTML`
     * `:attr_keys` — the attribute names as the strings a document is written
@@ -24,6 +26,7 @@ defmodule Coelho.Schema.MarkSpec do
           attrs: %{optional(atom()) => Attr.t()},
           class: String.t() | nil,
           editor_attrs: %{optional(String.t()) => String.t()},
+          code: boolean(),
           render: Coelho.Schema.NodeSpec.render(),
           parse: [Coelho.HTML.rule()],
           attr_keys: MapSet.t(String.t()) | nil
@@ -34,6 +37,7 @@ defmodule Coelho.Schema.MarkSpec do
     :class,
     attrs: %{},
     editor_attrs: %{},
+    code: false,
     render: nil,
     parse: [],
     attr_keys: nil
