@@ -371,10 +371,11 @@ declaring anything: a node or mark with an attribute validated as `:safe_url`
 is its children; a `{tag, attrs}` render keeps only attributes that cannot
 fetch, follow or style anything (`class`, `title`, `aria-*`, table spans, a
 list's `start`, …) — not `data-*`, which `phoenix_html.js`, htmx and lazy
-loaders turn into requests — beside what `:render_as` and `:class` add, and is
-its children when the tag loads or navigates by itself (`a`, `img`, `iframe`,
-`style`, …), is a form control (`button`, `textarea`, …) or holds raw text
-(`plaintext`, `xmp`, …); a render *function* is its children, since
+loaders turn into requests — beside what `:render_as` and `:class` add, and
+draws only the structural and text elements on a second allow list (`p`, `div`,
+`span`, headings, lists, tables, `em`, `strong`, `code`, …) — anything else,
+from `a` and `img` to `button`, `plaintext` or a custom element, is its
+children; a render *function* is its children, since
 Coelho cannot look inside it. Declare `:render_untrusted` to say what a node
 shows instead — reusing its own render when it points nowhere, as the shipped
 code block does. A `:nodes` or `:marks` override you pass still wins, since

@@ -466,6 +466,26 @@ defmodule Coelho.UntrustedTest do
     end
   end
 
+  test "only the elements on the allow list are drawn, spelled as it spells them" do
+    for {tag, expected} <- [
+          {"section", "<section>x</section>"},
+          {"SECTION", "x"},
+          {"my-widget", "x"},
+          {"dialog", "x"},
+          {"math", "x"}
+        ] do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [box: [group: "block", content: "inline*", render: {tag, []}]]
+        )
+
+      box = %{"type" => "box", "content" => [%{"type" => "text", "text" => "x"}]}
+      {:ok, document} = Document.validate(doc([box]), schema)
+
+      assert Render.to_html(document, schema, policy: :untrusted) == expected, tag
+    end
+  end
+
   def untrusted_card_inline(_node, inner), do: Render.tag("b", [], inner)
 
   def panel_link(node), do: [{"href", "/panels/" <> Render.attr(node, "ref")}]

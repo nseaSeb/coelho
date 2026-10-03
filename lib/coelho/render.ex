@@ -72,11 +72,11 @@ defmodule Coelho.Render do
       follow or style anything — `class`, `title`, `lang`, `dir`, `role`,
       table spans and headers, a list's `start`, `type`, `value` and
       `aria-*` — before an attribute's `:render_as` and the spec's
-      `:class` merge in as usual; or just its children when the tag loads
-      or navigates by itself (`a`, `img`, `iframe`, `video`, `form`,
-      `style`, `script`, …), and for a form control (`button`, `select`,
-      `textarea`) or an element whose content is raw text (`plaintext`,
-      `xmp`, `noscript`, …). A literal `style`, `id` or `data-*` in the
+      `:class` merge in as usual — and only for an element on a second allow
+      list of structural and text elements (`p`, `div`, `span`, headings,
+      lists, tables, `em`, `strong`, `code`, …). Anything else, from `a`,
+      `img` and `iframe` to `button`, `plaintext` or a custom element, is
+      its children. A literal `style`, `id` or `data-*` in the
       attrs is dropped — the page's JavaScript gives `data-to`,
       `data-hx-get` or `data-src` meanings of its own: declare
       `:render_untrusted` to keep one
@@ -124,17 +124,19 @@ defmodule Coelho.Render do
                       reversed type value)
   @untrusted_attr_prefixes ["aria-"]
 
-  # Elements that load or navigate by themselves, or change how the rest of
-  # the page does, whatever their attributes.
-  #
-  # Form controls are on it because a stranger's `<button>` inside a page's
-  # own form submits that form, and the raw-text elements because their
-  # content is not parsed as the markup it is — `<plaintext>` turns the rest
-  # of the page into text.
-  @reference_tags ~w(a area base embed form frame iframe img image input link meta object
-                     picture portal script source style svg track audio video
-                     button select textarea option plaintext xmp listing noembed noframes
-                     noscript template title)
+  # The elements a `{tag, attrs}` render may draw under `policy: :untrusted`,
+  # for the same reason the attributes are an allow list: the other way round
+  # was a deny list of elements that load, navigate, submit a page's form or
+  # turn the rest of the page into text, and every review found one more. A
+  # tag not named here — a custom element too, since its behaviour is
+  # whatever the page's JavaScript gives it — is its children. Compared as
+  # written, like the attributes: a miss drops the element, never lets one by.
+  @untrusted_tags ~w(p div span section article aside header footer main nav
+                     h1 h2 h3 h4 h5 h6 hgroup blockquote pre code kbd samp var
+                     ul ol li dl dt dd figure figcaption hr br wbr
+                     table caption colgroup col thead tbody tfoot tr td th
+                     em strong b i u s del ins sub sup mark small abbr q cite dfn time
+                     bdi bdo ruby rt rp details summary address)
 
   @type policy :: :trusted | :untrusted
 
@@ -722,7 +724,7 @@ defmodule Coelho.Render do
 
   defp untrusted_element(tag, attrs, node, spec, inner, context, void?) do
     cond do
-      String.downcase(tag) in @reference_tags ->
+      tag not in @untrusted_tags ->
         inner
 
       void? ->

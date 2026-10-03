@@ -16,9 +16,9 @@ file name and caption, with no URL resolved. The rule is fail-closed for nodes
 and marks of your own: a `:safe_url` attribute makes one its children, a
 `{tag, attrs}` render keeps only an allow list of attributes that cannot fetch,
 follow or style anything — a literal `style`, `id` or `data-*` goes, since
-`phoenix_html.js`, htmx and lazy loaders act on `data-*` — and is its
-children when it is an `a`, `img`, `iframe`, `style`, a form control or a
-raw-text element; and a
+`phoenix_html.js`, htmx and lazy loaders act on `data-*` — and draws only
+the structural and text elements on a second allow list, so an `a`, `img`,
+`iframe`, `button`, raw-text or custom element is its children; and a
 render function is its children unless the spec declares `:render_untrusted`
 — with `:render_untrusted_inline` beside it for a block node's inline form. An
 unknown policy raises. The default, `:trusted`, renders exactly as before.
