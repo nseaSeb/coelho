@@ -35,6 +35,13 @@ defmodule Coelho.Attachments do
   alias Coelho.{Render, Schema, Storage}
   alias Coelho.Schema.{Attr, NodeSpec}
 
+  # Enough for every signature below, including an `ftyp` box with a long
+  # list of compatible brands.
+  @sniff_bytes 256
+
+  # What `content_type/2` only records on the evidence of the bytes.
+  @proven ~w(image/png image/jpeg image/gif image/webp image/avif application/pdf)
+
   @typedoc """
   What the renderer is given to turn a key into a URL: a function, a map of
   key to URL for attachments already loaded, or a map carrying either under
@@ -229,6 +236,116 @@ defmodule Coelho.Attachments do
   end
 
   defp collect_keys(_node, _schema), do: []
+
+  @doc """
+  The content type to record for an upload, read from its bytes.
+
+  What the browser sends — `entry.client_type` in a LiveView upload — is the
+  uploader's word, and the uploader picks it. Recorded as is, it decides
+  whether the renderer draws an `<img>` and whether
+  `Coelho.Plug.Attachments` serves the file inline. So the types that are
+  shown rather than downloaded are only ever recorded when the first bytes
+  of the file prove them:
+
+    * PNG, JPEG, GIF, WebP and AVIF images
+    * PDF
+
+  For any other file the claimed type is kept, when it is a plain
+  `type/subtype` token that does not start with `image/` — an Office
+  document or an archive is served as a download whatever it is called, and
+  its type is still worth recording. Everything else is
+  `application/octet-stream`.
+
+      def handle_progress(:attachment, entry, socket) when entry.done? do
+        attachment =
+          consume_uploaded_entry(socket, entry, fn %{path: path} ->
+            type = Coelho.Attachments.content_type({:file, path}, entry.client_type)
+            {:ok, MyApp.Uploads.store(path, entry.client_name, type)}
+          end)
+
+        ...
+      end
+
+  The source is what `Coelho.Storage.put/3` takes: `{:file, path}` or
+  `{:binary, binary}`. Only the first #{@sniff_bytes} bytes of a file are
+  read. A file that cannot be read proves nothing, so only the rule for the
+  claim applies.
+  """
+  @spec content_type({:file, Path.t()} | {:binary, binary()}, String.t() | nil) :: String.t()
+  def content_type(source, claimed \\ nil) do
+    case source |> prefix() |> sniff() do
+      nil -> claimed_type(claimed)
+      type -> type
+    end
+  end
+
+  defp prefix({:binary, binary}) when is_binary(binary),
+    do: binary_part(binary, 0, min(byte_size(binary), @sniff_bytes))
+
+  defp prefix({:file, path}) do
+    case File.open(path, [:read, :binary], &IO.binread(&1, @sniff_bytes)) do
+      {:ok, bytes} when is_binary(bytes) -> bytes
+      # `:eof` for an empty file, `{:error, _}` from the read itself.
+      _other -> ""
+    end
+  end
+
+  defp sniff(<<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, _::binary>>), do: "image/png"
+  defp sniff(<<0xFF, 0xD8, 0xFF, _::binary>>), do: "image/jpeg"
+  defp sniff(<<"GIF8", v, "a", _::binary>>) when v in [?7, ?9], do: "image/gif"
+  defp sniff(<<"RIFF", _size::binary-4, "WEBP", _::binary>>), do: "image/webp"
+  defp sniff(<<"%PDF-", _::binary>>), do: "application/pdf"
+
+  # Every ISO base media file — MP4, QuickTime, HEIC, AVIF — opens with the
+  # same `ftyp` box, so the box proves nothing and the brands decide. AVIF is
+  # either the major brand or, behind a generic one such as `mif1`, one of
+  # the compatible brands the box lists after it.
+  defp sniff(<<size::32, "ftyp", major::binary-4, _minor::binary-4, rest::binary>>)
+       when size >= 16 do
+    brands = [major | brands(binary_part(rest, 0, min(byte_size(rest), size - 16)))]
+    if Enum.any?(brands, &(&1 in ["avif", "avis"])), do: "image/avif"
+  end
+
+  defp sniff(_bytes), do: nil
+
+  defp brands(<<brand::binary-4, rest::binary>>), do: [brand | brands(rest)]
+  defp brands(_rest), do: []
+
+  # The browser's word is taken for what it cannot make dangerous: a plain
+  # token, never an image and never a type that has to be proven. `image/`
+  # is what draws an `<img>`, and `image/svg+xml` in particular is a
+  # document that can carry script.
+  #
+  # Checked byte by byte rather than with a regex: the claim is whatever the
+  # uploader's browser sent, invalid UTF-8 included, and the plug's own
+  # filename handling explains why that is not a regex's job.
+  defp claimed_type(claimed) when is_binary(claimed) do
+    type = for <<byte <- claimed>>, into: "", do: <<lower(byte)>>
+
+    with [main, sub] <- :binary.split(type, "/"),
+         true <- token?(main) and token?(sub),
+         false <- main == "image" or type in @proven do
+      type
+    else
+      _ -> "application/octet-stream"
+    end
+  end
+
+  defp claimed_type(_claimed), do: "application/octet-stream"
+
+  defp lower(byte) when byte in ?A..?Z, do: byte + 32
+  defp lower(byte), do: byte
+
+  defp token?(""), do: false
+  defp token?(part), do: token_bytes?(part)
+
+  defp token_bytes?(<<>>), do: true
+
+  defp token_bytes?(<<byte, rest::binary>>)
+       when byte in ?a..?z or byte in ?0..?9 or byte in [?., ?+, ?-, ?_],
+       do: token_bytes?(rest)
+
+  defp token_bytes?(_part), do: false
 
   @doc """
   Resolves a key to a URL through the render context.
