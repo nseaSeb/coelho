@@ -362,16 +362,24 @@ defmodule Coelho.Markdown do
     |> Enum.with_index()
     |> Enum.map_join(separator, fn {item, index} ->
       mark = marker.(index)
-      body = item |> blocks(state) |> Enum.join(separator) |> unbreak()
+      body = item |> blocks(state) |> Enum.join(separator)
+      pad = String.duplicate(" ", String.length(mark))
 
-      mark <> indent(body, String.duplicate(" ", String.length(mark)))
+      # An item whose paragraph is empty would put what follows it on the
+      # marker's line, where `- ---` and `- - - ` are thematic breaks and
+      # not an item holding one: it goes on the next line instead.
+      if opens_empty?(item) and body != "",
+        do: String.trim_trailing(mark) <> "\n" <> pad <> indent(body, pad),
+        else: mark <> indent(body, pad)
     end)
   end
 
-  # `- ---` is one thematic break, not an item holding one: an item that opens
-  # with a rule — its paragraph empty — writes it in underscores instead.
-  defp unbreak("---" <> rest), do: "___" <> rest
-  defp unbreak(body), do: body
+  defp opens_empty?(item) do
+    case Map.get(item, "content", []) do
+      [%{"type" => "paragraph"} = paragraph | _] -> trim_edges(paragraph)["content"] == []
+      _other -> false
+    end
+  end
 
   # Only these follow a paragraph on the very next line without a blank one:
   # a bullet list, and an ordered list starting at 1. One starting anywhere

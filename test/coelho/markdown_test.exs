@@ -251,7 +251,24 @@ defmodule Coelho.MarkdownTest do
 
       cases = [
         {[%{"type" => "bullet_list", "content" => [li([p([]), %{"type" => "horizontal_rule"}])]}],
-         "- ___"},
+         "-\n  ---"},
+        # Three empty items nested: `- - - ` is a thematic break.
+        {[
+           %{
+             "type" => "bullet_list",
+             "content" => [
+               li([
+                 p([]),
+                 %{
+                   "type" => "bullet_list",
+                   "content" => [
+                     li([p([]), %{"type" => "bullet_list", "content" => [li([p([])])]}])
+                   ]
+                 }
+               ])
+             ]
+           }
+         ], "-\n  -\n    - "},
         {[p([link])], ~s|[x](</?a=1&#38;copy;b> "&#38;amp; me")|},
         {[p([image])], ~s|![a](</i&#38;lt;> "&#38;lt;")|}
       ]
@@ -718,7 +735,7 @@ defmodule Coelho.MarkdownTest do
           ) do
         %{"type" => "heading", "attrs" => %{"level" => level}, "content" => content}
       end,
-      hostile_list(1),
+      hostile_list(2),
       gen all(content <- list_of(hostile_paragraph(), min_length: 1, max_length: 2)) do
         %{"type" => "blockquote", "content" => content}
       end,
