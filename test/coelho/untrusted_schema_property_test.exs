@@ -207,14 +207,8 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
         {:ok, schema}
 
       {target, fields} ->
-        Schema.extend(schema, nodes: [{target, fields}])
-        |> then(&{:ok, &1})
+        {:ok, Schema.extend(schema, nodes: [{target, fields}])}
     end
-  rescue
-    error in ArgumentError ->
-      # The one schema this is allowed to refuse.
-      assert Exception.message(error) =~ ":render_untrusted_inline without :render_untrusted"
-      :refused
   end
 
   defp document(schema) do

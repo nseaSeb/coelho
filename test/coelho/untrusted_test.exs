@@ -321,8 +321,11 @@ defmodule Coelho.UntrustedTest do
 
   def embed_attrs(node), do: [{"src", Render.safe_url(Render.attr(node, "url"))}]
 
-  test "an untrusted inline form without a page form is refused when the schema is built" do
-    assert_raise ArgumentError, ~r/:mention has :render_untrusted_inline without/, fn ->
+  # Fail-closed made the pairing safe on its own: without `:render_untrusted`
+  # the page render is the filtered `:render`, never the trusted one, so an
+  # inline form declared alone is a schema like any other.
+  test "an untrusted inline form needs no page form beside it" do
+    schema =
       Schema.extend(Schema.default(),
         nodes: [
           mention: [
@@ -330,27 +333,30 @@ defmodule Coelho.UntrustedTest do
             inline: true,
             void: true,
             attrs: [user: [required: true, validate: :string]],
-            render: {"a", []},
-            render_untrusted_inline: &__MODULE__.untrusted_card/2
+            render: {"a", [{"href", "/u"}, {"class", "m"}]},
+            render_untrusted_inline: &__MODULE__.untrusted_mention/2
           ]
         ]
       )
-    end
-  end
 
-  test "redeclaring one half is judged against the merged spec" do
-    # Only the inline half: the page half the default declares is kept.
-    schema =
-      Schema.extend(Schema.default(),
-        nodes: [attachment: [render_untrusted_inline: &__MODULE__.untrusted_card/2]]
+    {:ok, document} =
+      Document.validate(
+        doc([paragraph([%{"type" => "mention", "attrs" => %{"user" => "7"}}])]),
+        schema
       )
 
-    assert schema.nodes.attachment.render_untrusted ==
-             Schema.default().nodes.attachment.render_untrusted
+    assert Render.to_html(document, schema, policy: :untrusted) == "<p></p>"
+    assert Render.to_inline_html(document, schema, policy: :untrusted) == "@7"
+  end
 
-    # Taking the page half away leaves the default's inline half alone.
-    assert_raise ArgumentError, ~r/:attachment has :render_untrusted_inline without/, fn ->
-      Schema.extend(Schema.default(), nodes: [attachment: [render_untrusted: nil]])
+  def untrusted_mention(node, _inner), do: Render.escape("@" <> Render.attr(node, "user"))
+
+  test "a nil override is the children in both renderers, under either policy" do
+    document = doc([attachment(%{"key" => "k1", "filename" => "plan.pdf"})])
+
+    for policy <- [:trusted, :untrusted] do
+      assert render(document, policy: policy, nodes: %{attachment: nil}) == ""
+      assert inline(document, policy: policy, nodes: %{attachment: nil}) == ""
     end
   end
 

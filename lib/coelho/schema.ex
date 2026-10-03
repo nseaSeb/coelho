@@ -1173,15 +1173,6 @@ defmodule Coelho.Schema do
     known = MapSet.union(MapSet.new(Map.keys(schema.nodes)), MapSet.new(Map.keys(schema.groups)))
 
     for {name, spec} <- schema.nodes do
-      # On the built spec, not the declaration: `extend/2` merges a
-      # redeclaration key by key, so either half may come from the spec it
-      # adjusts — and either may be taken away there.
-      if spec.render_untrusted_inline && is_nil(spec.render_untrusted) do
-        raise ArgumentError,
-              "node #{inspect(name)} has :render_untrusted_inline without :render_untrusted, " <>
-                "so its page render under policy: :untrusted would be its trusted :render"
-      end
-
       if spec.content do
         for referenced <- ContentExpression.names(spec.content),
             not MapSet.member?(known, referenced) do

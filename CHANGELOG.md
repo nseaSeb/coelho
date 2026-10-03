@@ -23,6 +23,14 @@ render function is its children unless the spec declares `:render_untrusted`
 — with `:render_untrusted_inline` beside it for a block node's inline form. An
 unknown policy raises. The default, `:trusted`, renders exactly as before.
 
+### A `nil` override means the same thing inline
+
+`nodes: %{attachment: nil}` rendered nothing but the node's children on the
+page and was ignored by `to_inline_html/3`, which drew the attachment anyway.
+It is now the children in both, so an application hiding a node from a page
+hides it from the excerpt too. A void node has no children, so it contributes
+nothing.
+
 ## 0.16.0 — 2026-09-27
 
 What typing makes, and one dependency fewer.

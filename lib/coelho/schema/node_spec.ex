@@ -31,8 +31,7 @@ defmodule Coelho.Schema.NodeSpec do
       in `Coelho.Render`
     * `:render_untrusted_inline` — the same where only inline elements are
       legal. Without it an inline node uses `:render_untrusted`, and a block
-      node is reduced to its children. Declared without `:render_untrusted`
-      it raises, since the page would be left with the trusted `:render`
+      node is reduced to its children
     * `:to_text` — what the node contributes to the plain text extraction,
       when that is not simply its children
     * `:editor_text` — the attribute whose value the editor draws as the

@@ -939,10 +939,15 @@ defmodule Coelho.Render do
   # legal here; and once a spec has declared what it shows untrusted, its
   # trusted `:render_inline` is no way out, since it is one of the forms the
   # declaration says point somewhere. So such a node is its children.
+  # An override present under its name wins here as it does on the page,
+  # `nil` included. It then sends the node down the ordinary fallback, which
+  # asks `render_node/3` — where the same override makes it its children —
+  # or unwraps a block: the children either way, and never `:render_inline`
+  # or the policy's inline form.
   defp inline_render(spec, state) do
-    case Map.get(state.nodes, spec.name) do
-      nil -> inline_policy_render(spec, state.policy)
-      render -> render
+    case Map.fetch(state.nodes, spec.name) do
+      {:ok, render} -> render
+      :error -> inline_policy_render(spec, state.policy)
     end
   end
 
