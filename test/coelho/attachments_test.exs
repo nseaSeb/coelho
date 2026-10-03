@@ -293,6 +293,48 @@ defmodule Coelho.AttachmentsTest do
                "application/octet-stream"
     end
 
+    test "bytes that come close to a signature prove nothing" do
+      for bytes <- [
+            <<0x89, "PNG", "junk">>,
+            <<0xFF, 0xD8, 0x00, 0xE0>>,
+            "GIF88a....",
+            "GIF8a.....",
+            "RIFF\0\0\0\0WAVEfmt ",
+            "%PDF1.7",
+            # A box too short to hold its own brands, which must not raise.
+            <<8::32, "ftyp", "avif", 0::32>>,
+            <<0::32, "ftyp", "avif", 0::32>>,
+            <<15::32, "ftyp", "avif", 0::32>>
+          ] do
+        assert Attachments.content_type({:binary, bytes}, "image/png") ==
+                 "application/octet-stream",
+               inspect(bytes)
+      end
+    end
+
+    test "AVIF image sequences, and brands read only inside their box" do
+      assert Attachments.content_type({:binary, ftyp("avis", ["msf1"])}, nil) == "image/avif"
+
+      # One compatible brand in the box; `avif` right after it belongs to the
+      # next box, and says nothing about this file.
+      outside = <<20::32, "ftyp", "mif1", 0::32, "mif1", "avif", "more">>
+      assert Attachments.content_type({:binary, outside}, nil) == "application/octet-stream"
+    end
+
+    @tag :tmp_dir
+    test "a binary is read as far as a file is, and no further", %{tmp_dir: dir} do
+      # A box whose `avif` brand sits past the first bytes a file read sees.
+      brands = :binary.copy("mif1", 70) <> "avif"
+      bytes = <<16 + byte_size(brands)::32, "ftyp", "mif1", 0::32, brands::binary>>
+      path = Path.join(dir, "late")
+      File.write!(path, bytes)
+
+      assert Attachments.content_type({:binary, bytes}, nil) ==
+               Attachments.content_type({:file, path}, nil)
+
+      assert Attachments.content_type({:binary, bytes}, nil) == "application/octet-stream"
+    end
+
     test "keeps a plain claim for everything that is downloaded anyway" do
       docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
