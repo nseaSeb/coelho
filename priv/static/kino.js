@@ -13,6 +13,14 @@ import { createCoelhoHook } from "./coelho.esm.js";
 const SETTLE_MS = 120;
 
 export async function init(ctx, { html }) {
+  // Registered before anything is awaited: a document set from Elixir in the
+  // next cell can reach this frame while the stylesheet is still loading, as
+  // "Evaluate all" runs it, and is then kept for after the mount.
+  let apply = null;
+  let early = null;
+
+  ctx.handleEvent("set", (value) => (apply ? apply(value) : (early = value)));
+
   await ctx.importCSS("coelho.css");
 
   ctx.root.innerHTML = html;
@@ -44,8 +52,10 @@ export async function init(ctx, { html }) {
   // A document from the server: one set from Elixir, or the last valid one
   // when the server refused what this editor sent. The hook reads its input
   // in updated() and ignores a value it wrote itself.
-  ctx.handleEvent("set", (value) => {
+  apply = (value) => {
     input.value = value;
     hook.updated();
-  });
+  };
+
+  if (early !== null) apply(early);
 }

@@ -29,16 +29,17 @@ input =
   )
 ```
 
-```elixir
+````elixir
 html = Kino.Input.read(input)
 {:ok, document, warnings} = Coelho.from_html(html)
 
 Kino.Layout.tabs(
   Document: Kino.Markdown.new("```json\n#{JSON.encode!(document)}\n```"),
-  "Rendered again": Kino.HTML.new(Coelho.to_html(document)),
+  # Markdown renders the HTML as a page would, without a JS output of its own.
+  "Rendered again": Kino.Markdown.new(Coelho.to_html(document)),
   "What was left behind": Kino.DataTable.new(warnings)
 )
-```
+````
 
 ## And edit the result
 

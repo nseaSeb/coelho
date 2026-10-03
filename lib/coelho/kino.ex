@@ -29,6 +29,14 @@ if Code.ensure_loaded?(Kino.JS.Live) and Code.ensure_loaded?(Phoenix.Component) 
 
     The editor has no uploads: a LiveView's upload channel is what carries
     them, and a notebook has none.
+
+    ## One writer at a time
+
+    Each change carries the whole document, and the last one to arrive is
+    what is kept. Two people typing in the same editor — two tabs on one
+    session, or a collaborator in Livebook — overwrite each other, and the
+    other editors are not told of a change until they reconnect. Writing
+    together is collaboration proper, which Coelho does not do yet.
     """
 
     use Kino.JS, assets_path: "priv/static", entrypoint: "kino.js"
@@ -52,8 +60,9 @@ if Code.ensure_loaded?(Kino.JS.Live) and Code.ensure_loaded?(Phoenix.Component) 
         an empty document when omitted
 
     Any other option is an attribute of `Coelho.LiveView.coelho_editor/1` —
-    `:toolbar`, `:labels`, `:placeholder`, `:maxlength`, `:suggest` — passed
-    through as given.
+    `:toolbar`, `:labels`, `:placeholder`, `:maxlength` — passed through as
+    given. `:suggest` passes through too, but only opens and closes the list:
+    the queries arrive as `:hook` events, and nothing here inserts a choice.
 
     Raises `ArgumentError` for a `:value` the schema refuses.
     """
@@ -133,6 +142,7 @@ if Code.ensure_loaded?(Kino.JS.Live) and Code.ensure_loaded?(Phoenix.Component) 
       case Document.validate(value, ctx.assigns.schema) do
         {:ok, document} ->
           broadcast_event(ctx, "set", JSON.encode!(document))
+
           emit_event(ctx, %{type: :change, document: document})
           {:reply, :ok, assign(ctx, document: document)}
 

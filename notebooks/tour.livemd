@@ -44,13 +44,16 @@ Every change is validated on the server before it is kept, then rendered again
 from the tree: the JSON a `:map` column holds, the HTML a page shows, and the
 plain text a search index would hold. Edit above and watch it follow.
 
-```elixir
+````elixir
 frame = Kino.Frame.new()
 
 show = fn document ->
   Kino.Layout.tabs(
     "Stored JSON": Kino.Markdown.new("```json\n#{JSON.encode!(document)}\n```"),
-    Rendered: Kino.HTML.new(Coelho.to_html(document)),
+    # Markdown renders the HTML as the page would. A Kino.HTML here, redrawn
+    # in a hidden tab while the editor above was still being created, kept
+    # Livebook from drawing the editor under "Evaluate all".
+    Rendered: Kino.Markdown.new(Coelho.to_html(document)),
     "HTML source": Kino.Markdown.new("```html\n#{Coelho.to_html(document)}\n```"),
     "Plain text": Kino.Text.new(Coelho.to_text(document))
   )
@@ -64,7 +67,7 @@ Kino.listen(editor, fn
 end)
 
 frame
-```
+````
 
 ## Reading it from Elixir
 
@@ -78,6 +81,31 @@ document = Coelho.Kino.read(editor)
   blank?: Coelho.blank?(document),
   inline: Coelho.to_inline_html(document)
 }
+```
+
+## Writing it from Elixir
+
+`set/2` replaces the document in the editor above, validated like everything
+else, and the tabs follow because it is a change like any other. Type
+something, then press the button.
+
+```elixir
+button = Kino.Control.button("Write from Elixir")
+
+Kino.listen(button, fn _click ->
+  :ok =
+    Coelho.Kino.set(editor, %{
+      "type" => "doc",
+      "content" => [
+        %{
+          "type" => "paragraph",
+          "content" => [%{"type" => "text", "text" => "Written from Elixir."}]
+        }
+      ]
+    })
+end)
+
+button
 ```
 
 ## The server decides

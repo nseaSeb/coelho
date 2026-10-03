@@ -138,6 +138,8 @@ defmodule Coelho.KinoTest do
       assert_broadcast_event(kino, "set", ^json)
       assert_receive {:editor, %{type: :change, document: ^document}}
       assert Coelho.Kino.read(kino) == document
+      assert %{html: html} = connect(kino)
+      assert html =~ "depuis Elixir"
     end
 
     test "leaves the editor alone and says why when the schema refuses" do

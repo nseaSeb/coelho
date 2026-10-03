@@ -84,13 +84,26 @@ for (const name of notebooks) {
     if (name === "tour.livemd") {
       // The editor is the first Kino output; the live view of what is stored
       // is the next one. Type, and the stored JSON has to follow.
+      // A Kino output is an iframe, created when Livebook gets to it: wait
+      // for the one holding the editor — the second code cell's output —
+      // rather than looking once.
       let editor = null;
 
-      for (const frame of page.frames()) {
-        if (frame !== page.mainFrame() && (await frame.locator(".ProseMirror").count()) > 0) {
-          editor = frame;
-          break;
+      for (let tries = 0; tries < 40 && !editor; tries++) {
+        // Livebook creates a Kino output's iframe once its cell is on screen,
+        // and evaluating every cell leaves the page scrolled to the last one.
+        await cells.nth(1).scrollIntoViewIfNeeded().catch(() => {});
+
+        for (const frame of page.frames()) {
+          const found = await frame.locator(".ProseMirror").count().catch(() => 0);
+
+          if (frame !== page.mainFrame() && found > 0) {
+            editor = frame;
+            break;
+          }
         }
+
+        if (!editor) await page.waitForTimeout(500);
       }
 
       assert.ok(editor, "tour.livemd: no editor rendered");
@@ -105,6 +118,13 @@ for (const name of notebooks) {
         null,
         { timeout: 10_000 }
       );
+
+      // The tour's button calls set/2 now the editor is drawn and edited: the
+      // document reaches it as an event, through the adapter's "set" handler.
+      await page.getByRole("button", { name: "Write from Elixir" }).click();
+
+      await prose.getByText("Typed in Livebook.").waitFor({ state: "detached", timeout: 10_000 });
+      await prose.getByText("Written from Elixir.").waitFor({ timeout: 10_000 });
     }
 
     assert.deepEqual(errors, [], `${name}: errors in the page`);
