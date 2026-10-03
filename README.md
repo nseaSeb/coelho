@@ -917,6 +917,30 @@ const Coelho = createCoelhoHook({
 })
 ```
 
+## Markdown
+
+```elixir
+Coelho.Markdown.to_markdown(@post.body)
+#=> "## Release notes\n\nFixed **three** bugs."
+```
+
+For a README, an export, a commit message or a language model's prompt.
+Everything a writer typed comes back as the characters they typed: what
+Markdown would read as syntax is escaped, so a paragraph starting with `#`
+stays a paragraph, and a mark is written as HTML where its `**` would not
+count. What Markdown cannot say — alignment, a table cell's span — is listed
+in `Coelho.Markdown`.
+
+And back, under the schema, through the HTML import (with the optional `:mdex`
+and `:floki` dependencies):
+
+```elixir
+{:ok, document, warnings} = Coelho.Markdown.from_markdown(markdown)
+```
+
+A property checks the two against each other: for generated documents,
+written to Markdown and read back, the result is the document HTML would give.
+
 ## Migrating existing HTML
 
 Content already stored as HTML has to become a document before any of the

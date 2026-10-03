@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Markdown, out and back
+
+`Coelho.Markdown.to_markdown/3` writes a document as CommonMark, with GitHub's
+tables and strikethrough. What Markdown would read as syntax is escaped, a mark
+spanning several text nodes is written once, and a mark is written as its HTML
+element (`<strong>`, `<em>`, `<del>`) where CommonMark would not read its
+delimiters. `:nodes` and `:marks` take an application's own; without them a
+node is its content, or its `:to_text`. What Markdown cannot say is listed in
+the module's documentation.
+
+`Coelho.Markdown.from_markdown/3` reads it back under the schema, through
+`Coelho.HTML.from_html/3`, with the new optional `:mdex` dependency.
+
+Two properties hold the pair to the HTML round trip: generated documents, one
+set drawn from Markdown's own syntax characters, come back from Markdown as
+they come back from HTML.
+
 ## 0.16.0 — 2026-09-27
 
 What typing makes, and one dependency fewer.
