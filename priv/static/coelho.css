@@ -1,0 +1,445 @@
+/* Coelho's editor, styled enough to use and not enough to clash.
+ *
+ * Structure, states and the things a person needs to see — focus, which
+ * buttons are in force, a counter that has gone over. No identity: every
+ * colour, radius and spacing below comes from a custom property with a
+ * neutral default, so an application overrides the properties rather than
+ * the rules.
+ *
+ * Import it, or copy it and stop treating it as ours:
+ *
+ *     @import "../../deps/coelho/assets/css/coelho.css";
+ *
+ * Everything inside .coelho-content is ProseMirror's, and the editor and the
+ * page should agree on it — see the note in the README about rendering the
+ * stored document with the same rules. */
+
+.coelho {
+  --coelho-text: #18181b;
+  --coelho-muted: #71717a;
+  --coelho-border: #d4d4d8;
+  --coelho-surface: #ffffff;
+  --coelho-raised: #f4f4f5;
+  --coelho-accent: #2563eb;
+  --coelho-danger: #dc2626;
+  --coelho-icon: 20px;
+  --coelho-command-pad: 6px;
+  --coelho-radius: 6px;
+  --coelho-gap: 8px;
+  --coelho-pad: 12px;
+  --coelho-height: auto;
+  --coelho-max-height: none;
+
+  /* Where the counter sits. It is a flex item of this column like the
+   * toolbar and the editing area, so an application moves it by order
+   * rather than by re-stating the rule: `0` puts it back between the
+   * toolbar and the area, where it used to be, and
+   * `--coelho-counter-inset: 0` takes it to the left edge.
+   *
+   * Under the text and against the right edge by default: a number counting
+   * what has been typed belongs at the end of what it counts, and between
+   * the toolbar and the area it separated the buttons from the thing they
+   * command. */
+  --coelho-counter-order: 2;
+  --coelho-counter-inset: auto;
+
+  color: var(--coelho-text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--coelho-gap);
+}
+
+/* -- Toolbar ------------------------------------------------------------- */
+
+.coelho-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.coelho-command {
+  align-items: center;
+  background: var(--coelho-surface);
+  border: 1px solid var(--coelho-border);
+  border-radius: var(--coelho-radius);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  justify-content: center;
+  line-height: 1;
+  padding: var(--coelho-command-pad);
+}
+
+/* A command that draws shows an icon; one with none shows its label, and
+ * needs the room a word takes. Asked of the element rather than of a class,
+ * so an icon an application supplies is sized and spaced like the shipped
+ * ones without having to carry `.coelho-icon` — that class is on the
+ * drawings this library ships, for an application that wants to style them
+ * apart from its own. */
+.coelho-command:not(:has(svg, img)) {
+  padding: var(--coelho-command-pad) calc(var(--coelho-command-pad) + 4px);
+}
+
+/* The shipped drawings are stroked in currentColor, so they take the
+ * button's colour in every state the rules below give it — pressed,
+ * disabled, hovered. */
+.coelho-command svg,
+.coelho-command img {
+  display: block;
+  height: var(--coelho-icon);
+  width: var(--coelho-icon);
+}
+
+.coelho-command:hover:not(:disabled) {
+  background: var(--coelho-raised);
+}
+
+/* In force under the cursor. The hook keeps this in step with the selection,
+ * so it is the one state that must be visible without hovering. */
+.coelho-command[aria-pressed="true"] {
+  background: var(--coelho-accent);
+  border-color: var(--coelho-accent);
+  color: var(--coelho-surface);
+}
+
+/* A command that cannot run where the cursor is. Dimmed rather than hidden:
+ * a toolbar whose buttons come and go is a toolbar nobody learns. */
+.coelho-command:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.coelho-command:focus-visible,
+.coelho-link-input:focus-visible,
+.coelho-content .ProseMirror:focus-visible {
+  outline: 2px solid var(--coelho-accent);
+  outline-offset: 2px;
+}
+
+/* -- The link and caption field ------------------------------------------ */
+
+.coelho-link {
+  display: inline-flex;
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
+}
+
+.coelho-link[hidden] {
+  display: none;
+}
+
+.coelho-link-input {
+  background: var(--coelho-surface);
+  border: 1px solid var(--coelho-border);
+  border-radius: var(--coelho-radius);
+  color: inherit;
+  font: inherit;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.coelho-link-input:invalid {
+  border-color: var(--coelho-danger);
+}
+
+/* Written by the hook while the field is open, and only when the application
+ * gave it something to say. */
+.coelho-link-hint {
+  color: var(--coelho-muted);
+  font-size: 0.8125em;
+  flex-basis: 100%;
+  padding-block-start: 2px;
+}
+
+.coelho-link-hint[hidden] {
+  display: none;
+}
+
+/* -- Counter ------------------------------------------------------------- */
+
+.coelho-counter {
+  color: var(--coelho-muted);
+  font-size: 0.875em;
+  margin-inline-start: var(--coelho-counter-inset);
+  order: var(--coelho-counter-order);
+}
+
+.coelho-counter-max::before {
+  content: "/";
+  padding-inline: 2px;
+}
+
+.coelho-counter.coelho-over {
+  color: var(--coelho-danger);
+  font-weight: 600;
+}
+
+/* -- The editor ---------------------------------------------------------- */
+
+/* An editor that grows with its text pushes the buttons that save it off
+ * the bottom of the screen, and terms and conditions are several thousand
+ * characters of that. `--coelho-max-height` lets it grow to a point and
+ * scroll after it; `--coelho-height` fixes it outright. Both default to
+ * what the editor did before they existed.
+ *
+ * `background` and `color` go together: an application that gives
+ * `--coelho-surface` the colour of its own theme and leaves the text to be
+ * inherited gets whatever the page happened to set — light text on a light
+ * field is a box that looks empty while holding a thousand words. */
+.coelho-content .ProseMirror {
+  background: var(--coelho-surface);
+  border: 1px solid var(--coelho-border);
+  border-radius: var(--coelho-radius);
+  color: var(--coelho-text);
+  height: var(--coelho-height);
+  max-height: var(--coelho-max-height);
+  min-height: 8rem;
+  outline: none;
+  overflow-y: auto;
+  padding: var(--coelho-pad);
+  /* The gap cursor's containing block: it is positioned, and would
+   * otherwise sit on some ancestor and stay put while the editor scrolls. */
+  position: relative;
+}
+
+/* Where the drop cursor lands: prosemirror-dropcursor appends it to the
+ * editor's offsetParent, the nearest positioned ancestor *above* the
+ * editor, and this keeps that inside `.coelho`, where the colour it reads
+ * is declared. */
+.coelho-content {
+  position: relative;
+}
+
+/* The placeholder is an attribute rather than a node: a node would be
+ * validated, stored and rendered, and this stays out of the document. */
+.coelho-content .ProseMirror.coelho-empty::before {
+  color: var(--coelho-muted);
+  content: attr(data-placeholder);
+  float: inline-start;
+  height: 0;
+  pointer-events: none;
+}
+
+/* After the editing area like the counter, and before it: an editor with an
+ * upload shows the file input, then the count of what has been typed. */
+.coelho-file-input {
+  color: var(--coelho-muted);
+  font-size: 0.875em;
+  order: 1;
+}
+
+/* The caret ProseMirror draws where there is no text to put one in — before
+ * a rule at the top of the document, between two tables. From
+ * prosemirror-gapcursor's own stylesheet, so an application has one file to
+ * import and not two, in the text colour rather than black. */
+.ProseMirror-gapcursor {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+}
+
+.ProseMirror-gapcursor::after {
+  animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite;
+  border-top: 1px solid var(--coelho-text);
+  content: "";
+  display: block;
+  position: absolute;
+  top: -2px;
+  width: 20px;
+}
+
+@keyframes ProseMirror-cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+
+/* The line a drag would land on. prosemirror-dropcursor sizes and places
+ * it, in `.coelho-content`; the colour is left to this file so both cursors
+ * follow the theme. */
+.coelho-dropcursor {
+  background-color: var(--coelho-text, currentColor);
+}
+
+/* -- What the document is made of ---------------------------------------- */
+
+/* The gap cursor is a child of the editor too, drawn before the first block
+ * or after the last when that is where the caret is — and a block that
+ * stops being first for the time the caret shows would get its margin back
+ * and move. */
+.coelho-content .ProseMirror > :first-child,
+.coelho-content .ProseMirror > .ProseMirror-gapcursor:first-child + * {
+  margin-block-start: 0;
+}
+
+.coelho-content .ProseMirror > :last-child,
+.coelho-content .ProseMirror > :has(+ .ProseMirror-gapcursor:last-child) {
+  margin-block-end: 0;
+}
+
+.coelho-content p,
+.coelho-content ul,
+.coelho-content ol,
+.coelho-content blockquote,
+.coelho-content pre,
+.coelho-content figure {
+  margin-block: 0.75em;
+}
+
+.coelho-content h1,
+.coelho-content h2,
+.coelho-content h3,
+.coelho-content h4,
+.coelho-content h5,
+.coelho-content h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin-block: 1.25em 0.5em;
+}
+
+.coelho-content ul,
+.coelho-content ol {
+  padding-inline-start: 1.5em;
+}
+
+.coelho-content ul {
+  list-style: disc;
+}
+
+.coelho-content ol {
+  list-style: decimal;
+}
+
+.coelho-content li > p {
+  margin-block: 0.25em;
+}
+
+.coelho-content blockquote {
+  border-inline-start: 3px solid var(--coelho-border);
+  color: var(--coelho-muted);
+  padding-inline-start: 1em;
+}
+
+.coelho-content pre {
+  background: var(--coelho-raised);
+  border-radius: var(--coelho-radius);
+  overflow-x: auto;
+  padding: var(--coelho-pad);
+}
+
+.coelho-content pre code {
+  background: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  white-space: pre;
+}
+
+.coelho-content :not(pre) > code {
+  background: var(--coelho-raised);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  padding: 1px 4px;
+}
+
+.coelho-content a {
+  color: var(--coelho-accent);
+  text-decoration: underline;
+}
+
+.coelho-content img {
+  height: auto;
+  max-width: 100%;
+}
+
+.coelho-content hr {
+  border: 0;
+  border-block-start: 1px solid var(--coelho-border);
+}
+
+/* -- Attachments --------------------------------------------------------- */
+
+.coelho-attachment {
+  margin-block: 0.75em;
+}
+
+.coelho-attachment figcaption {
+  color: var(--coelho-muted);
+  font-size: 0.875em;
+  margin-block-start: 0.25em;
+}
+
+/* A file that is not an image, shown by name. The editor and the page use the
+ * same class for it, which is why the rule is here rather than in an
+ * application's own stylesheet. */
+.coelho-attachment-label {
+  background: var(--coelho-raised);
+  border-radius: var(--coelho-radius);
+  display: inline-block;
+  padding: 4px 8px;
+}
+
+/* A key that no longer resolves — or, in the editor, one whose preview the
+ * application has not supplied: shown as its filename rather than as a
+ * broken image. */
+.coelho-attachment-missing {
+  color: var(--coelho-muted);
+  font-style: italic;
+}
+
+/* -- Alignment ----------------------------------------------------------- */
+
+/* The shipped schema renders alignment as an inline text-align, so nothing is
+ * needed for the page, and a rule here would only fight it — the editor
+ * renders the same attribute the same way, and the two must agree.
+ *
+ * An inline style is also what no stylesheet can answer. An application that
+ * wants alignment in CSS asks the schema for classes instead of a style, and
+ * names them itself:
+ *
+ *   Coelho.Schema.Default.build(align: {:class, %{"center" => "text-center"}})
+ *
+ * Both halves then emit that class, so these rules stay the application's. */
+
+/* The dark palette is all or nothing, and `data-coelho-theme` is how an
+ * application says which. Any value at all turns the automatic switch off
+ * and leaves the tokens as they were declared; `dark` asks for these
+ * whatever the machine prefers.
+ *
+ * All or nothing because it cannot be half: a rule setting `--coelho-text`
+ * on the element beats a value the element merely inherited, whatever
+ * either one's specificity, so an application that plugs its own palette in
+ * from further up the page gets its surface and our text — light on light,
+ * a field that looks blank while holding a thousand words. Weakening this
+ * selector does not fix that; it only moves which half is lost. Opting out
+ * does, and it is one attribute:
+ *
+ *   <.coelho_editor field={@form[:body]} data-coelho-theme="dark" />
+ */
+@media (prefers-color-scheme: dark) {
+  .coelho:not([data-coelho-theme]) {
+    --coelho-text: #f4f4f5;
+    --coelho-muted: #a1a1aa;
+    --coelho-border: #3f3f46;
+    --coelho-surface: #18181b;
+    --coelho-raised: #27272a;
+    --coelho-accent: #60a5fa;
+    --coelho-danger: #f87171;
+  }
+}
+
+.coelho[data-coelho-theme="dark"] {
+  --coelho-text: #f4f4f5;
+  --coelho-muted: #a1a1aa;
+  --coelho-border: #3f3f46;
+  --coelho-surface: #18181b;
+  --coelho-raised: #27272a;
+  --coelho-accent: #60a5fa;
+  --coelho-danger: #f87171;
+}

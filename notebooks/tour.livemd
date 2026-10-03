@@ -1,0 +1,107 @@
+# Coelho: a tour
+
+```elixir
+Mix.install([
+  # Until 0.17 is on Hex, from GitHub.
+  {:coelho, github: "nseaSeb/coelho"},
+  {:kino, "~> 0.19"},
+  {:phoenix_live_view, "~> 1.1"}
+])
+```
+
+## The editor
+
+This is the editor a Phoenix form gets from `<.coelho_editor>`: the same
+component, the same hook, the same schema on both sides. Type in it, select a
+word and make it bold, start a line with `# ` or `- `.
+
+```elixir
+sample = %{
+  "type" => "doc",
+  "content" => [
+    %{
+      "type" => "heading",
+      "attrs" => %{"level" => 2},
+      "content" => [%{"type" => "text", "text" => "Structured rich text"}]
+    },
+    %{
+      "type" => "paragraph",
+      "content" => [
+        %{"type" => "text", "text" => "Coelho stores "},
+        %{"type" => "text", "text" => "a tree", "marks" => [%{"type" => "bold"}]},
+        %{"type" => "text", "text" => ", never HTML."}
+      ]
+    }
+  ]
+}
+
+editor = Coelho.Kino.new(value: sample)
+```
+
+## What is stored, and what it renders to
+
+Every change is validated on the server before it is kept, then rendered again
+from the tree: the JSON a `:map` column holds, the HTML a page shows, and the
+plain text a search index would hold. Edit above and watch it follow.
+
+```elixir
+frame = Kino.Frame.new()
+
+show = fn document ->
+  Kino.Layout.tabs(
+    "Stored JSON": Kino.Markdown.new("```json\n#{JSON.encode!(document)}\n```"),
+    Rendered: Kino.HTML.new(Coelho.to_html(document)),
+    "HTML source": Kino.Markdown.new("```html\n#{Coelho.to_html(document)}\n```"),
+    "Plain text": Kino.Text.new(Coelho.to_text(document))
+  )
+end
+
+Kino.Frame.render(frame, show.(Coelho.Kino.read(editor)))
+
+Kino.listen(editor, fn
+  %{type: :change, document: document} -> Kino.Frame.render(frame, show.(document))
+  _other -> :ok
+end)
+
+frame
+```
+
+## Reading it from Elixir
+
+`read/1` is the document as a form would submit it, already validated.
+
+```elixir
+document = Coelho.Kino.read(editor)
+
+%{
+  characters: Coelho.text_length(document),
+  blank?: Coelho.blank?(document),
+  inline: Coelho.to_inline_html(document)
+}
+```
+
+## The server decides
+
+What the browser sends is input like any other. A document the schema refuses
+is not stored, whoever sent it, and `set/2` says why:
+
+```elixir
+hostile = %{
+  "type" => "doc",
+  "content" => [
+    %{
+      "type" => "paragraph",
+      "content" => [
+        %{
+          "type" => "text",
+          "text" => "click me",
+          "marks" => [%{"type" => "link", "attrs" => %{"href" => "javascript:alert(1)"}}]
+        }
+      ]
+    }
+  ]
+}
+
+{:error, errors} = Coelho.Kino.set(editor, hostile)
+Enum.map(errors, &Coelho.Document.Error.format/1)
+```

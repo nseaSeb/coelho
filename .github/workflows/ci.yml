@@ -265,3 +265,45 @@ jobs:
         run: |
           npm ci --prefix bundle
           node bundle/build.mjs --check
+
+  notebooks:
+    name: Notebooks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.1"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      # Every notebook in notebooks/ runs in a real Livebook, as a reader who
+      # clicked "Run in Livebook" would run it: every cell evaluated, none may
+      # raise, and what is typed in the tour's editor has to come back out of
+      # Elixir. The notebooks are pointed at this checkout, not at GitHub.
+      - name: Start Livebook
+        run: |
+          mix local.hex --force
+          mix escript.install hex livebook --force
+          LIVEBOOK_PORT=4555 LIVEBOOK_IFRAME_PORT=4556 LIVEBOOK_TOKEN_ENABLED=false \
+            ~/.mix/escripts/livebook server > livebook.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:4555/ && break; sleep 2; done
+          curl -sf -o /dev/null http://localhost:4555/
+
+      - name: Run the notebooks
+        working-directory: demo
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          node test/livebook/notebooks.mjs
+
+      - name: Livebook log
+        if: failure()
+        run: tail -100 livebook.log

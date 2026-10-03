@@ -1,0 +1,49 @@
+# Coelho: migrating stored HTML
+
+```elixir
+Mix.install([
+  # Until 0.17 is on Hex, from GitHub.
+  {:coelho, github: "nseaSeb/coelho"},
+  {:kino, "~> 0.19"},
+  {:phoenix_live_view, "~> 1.1"},
+  # The HTML import parses with Floki, an optional dependency of Coelho.
+  {:floki, "~> 0.36"}
+])
+```
+
+## From whatever an editor left behind
+
+Paste HTML from your database — TinyMCE, Trix, CKEditor, a CMS — and see the
+document it becomes, and what the import left behind and why.
+
+```elixir
+input =
+  Kino.Input.textarea("Stored HTML",
+    default: """
+    <h2 style="color:red">Release notes</h2>
+    <p>Fixed <b>three</b> bugs<br>and one <span class="x">regression</span>.</p>
+    <script>track()</script>
+    <ul><li>Faster <i>import</i></li><li><a href="javascript:alert(1)">a link</a></li></ul>
+    <font face="Comic Sans">Legacy markup</font>
+    """
+  )
+```
+
+```elixir
+html = Kino.Input.read(input)
+{:ok, document, warnings} = Coelho.from_html(html)
+
+Kino.Layout.tabs(
+  Document: Kino.Markdown.new("```json\n#{JSON.encode!(document)}\n```"),
+  "Rendered again": Kino.HTML.new(Coelho.to_html(document)),
+  "What was left behind": Kino.DataTable.new(warnings)
+)
+```
+
+## And edit the result
+
+The imported document is an ordinary one: open it in the editor.
+
+```elixir
+Coelho.Kino.new(value: document)
+```
