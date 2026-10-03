@@ -49,6 +49,11 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
   def attrs_escaped(_node),
     do: [{"style", "background:u\\rl(https://#{@evil}/bg)"}, {"data-x", "1"}]
 
+  # A name nothing in the HTML standard fetches through, which Phoenix's own
+  # `phoenix_html.js`, htmx and lazy loaders all do.
+  def attrs_data(node),
+    do: [{"data-to", url(node)}, {"data-method", "delete"}, {"data-src", url(node)}]
+
   def safe_block(_node, inner), do: Render.tag("div", [{"class", "u"}], inner)
   def safe_span(_node, inner), do: Render.tag("span", [{"class", "u"}], inner)
 
@@ -69,7 +74,8 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
               [{"SRC", "https://#{@evil}/static"}, {"class", "k"}],
               &__MODULE__.attrs_url/1,
               &__MODULE__.attrs_style/1,
-              &__MODULE__.attrs_escaped/1
+              &__MODULE__.attrs_escaped/1,
+              &__MODULE__.attrs_data/1
             ])
         ) do
       {tag, attrs}

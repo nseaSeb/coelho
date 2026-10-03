@@ -369,8 +369,9 @@ same holds for `to_safe_inline_html/2`.
 The rule is fail-closed, so it holds for nodes of your own without your
 declaring anything: a node or mark with an attribute validated as `:safe_url`
 is its children; a `{tag, attrs}` render keeps only attributes that cannot
-fetch, follow or style anything (`class`, `title`, `aria-*`, `data-*`, table
-spans, a list's `start`, …) beside what `:render_as` and `:class` add, and is
+fetch, follow or style anything (`class`, `title`, `aria-*`, table spans, a
+list's `start`, …) — not `data-*`, which `phoenix_html.js`, htmx and lazy
+loaders turn into requests — beside what `:render_as` and `:class` add, and is
 its children when the tag loads or navigates by itself (`a`, `img`, `iframe`,
 `style`, …); a render *function* is its children, since
 Coelho cannot look inside it. Declare `:render_untrusted` to say what a node

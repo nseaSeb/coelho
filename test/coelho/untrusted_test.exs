@@ -427,7 +427,7 @@ defmodule Coelho.UntrustedTest do
     {:ok, document} = Document.validate(doc([paragraph([badge])]), schema)
 
     assert Render.to_html(document, schema, policy: :untrusted) ==
-             ~s(<p><span aria-label="a" data-k="v" title="t" style="color:loud" class="badge">b</span></p>)
+             ~s(<p><span aria-label="a" title="t" style="color:loud" class="badge">b</span></p>)
   end
 
   def panel_link(node), do: [{"href", "/panels/" <> Render.attr(node, "ref")}]

@@ -70,12 +70,14 @@ defmodule Coelho.Render do
       text, and a void node holding a URL renders nothing
     * a `{tag, attrs}` render keeping only the attributes that cannot fetch,
       follow or style anything — `class`, `title`, `lang`, `dir`, `role`,
-      table spans and headers, a list's `start`, `type`, `value`, `aria-*`
-      and `data-*` — before an attribute's `:render_as` and the spec's
+      table spans and headers, a list's `start`, `type`, `value` and
+      `aria-*` — before an attribute's `:render_as` and the spec's
       `:class` merge in as usual; or just its children when the tag loads
       or navigates by itself (`a`, `img`, `iframe`, `video`, `form`,
-      `style`, `script`, …). A literal `style` or `id` in the attrs is
-      dropped: declare `:render_untrusted` to keep it
+      `style`, `script`, …). A literal `style`, `id` or `data-*` in the
+      attrs is dropped — the page's JavaScript gives `data-to`,
+      `data-hx-get` or `data-src` meanings of its own: declare
+      `:render_untrusted` to keep one
     * its children, for a render *function*: it is code this module cannot
       look inside, so it runs untrusted only when the spec declares it as
       `:render_untrusted` too — which the shipped code block does
@@ -111,10 +113,14 @@ defmodule Coelho.Render do
   # escape a browser will ever accept — `u\\rl(` is a URL token. `style`
   # reaches the element only through an attribute's `:render_as`, whose
   # values the schema bounds, and `id` not at all, since a stranger's `id`
-  # can shadow the page's own globals.
+  # can shadow the page's own globals. Nor `data-*`: no browser fetches through
+  # one, but the page's own JavaScript does — `phoenix_html.js` turns
+  # `data-to` and `data-method` into a signed request, htmx reads
+  # `data-hx-*`, lazy loaders `data-src` — and the names are the libraries'
+  # to choose, not this list's.
   @untrusted_attrs ~w(class title lang dir role colspan rowspan headers scope start
                       reversed type value)
-  @untrusted_attr_prefixes ["aria-", "data-"]
+  @untrusted_attr_prefixes ["aria-"]
 
   # Elements that load or navigate by themselves, or change how the rest of
   # the page does, whatever their attributes.
