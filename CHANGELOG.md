@@ -17,7 +17,8 @@ and marks of your own: a `:safe_url` attribute makes one its children, a
 `{tag, attrs}` render keeps only an allow list of attributes that cannot fetch,
 follow or style anything — a literal `style`, `id` or `data-*` goes, since
 `phoenix_html.js`, htmx and lazy loaders act on `data-*` — and is its
-children when it is an `a`, `img`, `iframe`, `style` or the like; and a
+children when it is an `a`, `img`, `iframe`, `style`, a form control or a
+raw-text element; and a
 render function is its children unless the spec declares `:render_untrusted`
 — with `:render_untrusted_inline` beside it for a block node's inline form. An
 unknown policy raises. The default, `:trusted`, renders exactly as before.

@@ -24,7 +24,9 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
   def resolve(_key), do: "https://#{@evil}/file"
 
   @reference_tags ~w(a area base embed form frame iframe img image input link meta object
-                     picture portal script source style svg track audio video)
+                     picture portal script source style svg track audio video
+                     button select textarea option plaintext xmp listing noembed noframes
+                     noscript template title)
   @reference_attrs ~w(href src srcset action formaction poster cite data background
                       longdesc ping manifest codebase archive usemap profile lowsrc dynsrc
                       icon xlink:href xml:base)
@@ -86,7 +88,7 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
   defp block_render do
     one_of([
       constant(nil),
-      element(~w(div p section aside a iframe IFRAME Img form meta video span)),
+      element(~w(div p section aside a iframe IFRAME Img form meta video span button plaintext)),
       member_of([
         &__MODULE__.fun_link/2,
         &__MODULE__.fun_img/2,
@@ -118,8 +120,11 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
           url? <- boolean(),
           url_validator <- member_of([:safe_url, {:nullable, :safe_url}]),
           void? <- boolean(),
-          render <- if(inline?, do: inline_render(), else: block_render()),
           render_inline <- inline_render(),
+          # An inline node whose inline form is its own may draw anything on
+          # the page; one without has only its `:render` to stand inline.
+          render <-
+            if(inline? and is_nil(render_inline), do: inline_render(), else: block_render()),
           render_untrusted <-
             member_of([
               nil,

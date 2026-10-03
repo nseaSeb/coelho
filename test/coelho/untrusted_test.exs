@@ -430,6 +430,44 @@ defmodule Coelho.UntrustedTest do
              ~s(<p><span aria-label="a" title="t" style="color:loud" class="badge">b</span></p>)
   end
 
+  test "an inline node whose declared inline form cannot run untrusted is its children inline" do
+    schema =
+      Schema.extend(Schema.default(),
+        nodes: [
+          card_mention: [
+            group: "inline",
+            inline: true,
+            content: "text*",
+            render: {"div", [{"class", "card"}]},
+            render_inline: &__MODULE__.untrusted_card_inline/2
+          ]
+        ]
+      )
+
+    node = %{"type" => "card_mention", "content" => [%{"type" => "text", "text" => "m"}]}
+    {:ok, document} = Document.validate(doc([paragraph([node])]), schema)
+
+    assert Render.to_inline_html(document, schema) == "<b>m</b>"
+    assert Render.to_inline_html(document, schema, policy: :untrusted) == "m"
+  end
+
+  test "form controls and raw-text elements are their children" do
+    for tag <-
+          ~w(button select textarea option plaintext xmp listing noembed noframes noscript template title) do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [box: [group: "block", content: "inline*", render: {tag, [{"class", "k"}]}]]
+        )
+
+      box = %{"type" => "box", "content" => [%{"type" => "text", "text" => "x"}]}
+      {:ok, document} = Document.validate(doc([box]), schema)
+
+      assert Render.to_html(document, schema, policy: :untrusted) == "x", tag
+    end
+  end
+
+  def untrusted_card_inline(_node, inner), do: Render.tag("b", [], inner)
+
   def panel_link(node), do: [{"href", "/panels/" <> Render.attr(node, "ref")}]
   def embed_link(node), do: [{"href", Render.safe_url(Render.attr(node, "url"))}]
   def cite_attrs(mark), do: [{"cite", Render.safe_url(Render.attr(mark, "source"))}]

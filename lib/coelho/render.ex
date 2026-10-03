@@ -74,7 +74,9 @@ defmodule Coelho.Render do
       `aria-*` — before an attribute's `:render_as` and the spec's
       `:class` merge in as usual; or just its children when the tag loads
       or navigates by itself (`a`, `img`, `iframe`, `video`, `form`,
-      `style`, `script`, …). A literal `style`, `id` or `data-*` in the
+      `style`, `script`, …), and for a form control (`button`, `select`,
+      `textarea`) or an element whose content is raw text (`plaintext`,
+      `xmp`, `noscript`, …). A literal `style`, `id` or `data-*` in the
       attrs is dropped — the page's JavaScript gives `data-to`,
       `data-hx-get` or `data-src` meanings of its own: declare
       `:render_untrusted` to keep one
@@ -124,8 +126,15 @@ defmodule Coelho.Render do
 
   # Elements that load or navigate by themselves, or change how the rest of
   # the page does, whatever their attributes.
+  #
+  # Form controls are on it because a stranger's `<button>` inside a page's
+  # own form submits that form, and the raw-text elements because their
+  # content is not parsed as the markup it is — `<plaintext>` turns the rest
+  # of the page into text.
   @reference_tags ~w(a area base embed form frame iframe img image input link meta object
-                     picture portal script source style svg track audio video)
+                     picture portal script source style svg track audio video
+                     button select textarea option plaintext xmp listing noembed noframes
+                     noscript template title)
 
   @type policy :: :trusted | :untrusted
 
@@ -943,9 +952,21 @@ defmodule Coelho.Render do
       spec.render_untrusted && spec.inline -> spec.render_untrusted
       spec.render_untrusted -> nil
       url_attr?(spec) -> nil
-      true -> untrusted(spec.render_inline)
+      true -> untrusted_inline(spec.render_inline)
     end
   end
+
+  # `nil` is "no inline form of its own" and sends the node down the
+  # ordinary fallback. A declared form the policy cannot run is not that:
+  # it says the node's page form is not legal inline, so the node is its
+  # children here — which `nil` cannot say, since for an inline node the
+  # fallback is that very page form.
+  defp untrusted_inline(nil), do: nil
+  defp untrusted_inline({_tag, _attrs} = render), do: untrusted(render)
+  defp untrusted_inline(_function), do: &__MODULE__.children_only/2
+
+  @doc false
+  def children_only(_node, inner), do: inner
 
   defp url_attr?(spec), do: Enum.any?(spec.attrs, fn {_name, attr} -> url?(attr.validate) end)
 

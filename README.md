@@ -373,7 +373,8 @@ fetch, follow or style anything (`class`, `title`, `aria-*`, table spans, a
 list's `start`, …) — not `data-*`, which `phoenix_html.js`, htmx and lazy
 loaders turn into requests — beside what `:render_as` and `:class` add, and is
 its children when the tag loads or navigates by itself (`a`, `img`, `iframe`,
-`style`, …); a render *function* is its children, since
+`style`, …), is a form control (`button`, `textarea`, …) or holds raw text
+(`plaintext`, `xmp`, …); a render *function* is its children, since
 Coelho cannot look inside it. Declare `:render_untrusted` to say what a node
 shows instead — reusing its own render when it points nowhere, as the shipped
 code block does. A `:nodes` or `:marks` override you pass still wins, since
