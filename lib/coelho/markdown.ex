@@ -22,7 +22,9 @@ defmodule Coelho.Markdown do
 
     * an empty paragraph or heading, and a line break at the edge of one
     * a paragraph's alignment, and a table cell's span; a table's first row
-      is its header, whatever it held
+      is its header, whatever it held, and a cell is one line: its blocks run
+      together, a line break in it is `<br>`, a `|` in it is `&#124;` and its
+      code is `<code>`, since GitHub splits the row on every other `|`
     * a heading holding a line break is written as Coelho's own HTML for it
     * an attachment is a link to it — resolved through `:context`, as
       `Coelho.Render` resolves it — or its name when it has no URL, and its
@@ -130,7 +132,12 @@ defmodule Coelho.Markdown do
           do: 1 - elem(previous, 1),
           else: 0
 
-      {block(child, Map.put(state, :variant, variant)), kind && {kind, variant}}
+      # A block written as nothing — an empty paragraph — does not stand
+      # between two lists: the one before it is still the one to differ from.
+      case block(child, Map.put(state, :variant, variant)) do
+        "" -> {"", previous}
+        written -> {written, kind && {kind, variant}}
+      end
     end)
     |> elem(0)
     |> Enum.reject(&(&1 == ""))
@@ -152,12 +159,14 @@ defmodule Coelho.Markdown do
     end
   end
 
-  defp block(:paragraph, node, _spec, state), do: paragraph(node, state)
+  defp block(:paragraph, node, _spec, state), do: node |> trim_edges() |> paragraph(state)
 
   # An ATX heading is one line, so one holding a line break has no Markdown
   # form: it is written as the HTML Coelho renders for it, which Markdown
   # passes through as a block.
   defp block(:heading, node, _spec, state) do
+    node = trim_edges(node)
+
     if Enum.any?(Map.get(node, "content", []), &(&1["type"] == "hard_break")),
       do: html_block(node, state),
       else: heading(node, state)
@@ -209,7 +218,7 @@ defmodule Coelho.Markdown do
 
     body =
       case Attachments.url(state.context, node) do
-        nil -> escape(name)
+        nil -> paragraph_text(name)
         url -> link(escape(name), url, nil)
       end
 
@@ -228,6 +237,27 @@ defmodule Coelho.Markdown do
       true -> node |> blocks(state) |> Enum.join("\n\n")
     end
   end
+
+  # Markdown cannot begin or end a paragraph with a line break, nor keep
+  # whitespace there: what it would drop is not written.
+  defp trim_edges(node) do
+    content =
+      node
+      |> Map.get("content", [])
+      |> Enum.drop_while(&edge?/1)
+      |> Enum.reverse()
+      |> Enum.drop_while(&edge?/1)
+      |> Enum.reverse()
+
+    Map.put(node, "content", content)
+  end
+
+  defp edge?(%{"type" => "hard_break"}), do: true
+
+  defp edge?(%{"type" => "text", "text" => text}) when is_binary(text),
+    do: String.trim(text) == ""
+
+  defp edge?(_node), do: false
 
   defp heading(node, state) do
     level = Render.attr(node, "level", 1)
@@ -273,9 +303,13 @@ defmodule Coelho.Markdown do
     # the shape a writer makes, and the one a blank line would turn loose.
     tight? =
       Enum.all?(items, fn item ->
-        case Map.get(item, "content", []) |> Enum.map(&spec!(state.schema, &1["type"]).name) do
-          [:paragraph | rest] -> Enum.all?(rest, &(&1 in [:bullet_list, :ordered_list]))
-          _other -> false
+        case Map.get(item, "content", []) do
+          [first | rest] ->
+            spec!(state.schema, first["type"]).name == :paragraph and
+              Enum.all?(rest, &interrupts_paragraph?(&1, state))
+
+          [] ->
+            false
         end
       end)
 
@@ -291,6 +325,33 @@ defmodule Coelho.Markdown do
     end)
   end
 
+  # Only these follow a paragraph on the very next line without a blank one:
+  # a bullet list, and an ordered list starting at 1. One starting anywhere
+  # else is read as more of the paragraph's text.
+  defp interrupts_paragraph?(node, state) do
+    case spec!(state.schema, node["type"]).name do
+      :bullet_list -> true
+      :ordered_list -> Render.attr(node, "start", 1) == 1
+      _other -> false
+    end
+  end
+
+  # GitHub splits a row on every `|` that is not escaped, before anything
+  # else is read — inside a code span or a link's destination too — and
+  # `\|` there is a `|` again. So every pipe not already escaped is.
+  defp escape_pipes(cell) do
+    cell
+    |> String.graphemes()
+    |> Enum.reduce({[], false}, fn
+      "|", {out, false} -> {["|", "\\" | out], false}
+      "\\", {out, escaped?} -> {["\\" | out], not escaped?}
+      char, {out, _escaped?} -> {[char | out], false}
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+    |> Enum.join()
+  end
+
   # GitHub's pipe tables: the first row is the header, whatever it held, and
   # a cell is its text on one line. Spans are not expressible and are lost.
   defp table(node, state) do
@@ -298,9 +359,12 @@ defmodule Coelho.Markdown do
       for row <- Map.get(node, "content", []) do
         for cell <- Map.get(row, "content", []) do
           cell
-          |> blocks(state)
+          |> blocks(Map.put(state, :table?, true))
           |> Enum.join(" ")
+          # A cell is one line: a line break in it is HTML's.
+          |> String.replace("\\\n", "<br>")
           |> String.replace("\n", " ")
+          |> escape_pipes()
         end
       end
 
@@ -349,7 +413,7 @@ defmodule Coelho.Markdown do
         [{:atom, IO.iodata_to_binary(markdown), marks}]
 
       spec.text ->
-        text_tokens(Map.get(node, "text", ""), marks)
+        text_tokens(Map.get(node, "text", ""), marks, table?(state))
 
       # A line break carries no marks — it has none in the document, and
       # the HTML renderer writes it outside them — so spans close around it.
@@ -357,25 +421,27 @@ defmodule Coelho.Markdown do
         [:break]
 
       spec.name == :image ->
-        [{:atom, image(node), marks}]
+        [{:atom, image(node, table?(state)), marks}]
 
       true ->
         own_tokens(node, spec, marks, state)
     end
   end
 
-  defp image(node) do
+  defp image(node, table?) do
     alt = Render.attr(node, "alt") |> present() || ""
     src = Render.attr(node, "src") |> Render.safe_url() || ""
-    "!" <> link(escape(alt), src, Render.attr(node, "title") |> present())
+    "!" <> link(escape(alt, table?), src, Render.attr(node, "title") |> present(), table?)
   end
+
+  defp table?(state), do: Map.get(state, :table?, false)
 
   # An inline node of the application's own: what its `:to_text` says when it
   # is void, and its content under its own marks as well when it is not.
-  defp own_tokens(node, %{void: true} = spec, marks, _state) do
+  defp own_tokens(node, %{void: true} = spec, marks, state) do
     case leaf_text(node, spec) do
       "" -> []
-      text -> text_tokens(text, marks)
+      text -> text_tokens(text, marks, table?(state))
     end
   end
 
@@ -391,12 +457,12 @@ defmodule Coelho.Markdown do
 
   # Code is a span of its own, written whole: nothing inside it is escaped
   # and no other mark can start or end inside it.
-  defp text_tokens(text, marks) do
+  defp text_tokens(text, marks, table?) do
     text = String.replace(text, ["\r\n", "\n", "\r", "\t"], " ")
 
     case Enum.split_with(marks, &(&1.name == :code)) do
-      {[_code | _], others} -> [{:atom, code_span(text), others}]
-      {[], _all} -> [{:text, text |> escape() |> escape_trailing_bang(), marks}]
+      {[_code | _], others} -> [{:atom, code_span(text, table?), others}]
+      {[], _all} -> [{:text, text |> escape(table?) |> escape_trailing_bang(), marks}]
     end
   end
 
@@ -419,14 +485,14 @@ defmodule Coelho.Markdown do
       {:error, :italic} -> %{kind: :emphasis, open: "*", close: "*", tag: "em"}
       {:error, :strike} -> %{kind: :emphasis, open: "~~", close: "~~", tag: "del"}
       {:error, :code} -> %{kind: :fixed, open: "", close: ""}
-      {:error, :link} -> %{kind: :fixed, open: "[", close: link_tail(mark)}
+      {:error, :link} -> %{kind: :fixed, open: "[", close: link_tail(mark, table?(state))}
       {:error, _custom} -> %{kind: :fixed, open: "", close: ""}
     end
   end
 
-  defp link_tail(mark) do
+  defp link_tail(mark, table?) do
     href = Render.attr(mark, "href") |> Render.safe_url() || ""
-    destination(href, Render.attr(mark, "title") |> present())
+    destination(href, Render.attr(mark, "title") |> present(), table?)
   end
 
   # -- Spans: consecutive tokens sharing the mark at `depth` become one span
@@ -532,7 +598,25 @@ defmodule Coelho.Markdown do
   defp touches_run?({:char, char}), do: char in ["*", "~", "_"]
   defp touches_run?(_before), do: false
 
-  defp code_span(text) do
+  # In a table cell no `|` may stand in the Markdown, and a code span cannot
+  # escape one there for every backslash before it: GitHub reads `\|` back as
+  # `|` only after an odd run of them. So a code span in a cell is `<code>`,
+  # its punctuation written as entities, which neither split the row nor read
+  # as Markdown.
+  defp code_span(text, true) do
+    entities =
+      text
+      |> String.to_charlist()
+      |> Enum.map(fn char ->
+        if char in ?!..?/ or char in ?:..?@ or char in ?[..?` or char in ?{..?~,
+          do: "&##{char};",
+          else: <<char::utf8>>
+      end)
+
+    "<code>" <> IO.iodata_to_binary(entities) <> "</code>"
+  end
+
+  defp code_span(text, false) do
     fence = String.duplicate("`", longest_run(text, ?`) + 1)
 
     # CommonMark strips one space from each side of a code span's content
@@ -565,23 +649,28 @@ defmodule Coelho.Markdown do
     end
   end
 
-  defp link(text, url, title), do: "[" <> text <> destination(url, title)
+  defp link(text, url, title, table? \\ false),
+    do: "[" <> text <> destination(url, title, table?)
 
   # `](<url> "title")`: the angle brackets let a destination hold spaces and
   # parentheses, and the title is quoted with its own quotes escaped.
-  defp destination(url, title) do
-    title = if title, do: ~s( ") <> escape_title(title) <> ~s("), else: ""
-    "](<" <> escape_url(url) <> ">" <> title <> ")"
+  defp destination(url, title, table?) do
+    title = if title, do: ~s( ") <> escape_title(title, table?) <> ~s("), else: ""
+    "](<" <> escape_url(url, table?) <> ">" <> title <> ")"
   end
 
-  defp escape_title(title) do
+  defp escape_title(title, table?) do
     title
+    |> String.replace("|", if(table?, do: "&#124;", else: "|"))
     |> String.replace(["\\", ~s(")], &("\\" <> &1))
     |> String.replace(["\r\n", "\n", "\r"], " ")
   end
 
   # Inside `<…>` only the brackets and a line break end the destination.
-  defp escape_url(url),
+  # In a table cell a destination's `|` is the same URL percent-encoded.
+  defp escape_url(url, true), do: url |> String.replace("|", "%7C") |> escape_url(false)
+
+  defp escape_url(url, false),
     do: url |> String.replace("\\", "\\\\") |> String.replace(["<", ">", "\n"], &escape_char/1)
 
   defp escape_char("\n"), do: "%0A"
@@ -593,19 +682,27 @@ defmodule Coelho.Markdown do
   # the start of a line, which `escape_line_starts/1` handles.
   @escaped ~c"\\`*_[]<>~|&"
 
-  defp escape(text) do
+  defp escape(text, table? \\ false) do
     text
     |> String.replace(["\r\n", "\n", "\r", "\t"], " ")
     |> String.to_charlist()
-    |> Enum.map(fn char -> if char in @escaped, do: [?\\, char], else: char end)
+    |> Enum.map(fn
+      # In a table cell a typed `|` is its entity: escaped with a backslash
+      # it would come back as one only after an even run of backslashes.
+      ?| when table? -> "&#124;"
+      char when char in @escaped -> [?\\, char]
+      char -> char
+    end)
     |> List.to_string()
   end
 
   # A `!` that ends a text node may be followed by a link, and `![` opens an
   # image. Inside the text a `[` is already escaped, so only the last one
   # needs it.
+  # Every `!` here is one the writer typed: `escape/1` never escapes it, and
+  # a backslash before it is an escaped backslash of theirs.
   defp escape_trailing_bang(text) do
-    if String.ends_with?(text, "!") and not String.ends_with?(text, "\\!"),
+    if String.ends_with?(text, "!"),
       do: String.slice(text, 0..-2//1) <> "\\!",
       else: text
   end

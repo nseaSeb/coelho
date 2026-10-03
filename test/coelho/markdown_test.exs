@@ -84,6 +84,98 @@ defmodule Coelho.MarkdownTest do
       end
     end
 
+    # Found by review, then by the properties once their generators could
+    # draw it; each comes back as the HTML round trip would bring it.
+    test "comes back as it went, in tables, lists and around empty blocks" do
+      schema = Coelho.Schema.Default.build(tables: true)
+      list = fn type, items -> %{"type" => type, "content" => Enum.map(items, &li/1)} end
+      cell = fn type, content -> %{"type" => type, "content" => [p(content)]} end
+      code = fn text -> t(text, ["code"]) end
+
+      table = fn cells ->
+        %{
+          "type" => "table",
+          "content" => [
+            %{"type" => "table_row", "content" => [cell.("table_header", [t("h")])]},
+            %{"type" => "table_row", "content" => [cell.("table_cell", cells)]}
+          ]
+        }
+      end
+
+      href = %{
+        "type" => "text",
+        "text" => "l",
+        "marks" => [%{"type" => "link", "attrs" => %{"href" => "/a|b"}}]
+      }
+
+      cases = [
+        # An empty paragraph between two lists does not keep them apart.
+        {[list.("bullet_list", [[p([t("a")])]]), p([]), list.("bullet_list", [[p([t("b")])]])],
+         "- a\n\n* b"},
+        # An ordered list starting at 3 cannot follow a paragraph on the next line.
+        {[
+           list.("bullet_list", [
+             [
+               p([t("a")]),
+               %{
+                 "type" => "ordered_list",
+                 "attrs" => %{"start" => 3},
+                 "content" => [li([p([t("b")])])]
+               }
+             ]
+           ])
+         ], "- a\n\n  3. b"},
+        # A `|` in a cell's code, its link, or with a backslash before it.
+        {[table.([code.("a|b")])], "| h |\n| --- |\n| <code>a&#124;b</code> |"},
+        {[table.([code.("\\|")])], "| h |\n| --- |\n| <code>&#92;&#124;</code> |"},
+        {[table.([href])], "| h |\n| --- |\n| [l](</a%7Cb>) |"},
+        {[
+           table.([
+             %{
+               "type" => "text",
+               "text" => "l",
+               "marks" => [%{"type" => "link", "attrs" => %{"href" => "/a", "title" => "t|u"}}]
+             }
+           ])
+         ], "| h |\n| --- |\n| [l](</a> \"t&#124;u\") |"},
+        {[table.([t("x\\|y")])], "| h |\n| --- |\n| x\\\\&#124;y |"},
+        # A line break in a cell, which is one line.
+        {[table.([t("x"), %{"type" => "hard_break"}, t("y")])], "| h |\n| --- |\n| x<br>y |"},
+        # A typed backslash before a `!` that a link follows.
+        {[p([t("x\\!"), href])], "x\\\\\\![l](</a|b>)"},
+        # A line break at the edge of a paragraph or heading is not written.
+        {[p([%{"type" => "hard_break"}, t("x"), %{"type" => "hard_break"}])], "x"},
+        {[
+           %{
+             "type" => "heading",
+             "attrs" => %{"level" => 1},
+             "content" => [t("x"), %{"type" => "hard_break"}]
+           }
+         ], "# x"}
+      ]
+
+      for {content, markdown} <- cases do
+        {:ok, document} = Document.validate(doc(content), schema)
+        assert Markdown.to_markdown(document, schema) == markdown
+
+        {:ok, via_html, _} =
+          Coelho.from_html(Coelho.to_html(expressible(document), schema), schema)
+
+        {:ok, via_markdown, _} = Markdown.from_markdown(markdown, schema)
+        assert same_urls(via_markdown) == same_urls(via_html), markdown
+      end
+    end
+
+    test "keeps an attachment's name a name when it looks like a block" do
+      for name <- ["1. report.pdf", "- notes", "# draft"] do
+        attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => name}}
+        {:ok, back, _} = Markdown.from_markdown(md([attachment]))
+
+        assert [%{"type" => "paragraph"}] = back["content"]
+        assert Coelho.to_text(back) =~ name
+      end
+    end
+
     # A mark of the application's own writes its delimiters as given, so a
     # span after it has to look at what it ended with.
     test "does not let a span's delimiters run into an override's" do
@@ -151,7 +243,8 @@ defmodule Coelho.MarkdownTest do
         ]
       }
 
-      assert md([table], schema) == "| a \\| b | c |\n| --- | --- |\n| 1 | 2 |"
+      # A typed `|` in a cell is its entity: see "pipes in a table" below.
+      assert md([table], schema) == "| a &#124; b | c |\n| --- | --- |\n| 1 | 2 |"
     end
 
     test "writes a heading holding a line break as Coelho's own HTML" do
@@ -357,6 +450,7 @@ defmodule Coelho.MarkdownTest do
     ".",
     ",",
     ":",
+    "\\!",
     " ",
     "  ",
     "x y"
@@ -372,7 +466,8 @@ defmodule Coelho.MarkdownTest do
         %{"type" => "italic"},
         %{"type" => "strike"},
         %{"type" => "code"},
-        %{"type" => "link", "attrs" => %{"href" => "/a(b)?c=*d*"}}
+        %{"type" => "link", "attrs" => %{"href" => "/a(b)?c=*d*"}},
+        %{"type" => "link", "attrs" => %{"href" => "/a|b"}}
       ]),
       max_length: 3
     )
@@ -397,52 +492,128 @@ defmodule Coelho.MarkdownTest do
     end
   end
 
+  defp hostile_list(depth) do
+    gen all(
+          type <- member_of(~w(bullet_list ordered_list)),
+          start <- integer(0..4),
+          items <- list_of(hostile_item(depth), min_length: 1, max_length: 3)
+        ) do
+      list = %{"type" => type, "content" => items}
+      if type == "ordered_list", do: Map.put(list, "attrs", %{"start" => start}), else: list
+    end
+  end
+
+  # A paragraph, and at the first level possibly a list nested under it.
+  defp hostile_item(0) do
+    gen all(paragraph <- hostile_paragraph()) do
+      %{"type" => "list_item", "content" => [paragraph]}
+    end
+  end
+
+  defp hostile_item(depth) do
+    gen all(
+          paragraph <- hostile_paragraph(),
+          nested <- one_of([constant(nil), hostile_list(depth - 1)])
+        ) do
+      %{"type" => "list_item", "content" => Enum.reject([paragraph, nested], &is_nil/1)}
+    end
+  end
+
+  # One row of headers, then cells: a pipe table's first row is its header.
+  defp hostile_table do
+    gen all(
+          width <- integer(1..3),
+          rows <-
+            list_of(list_of(hostile_paragraph(), length: width), min_length: 1, max_length: 3)
+        ) do
+      row = fn cells, type ->
+        %{
+          "type" => "table_row",
+          "content" => Enum.map(cells, &%{"type" => type, "content" => [&1]})
+        }
+      end
+
+      [header | body] = rows
+
+      %{
+        "type" => "table",
+        "content" => [row.(header, "table_header") | Enum.map(body, &row.(&1, "table_cell"))]
+      }
+    end
+  end
+
   defp hostile_block do
     one_of([
       hostile_paragraph(),
+      # Written as nothing, between blocks that must stay apart.
+      constant(%{"type" => "paragraph", "content" => []}),
       gen all(
             level <- integer(1..6),
             content <- list_of(hostile_inline(), min_length: 1, max_length: 4)
           ) do
         %{"type" => "heading", "attrs" => %{"level" => level}, "content" => content}
       end,
-      gen all(
-            items <- list_of(hostile_paragraph(), min_length: 1, max_length: 3),
-            type <- member_of(~w(bullet_list ordered_list))
-          ) do
-        %{
-          "type" => type,
-          "content" => Enum.map(items, &%{"type" => "list_item", "content" => [&1]})
-        }
-      end,
+      hostile_list(1),
       gen all(content <- list_of(hostile_paragraph(), min_length: 1, max_length: 2)) do
         %{"type" => "blockquote", "content" => content}
       end,
       gen all(text <- hostile_text()) do
         %{"type" => "code_block", "content" => [%{"type" => "text", "text" => text}]}
       end,
-      constant(%{"type" => "horizontal_rule"})
+      constant(%{"type" => "horizontal_rule"}),
+      hostile_table()
     ])
   end
 
+  defp tables, do: Coelho.Schema.Default.build(tables: true)
+
+  # The document as generated is what is written, empty blocks and all; what
+  # it is compared with is the HTML round trip of what Markdown can say of it.
   property "what Markdown reads as syntax comes back as the characters that were typed" do
     check all(
             blocks <- list_of(hostile_block(), min_length: 1, max_length: 5),
-            validated =
-              Document.validate(expressible(%{"type" => "doc", "content" => blocks}), schema()),
-            match?({:ok, _}, validated),
+            generated = %{"type" => "doc", "content" => blocks},
+            original = Document.validate(generated, tables()),
+            expressed = Document.validate(expressible(generated), tables()),
+            match?({:ok, _}, original) and match?({:ok, _}, expressed),
             max_runs: 500
           ) do
-      {:ok, document} = validated
+      {:ok, document} = original
+      {:ok, expressed} = expressed
 
-      markdown = Markdown.to_markdown(document, schema())
-      {:ok, via_html, _warnings} = Coelho.from_html(Coelho.to_html(document, schema()), schema())
-      {:ok, via_markdown, _warnings} = Markdown.from_markdown(markdown, schema())
+      markdown = Markdown.to_markdown(document, tables())
+      {:ok, via_html, _warnings} = Coelho.from_html(Coelho.to_html(expressed, tables()), tables())
+      {:ok, via_markdown, _warnings} = Markdown.from_markdown(markdown, tables())
 
       assert same_urls(via_markdown) == same_urls(via_html), """
       Markdown:
       #{markdown}
       """
+    end
+  end
+
+  # Without a URL an attachment is its name, a paragraph like any other: a
+  # name that looks like a list or a heading has to stay a name.
+  property "an attachment's name and caption come back as the words they were" do
+    check all(name <- hostile_text(), caption <- one_of([constant(nil), hostile_text()])) do
+      attrs = %{"key" => "k", "filename" => name}
+      attrs = if caption, do: Map.put(attrs, "caption", caption), else: attrs
+
+      {:ok, document} =
+        Document.validate(doc([%{"type" => "attachment", "attrs" => attrs}]), schema())
+
+      {:ok, back, _warnings} = Markdown.from_markdown(Markdown.to_markdown(document), schema())
+
+      words = fn text -> text |> String.split() |> Enum.join(" ") end
+      expected = Enum.reject([name, caption], &(is_nil(&1) or words.(&1) == ""))
+
+      # A document with nothing in it reads back as one empty paragraph.
+      back_words =
+        back["content"]
+        |> Enum.map(&words.(Coelho.to_text(doc([&1]))))
+        |> Enum.reject(&(&1 == ""))
+
+      assert back_words == Enum.map(expected, words)
     end
   end
 end
