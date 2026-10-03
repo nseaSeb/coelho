@@ -119,6 +119,74 @@ defmodule Coelho.UntrustedTest do
       end
     end
 
+    # The allow list's other side: everything the shipped schema draws that
+    # points nowhere comes through untouched — spans, a list's start, an
+    # alignment's style, every inline mark but the link.
+    test "markup that points nowhere is the same trusted and untrusted" do
+      schema = Coelho.Schema.Default.build(tables: true)
+      t = fn text, marks -> %{"type" => "text", "text" => text, "marks" => marks} end
+
+      cell = fn type, attrs ->
+        %{"type" => type, "attrs" => attrs, "content" => [paragraph([t.("c", [])])]}
+      end
+
+      document =
+        doc([
+          %{
+            "type" => "heading",
+            "attrs" => %{"level" => 3, "align" => "center"},
+            "content" => [t.("h", [%{"type" => "bold"}, %{"type" => "italic"}])]
+          },
+          %{
+            "type" => "paragraph",
+            "attrs" => %{"align" => "right"},
+            "content" => [
+              t.("s", [%{"type" => "strike"}]),
+              %{"type" => "hard_break"},
+              t.("x", [%{"type" => "code"}])
+            ]
+          },
+          %{
+            "type" => "ordered_list",
+            "attrs" => %{"start" => 4},
+            "content" => [
+              %{
+                "type" => "list_item",
+                "attrs" => %{"align" => "justify"},
+                "content" => [paragraph([t.("i", [])])]
+              }
+            ]
+          },
+          %{"type" => "blockquote", "content" => [paragraph([t.("q", [])])]},
+          %{"type" => "horizontal_rule"},
+          %{
+            "type" => "table",
+            "content" => [
+              %{
+                "type" => "table_row",
+                "content" => [
+                  cell.("table_header", %{"colspan" => 2}),
+                  cell.("table_cell", %{"rowspan" => 3})
+                ]
+              }
+            ]
+          }
+        ])
+
+      {:ok, document} = Document.validate(document, schema)
+      trusted = Render.to_html(document, schema)
+
+      for fragment <-
+            ~w(colspan="2" rowspan="3" start="4" text-align:center text-align:justify <hr <br <s> <code>) do
+        assert trusted =~ fragment, "the premise: #{fragment} in #{trusted}"
+      end
+
+      assert Render.to_html(document, schema, policy: :untrusted) == trusted
+
+      assert Render.to_inline_html(document, schema, policy: :untrusted) ==
+               Render.to_inline_html(document, schema)
+    end
+
     test "a code block keeps its markup" do
       document =
         doc([
@@ -317,6 +385,49 @@ defmodule Coelho.UntrustedTest do
       assert Render.to_html(document, schema, policy: :untrusted) == "<p>c</p>"
       assert Render.to_inline_html(document, schema, policy: :untrusted) == "c"
     end
+  end
+
+  test "a {tag, attrs} render keeps what cannot fetch and drops the rest" do
+    schema =
+      Schema.extend(Schema.default(),
+        nodes: [
+          badge: [
+            group: "inline",
+            inline: true,
+            content: "text*",
+            class: "badge",
+            attrs: [
+              tone: [
+                default: "plain",
+                validate: {:one_of, ~w(plain loud)},
+                render_as: {:style, "color"}
+              ]
+            ],
+            render:
+              {"span",
+               [
+                 {"aria-label", "a"},
+                 {"data-k", "v"},
+                 {"title", "t"},
+                 {"id", "shadow"},
+                 {"style", "x:u\\rl(/p)"},
+                 {"Class", "upper"},
+                 {"onclick", "go()"}
+               ]}
+          ]
+        ]
+      )
+
+    badge = %{
+      "type" => "badge",
+      "attrs" => %{"tone" => "loud"},
+      "content" => [%{"type" => "text", "text" => "b"}]
+    }
+
+    {:ok, document} = Document.validate(doc([paragraph([badge])]), schema)
+
+    assert Render.to_html(document, schema, policy: :untrusted) ==
+             ~s(<p><span aria-label="a" data-k="v" title="t" style="color:loud" class="badge">b</span></p>)
   end
 
   def panel_link(node), do: [{"href", "/panels/" <> Render.attr(node, "ref")}]

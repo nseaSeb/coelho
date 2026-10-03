@@ -68,11 +68,14 @@ defmodule Coelho.Render do
     * nothing but its children, for a spec with an attribute validated as
       `:safe_url` (bare or `{:nullable, :safe_url}`) — a link becomes its
       text, and a void node holding a URL renders nothing
-    * a `{tag, attrs}` render with every attribute that fetches or follows
-      something taken off (`href`, `src`, `srcset`, `action`, `poster`, …,
-      and any value holding `url(`), or just its children when the tag
-      loads or navigates by itself (`a`, `img`, `iframe`, `video`, `form`,
-      `meta`, …)
+    * a `{tag, attrs}` render keeping only the attributes that cannot fetch,
+      follow or style anything — `class`, `title`, `lang`, `dir`, `role`,
+      table spans and headers, a list's `start`, `type`, `value`, `aria-*`
+      and `data-*` — before an attribute's `:render_as` and the spec's
+      `:class` merge in as usual; or just its children when the tag loads
+      or navigates by itself (`a`, `img`, `iframe`, `video`, `form`,
+      `style`, `script`, …). A literal `style` or `id` in the attrs is
+      dropped: declare `:render_untrusted` to keep it
     * its children, for a render *function*: it is code this module cannot
       look inside, so it runs untrusted only when the spec declares it as
       `:render_untrusted` too — which the shipped code block does
@@ -102,10 +105,16 @@ defmodule Coelho.Render do
   alias Coelho.Schema
   alias Coelho.Schema.Attr
 
-  # Attributes whose value the browser fetches or follows.
-  @reference_attrs ~w(href src srcset action formaction poster cite data background
-                      longdesc ping manifest codebase archive usemap profile lowsrc dynsrc
-                      icon xlink:href xml:base)
+  # The attributes a `{tag, attrs}` render keeps under `policy: :untrusted`:
+  # names that cannot fetch, follow or style anything. An allow list, because
+  # the other way round is a contest with every attribute and every CSS
+  # escape a browser will ever accept — `u\\rl(` is a URL token. `style`
+  # reaches the element only through an attribute's `:render_as`, whose
+  # values the schema bounds, and `id` not at all, since a stranger's `id`
+  # can shadow the page's own globals.
+  @untrusted_attrs ~w(class title lang dir role colspan rowspan headers scope start
+                      reversed type value)
+  @untrusted_attr_prefixes ["aria-", "data-"]
 
   # Elements that load or navigate by themselves, or change how the rest of
   # the page does, whatever their attributes.
@@ -709,8 +718,15 @@ defmodule Coelho.Render do
     end
   end
 
+  # Filtered before the schema's own contributions merge in: an attribute's
+  # `:render_as` and the spec's `:class` are bounded by the schema, and what
+  # `:render` returned is the only part that is not.
   defp untrusted_attrs(attrs, node, spec, context) do
-    attrs |> element_attrs(node, spec, context) |> Enum.reject(&reference_attr?/1)
+    attrs
+    |> resolve_attrs(node, context)
+    |> Enum.filter(&untrusted_attr?/1)
+    |> merge_attrs(attr_dom(node, spec.attrs))
+    |> with_class(spec.class)
   end
 
   # The tag may be a function of the node, for an element whose *name* is
@@ -934,10 +950,11 @@ defmodule Coelho.Render do
   defp untrusted({tag, attrs}), do: {:untrusted, tag, attrs}
   defp untrusted(_render), do: nil
 
-  # A value that names an image or a font is a request as much as `src` is.
-  defp reference_attr?({name, value}) do
-    String.downcase(to_string(name)) in @reference_attrs or
-      (is_binary(value) and String.contains?(String.downcase(value), ["url(", "image-set("]))
+  # Compared as written: a name the list does not spell is dropped, which is
+  # the safe way for a miss to go.
+  defp untrusted_attr?({name, _value}) do
+    name = to_string(name)
+    name in @untrusted_attrs or String.starts_with?(name, @untrusted_attr_prefixes)
   end
 
   defp resolve_attrs(attrs, node, _context) when is_function(attrs, 1), do: attrs.(node)

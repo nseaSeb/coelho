@@ -44,6 +44,11 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
   def attrs_style(_node),
     do: [{"style", "background:URL(https://#{@evil}/bg)"}, {"title", "t"}]
 
+  # CSS unescapes an identifier before asking whether it is `url`, so no
+  # substring check on the value can be the boundary.
+  def attrs_escaped(_node),
+    do: [{"style", "background:u\\rl(https://#{@evil}/bg)"}, {"data-x", "1"}]
+
   def safe_block(_node, inner), do: Render.tag("div", [{"class", "u"}], inner)
   def safe_span(_node, inner), do: Render.tag("span", [{"class", "u"}], inner)
 
@@ -63,7 +68,8 @@ defmodule Coelho.UntrustedSchemaPropertyTest do
               [{"href", "https://#{@evil}/static"}],
               [{"SRC", "https://#{@evil}/static"}, {"class", "k"}],
               &__MODULE__.attrs_url/1,
-              &__MODULE__.attrs_style/1
+              &__MODULE__.attrs_style/1,
+              &__MODULE__.attrs_escaped/1
             ])
         ) do
       {tag, attrs}

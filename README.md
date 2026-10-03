@@ -368,9 +368,11 @@ same holds for `to_safe_inline_html/2`.
 
 The rule is fail-closed, so it holds for nodes of your own without your
 declaring anything: a node or mark with an attribute validated as `:safe_url`
-is its children; a `{tag, attrs}` render loses every attribute that fetches or
-follows something, and the whole element when the tag loads or navigates by
-itself (`a`, `img`, `iframe`, …); a render *function* is its children, since
+is its children; a `{tag, attrs}` render keeps only attributes that cannot
+fetch, follow or style anything (`class`, `title`, `aria-*`, `data-*`, table
+spans, a list's `start`, …) beside what `:render_as` and `:class` add, and is
+its children when the tag loads or navigates by itself (`a`, `img`, `iframe`,
+`style`, …); a render *function* is its children, since
 Coelho cannot look inside it. Declare `:render_untrusted` to say what a node
 shows instead — reusing its own render when it points nowhere, as the shipped
 code block does. A `:nodes` or `:marks` override you pass still wins, since
