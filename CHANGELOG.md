@@ -12,9 +12,12 @@ Coelho.to_safe_html(comment.body, policy: :untrusted)
 ```
 
 A link renders as its text, an image as its alt text, an attachment as its
-file name and caption, with no URL resolved. A node or mark of your own with a
-`:safe_url` attribute is reduced to its children without declaring anything;
-one that points somewhere by other means declares `:render_untrusted`. An
+file name and caption, with no URL resolved. The rule is fail-closed for nodes
+and marks of your own: a `:safe_url` attribute makes one its children, a
+`{tag, attrs}` render loses every attribute that fetches or follows something
+(and the element itself when it is an `a`, `img`, `iframe` or the like), and a
+render function is its children unless the spec declares `:render_untrusted`
+— with `:render_untrusted_inline` beside it for a block node's inline form. An
 unknown policy raises. The default, `:trusted`, renders exactly as before.
 
 ## 0.16.0 — 2026-09-27

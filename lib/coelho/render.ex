@@ -55,7 +55,8 @@ defmodule Coelho.Render do
 
       Coelho.to_safe_html(comment.body, policy: :untrusted)
 
-  Under it, each node and mark is rendered by the first of:
+  Under it the rule is fail-closed: what the schema has not said is safe is
+  rendered as its children. Each node and mark is rendered by the first of:
 
     * the caller's own `:nodes` or `:marks` override — that is code, and the
       application decides what it emits
@@ -67,15 +68,21 @@ defmodule Coelho.Render do
     * nothing but its children, for a spec with an attribute validated as
       `:safe_url` (bare or `{:nullable, :safe_url}`) — a link becomes its
       text, and a void node holding a URL renders nothing
-    * the spec's ordinary `:render`
+    * a `{tag, attrs}` render with every attribute that fetches or follows
+      something taken off (`href`, `src`, `srcset`, `action`, `poster`, …,
+      and any value holding `url(`), or just its children when the tag
+      loads or navigates by itself (`a`, `img`, `iframe`, `video`, `form`,
+      `meta`, …)
+    * its children, for a render *function*: it is code this module cannot
+      look inside, so it runs untrusted only when the spec declares it as
+      `:render_untrusted` too — which the shipped code block does
 
-  The third rule is what makes the policy hold for a schema it has never
-  seen: a node of the application's own that stores a URL loses it without
-  having declared anything. A node that points somewhere *without* a
-  `:safe_url` attribute — the shipped attachment holds a key, resolved to a
-  URL at render time — has to say what it shows instead, with
-  `:render_untrusted`. The default schema does: an image shows its alt text,
-  an attachment its file name and caption, and neither resolves a URL.
+  So a node of the application's own never leaks by omission. One that does
+  not point anywhere and renders through a function loses its markup until
+  it says so; one that points somewhere says what it shows instead. The
+  shipped attachment holds a key rather than a URL and declares its own
+  form: its file name and caption, with no URL resolved. An image shows its
+  alt text.
 
   The policy is `:trusted` by default. Anything else raises rather than
   rendering as trusted, because a misspelt policy that quietly fell back to
@@ -94,6 +101,16 @@ defmodule Coelho.Render do
 
   alias Coelho.Schema
   alias Coelho.Schema.Attr
+
+  # Attributes whose value the browser fetches or follows.
+  @reference_attrs ~w(href src srcset action formaction poster cite data background
+                      longdesc ping manifest codebase archive usemap profile lowsrc dynsrc
+                      icon xlink:href xml:base)
+
+  # Elements that load or navigate by themselves, or change how the rest of
+  # the page does, whatever their attributes.
+  @reference_tags ~w(a area base embed form frame iframe img image input link meta object
+                     picture portal script source style svg track audio video)
 
   @type policy :: :trusted | :untrusted
 
@@ -281,24 +298,6 @@ defmodule Coelho.Render do
 
   defp inline_node(node, _schema, _state) do
     raise ArgumentError, "cannot render #{inspect(node)}: expected a node with a string type"
-  end
-
-  # `nil` here means "no inline form of its own", which is not what `nil`
-  # means from the policy — there it is "children only", and an untrusted
-  # node falling through to its `:render_inline` would draw what the policy
-  # took away. So a policy answer of `nil` is left for `render_node/3`, which
-  # asks the policy again and gets the same children-only answer.
-  defp inline_render(spec, state) do
-    case Map.get(state.nodes, spec.name) do
-      nil ->
-        case inline_policy_render(spec, state.policy) do
-          :default -> spec.render_inline
-          render -> render
-        end
-
-      render ->
-        render
-    end
   end
 
   # A separator sits between two contributions when either side came from a
@@ -686,12 +685,32 @@ defmodule Coelho.Render do
       fun when is_function(fun, 3) ->
         fun.(node, inner, context)
 
+      {:untrusted, tag, attrs} ->
+        untrusted_element(resolve_tag(tag, node), attrs, node, spec, inner, context, spec.void)
+
       {tag, attrs} when spec.void ->
         void_tag(resolve_tag(tag, node), element_attrs(attrs, node, spec, context))
 
       {tag, attrs} ->
         tag(resolve_tag(tag, node), element_attrs(attrs, node, spec, context), inner)
     end
+  end
+
+  defp untrusted_element(tag, attrs, node, spec, inner, context, void?) do
+    cond do
+      String.downcase(tag) in @reference_tags ->
+        inner
+
+      void? ->
+        void_tag(tag, untrusted_attrs(attrs, node, spec, context))
+
+      true ->
+        tag(tag, untrusted_attrs(attrs, node, spec, context), inner)
+    end
+  end
+
+  defp untrusted_attrs(attrs, node, spec, context) do
+    attrs |> element_attrs(node, spec, context) |> Enum.reject(&reference_attr?/1)
   end
 
   # The tag may be a function of the node, for an element whose *name* is
@@ -839,6 +858,9 @@ defmodule Coelho.Render do
       fun when is_function(fun, 3) ->
         fun.(mark, inner, state.context)
 
+      {:untrusted, tag, attrs} ->
+        untrusted_element(resolve_tag(tag, mark), attrs, mark, spec, inner, state.context, false)
+
       {tag, attrs} ->
         tag(
           resolve_tag(tag, mark),
@@ -849,58 +871,74 @@ defmodule Coelho.Render do
   end
 
   # -- Policy ---------------------------------------------------------------
+  #
+  # Under `:untrusted` the rule is fail-closed: what the schema has not said
+  # is safe renders as its children. A render function is code this module
+  # cannot look inside, so it only runs when the spec declared it for this
+  # policy; a `{tag, attrs}` element is data, so it runs with every attribute
+  # that can point somewhere taken off it, and not at all when the tag is one
+  # that loads or navigates by itself.
 
-  # What the policy says inline. A block node's `:render_untrusted` is free
-  # to draw a block — the block renderer puts nothing between two siblings,
-  # so it often has to — and that is not legal where this renderer's output
-  # goes. Nor is its `:render_inline` a way out: it is the trusted inline
-  # form, and a node that declared an untrusted form has said its trusted
-  # ones point somewhere. Without `:render_untrusted_inline`, such a node is
-  # its children, which is always legal and never points anywhere.
-  defp inline_policy_render(_spec, :trusted), do: :default
-
-  defp inline_policy_render(%{render_untrusted_inline: render}, :untrusted)
-       when not is_nil(render),
-       do: render
-
-  defp inline_policy_render(%{inline: false, render_untrusted: render}, :untrusted)
-       when not is_nil(render),
-       do: nil
-
-  defp inline_policy_render(spec, policy), do: policy_render(spec, policy)
-
-  # Who decides how a node or a mark renders, in one place for both: the
-  # caller's override — present under its name, even as `nil` — then the
-  # policy, then the spec.
+  # Who decides how a node or a mark renders on the page: the caller's
+  # override — present under its name, even as `nil` — then the policy.
   defp resolve_render(overrides, spec, policy) do
     case Map.fetch(overrides, spec.name) do
-      {:ok, render} ->
-        render
-
-      :error ->
-        case policy_render(spec, policy) do
-          :default -> spec.render
-          render -> render
-        end
+      {:ok, render} -> render
+      :error -> page_render(spec, policy)
     end
   end
 
-  # `:default` when the policy has nothing to say, so that `nil` can mean
-  # what it means everywhere else here: the children and nothing around them.
-  defp policy_render(_spec, :trusted), do: :default
+  defp page_render(spec, :trusted), do: spec.render
 
-  defp policy_render(%{render_untrusted: render}, :untrusted) when not is_nil(render),
-    do: render
-
-  defp policy_render(spec, :untrusted) do
-    if Enum.any?(spec.attrs, fn {_name, attr} -> url?(attr.validate) end),
-      do: nil,
-      else: :default
+  defp page_render(spec, :untrusted) do
+    cond do
+      spec.render_untrusted -> spec.render_untrusted
+      url_attr?(spec) -> nil
+      true -> untrusted(spec.render)
+    end
   end
+
+  # The same question inline, where `:default` means "no inline form of its
+  # own" and sends the node down the ordinary inline fallback — which asks
+  # `page_render/2` for an inline node and unwraps a block one.
+  #
+  # A block node's `:render_untrusted` is free to draw a block, which is not
+  # legal here; and once a spec has declared what it shows untrusted, its
+  # trusted `:render_inline` is no way out, since it is one of the forms the
+  # declaration says point somewhere. So such a node is its children.
+  defp inline_render(spec, state) do
+    case Map.get(state.nodes, spec.name) do
+      nil -> inline_policy_render(spec, state.policy)
+      render -> render
+    end
+  end
+
+  defp inline_policy_render(spec, :trusted), do: spec.render_inline
+
+  defp inline_policy_render(spec, :untrusted) do
+    cond do
+      spec.render_untrusted_inline -> spec.render_untrusted_inline
+      spec.render_untrusted && spec.inline -> spec.render_untrusted
+      spec.render_untrusted -> nil
+      url_attr?(spec) -> nil
+      true -> untrusted(spec.render_inline)
+    end
+  end
+
+  defp url_attr?(spec), do: Enum.any?(spec.attrs, fn {_name, attr} -> url?(attr.validate) end)
 
   defp url?(:safe_url), do: true
   defp url?({:nullable, validator}), do: url?(validator)
   defp url?(_validator), do: false
+
+  defp untrusted({tag, attrs}), do: {:untrusted, tag, attrs}
+  defp untrusted(_render), do: nil
+
+  # A value that names an image or a font is a request as much as `src` is.
+  defp reference_attr?({name, value}) do
+    String.downcase(to_string(name)) in @reference_attrs or
+      (is_binary(value) and String.contains?(String.downcase(value), ["url(", "image-set("]))
+  end
 
   defp resolve_attrs(attrs, node, _context) when is_function(attrs, 1), do: attrs.(node)
   defp resolve_attrs(attrs, node, context) when is_function(attrs, 2), do: attrs.(node, context)

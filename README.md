@@ -366,12 +366,15 @@ Under `policy: :untrusted` a link is its text, an image is its alt text, and an
 attachment is its file name and caption — its URL is never even resolved. The
 same holds for `to_safe_inline_html/2`.
 
-It holds for nodes of your own without your declaring anything: a node or mark
-with an attribute validated as `:safe_url` is reduced to its children. A node
-that points somewhere by other means — a key, an id — says what it shows
-instead, with `:render_untrusted` in its spec. A `:nodes` or `:marks` override
-you pass still wins, since that is your code. A misspelt policy raises rather
-than rendering as trusted.
+The rule is fail-closed, so it holds for nodes of your own without your
+declaring anything: a node or mark with an attribute validated as `:safe_url`
+is its children; a `{tag, attrs}` render loses every attribute that fetches or
+follows something, and the whole element when the tag loads or navigates by
+itself (`a`, `img`, `iframe`, …); a render *function* is its children, since
+Coelho cannot look inside it. Declare `:render_untrusted` to say what a node
+shows instead — reusing its own render when it points nowhere, as the shipped
+code block does. A `:nodes` or `:marks` override you pass still wins, since
+that is your code. A misspelt policy raises rather than rendering as trusted.
 
 `Coelho.blank?/2` does not know the policy, and answers for the document: an
 image counts as content even when, with no alt text, the untrusted render of it

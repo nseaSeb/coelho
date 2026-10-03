@@ -158,6 +158,10 @@ defmodule Coelho.Schema.Default do
             code: true,
             attrs: [language: [default: nil, validate: {:nullable, &__MODULE__.language/1}]],
             render: &__MODULE__.render_code_block/2,
+            # Its own render, declared again: a function is fail-closed under
+            # `policy: :untrusted`, and this one points nowhere — the language
+            # only ever becomes a class.
+            render_untrusted: &__MODULE__.render_code_block/2,
             parse: ["pre"]
           ],
           horizontal_rule: [group: "block", void: true, render: {"hr", []}, parse: ["hr"]],

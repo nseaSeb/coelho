@@ -110,6 +110,27 @@ defmodule Coelho.UntrustedTest do
 
       assert render(document, policy: :untrusted) == render(document, [])
     end
+
+    test "every node the shipped schema renders through a function says what it shows untrusted" do
+      schema = Coelho.Schema.Default.build(tables: true)
+
+      for {name, spec} <- Enum.concat(schema.nodes, schema.marks), is_function(spec.render) do
+        assert spec.render_untrusted, "#{name} would render as its children under :untrusted"
+      end
+    end
+
+    test "a code block keeps its markup" do
+      document =
+        doc([
+          %{
+            "type" => "code_block",
+            "attrs" => %{"language" => "elixir"},
+            "content" => [%{"type" => "text", "text" => "x = 1"}]
+          }
+        ])
+
+      assert render(document, policy: :untrusted) == render(document, [])
+    end
   end
 
   describe "who decides" do
@@ -262,6 +283,39 @@ defmodule Coelho.UntrustedTest do
     # Taking the page half away leaves the default's inline half alone.
     assert_raise ArgumentError, ~r/:attachment has :render_untrusted_inline without/, fn ->
       Schema.extend(Schema.default(), nodes: [attachment: [render_untrusted: nil]])
+    end
+  end
+
+  # A URL attribute reduces a node to its children in both renderers, whatever
+  # shape its validator takes, so that the page and an excerpt of it agree.
+  # Without the rule a `{tag, attrs}` form would still be safe — its
+  # attributes are filtered — but would leave an empty element behind.
+  for validator <- [:safe_url, {:nullable, :safe_url}] do
+    test "a URL attribute validated as #{inspect(validator)} is children only, page and inline" do
+      schema =
+        Schema.extend(Schema.default(),
+          nodes: [
+            chip: [
+              group: "inline",
+              inline: true,
+              content: "text*",
+              attrs: [u: [required: true, validate: unquote(Macro.escape(validator))]],
+              render: {"span", [{"class", "chip"}]},
+              render_inline: {"span", [{"class", "chip"}]}
+            ]
+          ]
+        )
+
+      chip = %{
+        "type" => "chip",
+        "attrs" => %{"u" => "/x"},
+        "content" => [%{"type" => "text", "text" => "c"}]
+      }
+
+      {:ok, document} = Document.validate(doc([paragraph([chip])]), schema)
+
+      assert Render.to_html(document, schema, policy: :untrusted) == "<p>c</p>"
+      assert Render.to_inline_html(document, schema, policy: :untrusted) == "c"
     end
   end
 
