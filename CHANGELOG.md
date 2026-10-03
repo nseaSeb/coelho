@@ -11,10 +11,15 @@ answers the type to record, instead of trusting `entry.client_type`:
 type = Coelho.Attachments.content_type({:file, path}, entry.client_type)
 ```
 
-PNG, JPEG, GIF, WebP, AVIF and PDF are recorded only when the bytes prove
-them, so a claimed `image/` type can no longer make the renderer draw an
-`<img>` or the plug serve a file inline. Any other plain type the browser
-claims is kept; anything else is `application/octet-stream`.
+PNG, JPEG, GIF, WebP, AVIF and PDF come back only when the bytes prove them,
+so an application that records this answer no longer lets a claimed `image/`
+type make the renderer draw an `<img>` or the plug serve a file inline. Any
+other plain type the browser claims is kept; anything else is
+`application/octet-stream`.
+
+Nothing changes until the application calls it: the plug still serves the
+type `:metadata` answers, and rows already stored keep the type they were
+recorded with.
 
 ### A content security policy on every served file
 

@@ -718,6 +718,7 @@ const run = async () => {
       const response = await page.request.get(BASE + url.replaceAll("&amp;", "&"));
       assert.equal(response.status(), 200);
       assert.equal(response.headers()["x-content-type-options"], "nosniff");
+      assert.equal(response.headers()["content-security-policy"], "default-src 'none'; sandbox");
       assert.equal(Buffer.compare(Buffer.from(await response.body()), png), 0);
     });
 
