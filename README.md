@@ -373,6 +373,12 @@ instead, with `:render_untrusted` in its spec. A `:nodes` or `:marks` override
 you pass still wins, since that is your code. A misspelt policy raises rather
 than rendering as trusted.
 
+`Coelho.blank?/2` does not know the policy, and answers for the document: an
+image counts as content even when, with no alt text, the untrusted render of it
+is nothing at all. A comment holding only such an image passes the
+`:if={not Coelho.blank?(...)}` guard above and renders an empty wrapper — give
+the wrapper no chrome of its own, or require alt text where strangers write.
+
 ## Serving what is stored
 
 Validation is the boundary at the keyboard. There is a second one, at the

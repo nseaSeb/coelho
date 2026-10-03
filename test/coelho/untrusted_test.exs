@@ -66,6 +66,15 @@ defmodule Coelho.UntrustedTest do
                ~s(<span class="coelho-attachment-name">plan.pdf</span> Q3)
     end
 
+    # Documented in the README rather than resolved: `blank?/2` answers for
+    # the document, not for one way of rendering it.
+    test "an image with no alt renders nothing, and the document is still not blank" do
+      document = doc([paragraph([image(%{"src" => "/cat.png"})])])
+
+      refute Coelho.blank?(document)
+      assert inline(document, policy: :untrusted) == ""
+    end
+
     test "inline rendering does not fall back to :render_inline" do
       document = doc([attachment(%{"key" => "k1", "filename" => "plan.pdf"})])
 
