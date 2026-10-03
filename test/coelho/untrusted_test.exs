@@ -159,6 +159,14 @@ defmodule Coelho.UntrustedTest do
               attrs: [id: [required: true, validate: :string]],
               render: {"a", &__MODULE__.card_attrs/1},
               render_untrusted: &__MODULE__.untrusted_card/2
+            ],
+            panel: [
+              group: "block",
+              content: "inline*",
+              attrs: [ref: [required: true, validate: :string]],
+              render: {"aside", []},
+              render_inline: {"a", &__MODULE__.panel_link/1},
+              render_untrusted: {"div", []}
             ]
           ],
           marks: [
@@ -205,9 +213,25 @@ defmodule Coelho.UntrustedTest do
       assert Render.to_html(document, schema) == ~s(<a href="/cards/7"></a>)
       assert Render.to_html(document, schema, policy: :untrusted) == "card 7"
     end
+
+    test "a block node's untrusted form never reaches the inline renderer, nor does its trusted inline form",
+         %{schema: schema} do
+      panel = %{
+        "type" => "panel",
+        "attrs" => %{"ref" => "p1"},
+        "content" => [%{"type" => "text", "text" => "hi"}]
+      }
+
+      {:ok, document} = Document.validate(doc([panel]), schema)
+
+      assert Render.to_inline_html(document, schema) == ~s(<a href="/panels/p1">hi</a>)
+      assert Render.to_html(document, schema, policy: :untrusted) == "<div>hi</div>"
+      assert Render.to_inline_html(document, schema, policy: :untrusted) == "hi"
+    end
   end
 
   def embed_attrs(node), do: [{"src", Render.safe_url(Render.attr(node, "url"))}]
+  def panel_link(node), do: [{"href", "/panels/" <> Render.attr(node, "ref")}]
   def embed_link(node), do: [{"href", Render.safe_url(Render.attr(node, "url"))}]
   def cite_attrs(mark), do: [{"cite", Render.safe_url(Render.attr(mark, "source"))}]
   def card_attrs(node), do: [{"href", "/cards/" <> Render.attr(node, "id")}]

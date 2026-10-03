@@ -60,8 +60,10 @@ defmodule Coelho.Render do
     * the caller's own `:nodes` or `:marks` override — that is code, and the
       application decides what it emits
     * the spec's `:render_untrusted` — or, in the inline renderer, its
-      `:render_untrusted_inline` when it has one, since a block node's
-      untrusted form may well be a block
+      `:render_untrusted_inline`. A block node with the first and not the
+      second is its children there: its untrusted form may well be a
+      block, and its trusted `:render_inline` points where the policy
+      said not to
     * nothing but its children, for a spec with an attribute validated as
       `:safe_url` (bare or `{:nullable, :safe_url}`) — a link becomes its
       text, and a void node holding a URL renders nothing
@@ -289,7 +291,7 @@ defmodule Coelho.Render do
   defp inline_render(spec, state) do
     case Map.get(state.nodes, spec.name) do
       nil ->
-        case policy_render(inline_policy_spec(spec), state.policy) do
+        case inline_policy_render(spec, state.policy) do
           :default -> spec.render_inline
           render -> render
         end
@@ -848,14 +850,24 @@ defmodule Coelho.Render do
 
   # -- Policy ---------------------------------------------------------------
 
-  # The inline renderer asks the policy about the inline form when the spec
-  # has one. A block node's `:render_untrusted` is free to draw a block —
-  # the block renderer puts nothing between two siblings, so it has to — and
-  # that is not legal where this renderer's output goes.
-  defp inline_policy_spec(%{render_untrusted_inline: nil} = spec), do: spec
+  # What the policy says inline. A block node's `:render_untrusted` is free
+  # to draw a block — the block renderer puts nothing between two siblings,
+  # so it often has to — and that is not legal where this renderer's output
+  # goes. Nor is its `:render_inline` a way out: it is the trusted inline
+  # form, and a node that declared an untrusted form has said its trusted
+  # ones point somewhere. Without `:render_untrusted_inline`, such a node is
+  # its children, which is always legal and never points anywhere.
+  defp inline_policy_render(_spec, :trusted), do: :default
 
-  defp inline_policy_spec(%{render_untrusted_inline: render} = spec),
-    do: %{spec | render_untrusted: render}
+  defp inline_policy_render(%{render_untrusted_inline: render}, :untrusted)
+       when not is_nil(render),
+       do: render
+
+  defp inline_policy_render(%{inline: false, render_untrusted: render}, :untrusted)
+       when not is_nil(render),
+       do: nil
+
+  defp inline_policy_render(spec, policy), do: policy_render(spec, policy)
 
   # Who decides how a node or a mark renders, in one place for both: the
   # caller's override — present under its name, even as `nil` — then the
