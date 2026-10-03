@@ -60,7 +60,7 @@ defmodule Coelho.UntrustedTest do
       refusing = %{resolve: fn key -> flunk("resolved #{key} under :untrusted") end}
 
       assert render(document, policy: :untrusted, context: refusing) ==
-               ~s(<span class="coelho-attachment-name">plan.pdf</span> Q3)
+               ~s(<figure class="coelho-attachment"><span class="coelho-attachment-name">plan.pdf</span><figcaption>Q3</figcaption></figure>)
 
       assert inline(document, policy: :untrusted, context: refusing) ==
                ~s(<span class="coelho-attachment-name">plan.pdf</span> Q3)
@@ -73,6 +73,21 @@ defmodule Coelho.UntrustedTest do
 
       refute Coelho.blank?(document)
       assert inline(document, policy: :untrusted) == ""
+    end
+
+    test "two attachments in a row stay two on the page and inline" do
+      document =
+        doc([
+          attachment(%{"key" => "a", "filename" => "a.pdf"}),
+          attachment(%{"key" => "b", "filename" => "b.pdf"})
+        ])
+
+      assert render(document, policy: :untrusted) ==
+               ~s(<figure class="coelho-attachment"><span class="coelho-attachment-name">a.pdf</span></figure>) <>
+                 ~s(<figure class="coelho-attachment"><span class="coelho-attachment-name">b.pdf</span></figure>)
+
+      refute inline(document, policy: :untrusted) =~ "figure"
+      assert inline(document, policy: :untrusted) =~ "a.pdf</span> <span"
     end
 
     test "inline rendering does not fall back to :render_inline" do

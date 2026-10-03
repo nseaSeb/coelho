@@ -188,6 +188,7 @@ defmodule Coelho.Schema.Default do
             render: &__MODULE__.render_attachment/3,
             render_inline: &__MODULE__.inline_attachment/3,
             render_untrusted: &__MODULE__.untrusted_attachment/2,
+            render_untrusted_inline: &__MODULE__.inline_untrusted_attachment/2,
             to_text: &__MODULE__.attachment_text/1
           ],
           hard_break: [
@@ -474,13 +475,26 @@ defmodule Coelho.Schema.Default do
 
   # Under `policy: :untrusted`: what the attachment is called, and never
   # where it is — no URL is resolved at all, so a resolver that signs or
-  # logs is not even asked. One form for the page and for inline, which is
-  # why it is a `<span>` and not the page's `<figure>`.
+  # logs is not even asked. On the page it keeps its `<figure>`: the block
+  # renderer puts nothing between two siblings, and two bare names in a row
+  # would read as one.
   @doc false
   def untrusted_attachment(node, _inner) do
-    Coelho.Render.tag("span", [{"class", "coelho-attachment-name"}], escape(label(node)))
-    |> with_caption(node)
+    caption =
+      case present(attr(node, "caption", nil)) do
+        nil -> []
+        caption -> Coelho.Render.tag("figcaption", [], escape(caption))
+      end
+
+    Coelho.Render.tag("figure", [{"class", "coelho-attachment"}], [untrusted_name(node), caption])
   end
+
+  @doc false
+  def inline_untrusted_attachment(node, _inner),
+    do: node |> untrusted_name() |> with_caption(node)
+
+  defp untrusted_name(node),
+    do: Coelho.Render.tag("span", [{"class", "coelho-attachment-name"}], escape(label(node)))
 
   # The words standing in for the picture, when somebody wrote some, in an
   # element a stylesheet can set apart from the sentence around it. An image

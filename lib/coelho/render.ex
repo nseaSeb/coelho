@@ -59,7 +59,9 @@ defmodule Coelho.Render do
 
     * the caller's own `:nodes` or `:marks` override — that is code, and the
       application decides what it emits
-    * the spec's `:render_untrusted`
+    * the spec's `:render_untrusted` — or, in the inline renderer, its
+      `:render_untrusted_inline` when it has one, since a block node's
+      untrusted form may well be a block
     * nothing but its children, for a spec with an attribute validated as
       `:safe_url` (bare or `{:nullable, :safe_url}`) — a link becomes its
       text, and a void node holding a URL renders nothing
@@ -287,7 +289,7 @@ defmodule Coelho.Render do
   defp inline_render(spec, state) do
     case Map.get(state.nodes, spec.name) do
       nil ->
-        case policy_render(spec, state.policy) do
+        case policy_render(inline_policy_spec(spec), state.policy) do
           :default -> spec.render_inline
           render -> render
         end
@@ -845,6 +847,15 @@ defmodule Coelho.Render do
   end
 
   # -- Policy ---------------------------------------------------------------
+
+  # The inline renderer asks the policy about the inline form when the spec
+  # has one. A block node's `:render_untrusted` is free to draw a block —
+  # the block renderer puts nothing between two siblings, so it has to — and
+  # that is not legal where this renderer's output goes.
+  defp inline_policy_spec(%{render_untrusted_inline: nil} = spec), do: spec
+
+  defp inline_policy_spec(%{render_untrusted_inline: render} = spec),
+    do: %{spec | render_untrusted: render}
 
   # Who decides how a node or a mark renders, in one place for both: the
   # caller's override — present under its name, even as `nil` — then the
