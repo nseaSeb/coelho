@@ -600,6 +600,27 @@ defmodule Coelho.SchemaTest do
       assert Schema.mark_spec(schema, :spoiler).parse == []
     end
 
+    test "a name the default schema now ships is extended rather than declared" do
+      # An application that declared `highlight: [class: "hl"]` on 0.16 had a
+      # mark with no render; the name now exists, so it inherits the shipped
+      # one. The CHANGELOG flags this, and this pins what it says.
+      schema = Schema.extend(Schema.default(), marks: [highlight: [class: "hl"]])
+
+      doc = %{
+        "type" => "doc",
+        "content" => [
+          %{
+            "type" => "paragraph",
+            "content" => [
+              %{"type" => "text", "text" => "x", "marks" => [%{"type" => "highlight"}]}
+            ]
+          }
+        ]
+      }
+
+      assert Coelho.to_html(doc, schema) == ~s(<p><mark class="hl">x</mark></p>)
+    end
+
     test "a redeclaration is still checked like any other declaration" do
       assert_raise ArgumentError, ~r/class of :bold must be a string/, fn ->
         Schema.extend(Schema.default(), marks: [bold: [class: :font_bold]])

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Underline, highlight, subscript and superscript, and an import that can keep them
+### Underline, highlight, subscript and superscript — **and this one can bite an upgrade**
 
 The default schema has four more marks, rendered as `<u>`, `<mark>`, `<sub>`
 and `<sup>`. Each has a toolbar icon, and all but highlight a shortcut:
@@ -13,11 +13,17 @@ those elements, since Markdown has no delimiters for them, and
 `from_markdown/3` reads them back.
 
 `Coelho.HTML.from_html/3` against the default schema now **keeps** these four
-elements, where it used to warn and drop them. A schema that already
-declared a mark under one of these names, through `Schema.extend/2`, keeps
-its own declaration, because extending replaces a name wholesale — in the
-editor and in Markdown too, which write it as a mark of the application's
-rather than as the shipped element.
+elements, where it used to warn and drop them.
+
+**An application that already declared one of these names** through
+`Schema.extend/2` now extends the shipped mark rather than declaring a new
+one, because redeclaring a name overlays only the keys it gives. A
+`highlight: [class: "hl"]` with no `:render` or `:parse` rendered as bare
+text and imported nothing on 0.16; it now renders as `<mark class="hl">`,
+keeps an imported `<mark>`, and is written to Markdown as `<mark>`. One that
+gave its own `:render` keeps it, in the editor and in Markdown too — written
+there as a mark of the application's rather than as the shipped element —
+but still inherits the shipped `parse: ["mark"]` unless it gives its own.
 
 ### Markdown, out and back
 
