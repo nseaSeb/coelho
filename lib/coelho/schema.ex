@@ -971,7 +971,7 @@ defmodule Coelho.Schema do
       render: Keyword.get(decl, :render),
       render_inline: Keyword.get(decl, :render_inline),
       render_untrusted: Keyword.get(decl, :render_untrusted),
-      render_untrusted_inline: Keyword.get(decl, :render_untrusted_inline),
+      render_untrusted_inline: build_render_untrusted_inline(name, decl),
       to_text: Keyword.get(decl, :to_text),
       editor_text: build_editor_text(name, decl, Keyword.get(decl, :editor_text)),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
@@ -1019,6 +1019,21 @@ defmodule Coelho.Schema do
   # Checked here rather than discovered in the browser: an attribute the node
   # does not declare draws an empty chip, which is a variable nobody can see
   # and nobody can tell from a bug in their own template.
+  # The inline form only ever stands beside a page form. Declared alone, it
+  # would leave `to_html/3` under `policy: :untrusted` with nothing but the
+  # trusted `:render` — the very form the declaration says points somewhere.
+  defp build_render_untrusted_inline(name, decl) do
+    case {Keyword.get(decl, :render_untrusted_inline), Keyword.get(decl, :render_untrusted)} do
+      {render, nil} when not is_nil(render) ->
+        raise ArgumentError,
+              "#{inspect(name)} declares :render_untrusted_inline without :render_untrusted, " <>
+                "so its page render under policy: :untrusted would be its trusted :render"
+
+      {render, _page} ->
+        render
+    end
+  end
+
   defp build_editor_text(_name, _decl, nil), do: nil
 
   defp build_editor_text(name, decl, attr) when is_atom(attr) do

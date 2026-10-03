@@ -231,6 +231,24 @@ defmodule Coelho.UntrustedTest do
   end
 
   def embed_attrs(node), do: [{"src", Render.safe_url(Render.attr(node, "url"))}]
+
+  test "an untrusted inline form without a page form is refused when the schema is built" do
+    assert_raise ArgumentError, ~r/:mention declares :render_untrusted_inline without/, fn ->
+      Schema.extend(Schema.default(),
+        nodes: [
+          mention: [
+            group: "inline",
+            inline: true,
+            void: true,
+            attrs: [user: [required: true, validate: :string]],
+            render: {"a", []},
+            render_untrusted_inline: &__MODULE__.untrusted_card/2
+          ]
+        ]
+      )
+    end
+  end
+
   def panel_link(node), do: [{"href", "/panels/" <> Render.attr(node, "ref")}]
   def embed_link(node), do: [{"href", Render.safe_url(Render.attr(node, "url"))}]
   def cite_attrs(mark), do: [{"cite", Render.safe_url(Render.attr(mark, "source"))}]
