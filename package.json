@@ -1,0 +1,12 @@
+{
+  "name": "coelho",
+  "description": "The Coelho hook with ProseMirror inside, resolved as `coelho` through the deps/ path Phoenix gives esbuild. Built by bundle/build.mjs.",
+  "license": "MIT",
+  "type": "module",
+  "module": "./priv/static/coelho.esm.js",
+  "main": "./priv/static/coelho.esm.js",
+  "exports": {
+    ".": "./priv/static/coelho.esm.js",
+    "./coelho.css": "./assets/css/coelho.css"
+  }
+}
