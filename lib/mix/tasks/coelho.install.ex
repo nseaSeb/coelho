@@ -368,10 +368,12 @@ defmodule Mix.Tasks.Coelho.Install do
   # profile needs it and when the application does not use esbuild at all —
   # a consigne printed on every run is one the reader learns to ignore.
   defp esbuild(opts) do
-    {target, entry, what} =
+    {target, what} =
       if opts[:npm],
-        do: {"assets/node_modules", "../assets/node_modules", "the browser packages"},
-        else: {"deps", "../deps", "the `coelho` package"}
+        do: {Path.expand("assets/node_modules"), "the browser packages"},
+        else: {Path.expand(Mix.Project.deps_path()), "the `coelho` package"}
+
+    entry = from_config(target)
 
     # A profile is what has `args`: the esbuild package declares an empty
     # `default: []` of its own, which builds nothing and has no NODE_PATH to
@@ -404,6 +406,19 @@ defmodule Mix.Tasks.Coelho.Install do
     end
   end
 
+  # What to write in `config/config.exs` to reach `target`: relative to the
+  # file itself, as Phoenix writes it. `deps/` is not always `./deps` — an
+  # umbrella keeps it at its root, and `deps_path` moves it anywhere — so it
+  # is asked of Mix rather than assumed, and so is where the config lives.
+  defp from_config(target) do
+    config_dir =
+      (Mix.Project.config()[:config_path] || "config/config.exs")
+      |> Path.expand()
+      |> Path.dirname()
+
+    Path.relative_to(target, config_dir, force: true)
+  end
+
   defp profile_names(profiles) do
     Enum.map_join(profiles, ", ", fn {name, _profile} -> inspect(name) end)
   end
@@ -412,7 +427,6 @@ defmodule Mix.Tasks.Coelho.Install do
   # profile's `cd:` — so that is what it is expanded against here. An
   # absolute one is unaffected by the base.
   defp reaches?({_name, profile}, target) do
-    target = Path.expand(target)
     base = Keyword.get(profile, :cd, File.cwd!())
 
     profile

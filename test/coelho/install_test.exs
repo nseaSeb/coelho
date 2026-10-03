@@ -291,6 +291,40 @@ defmodule Coelho.InstallTest do
       assert install(tmp_dir) =~ "esbuild can find the `coelho` package"
     end
 
+    # An umbrella app keeps deps/ and config/ at the umbrella's root, and its
+    # mix.exs says so; `./deps` would be the wrong place on both counts.
+    test "finds deps/ where Mix keeps it, as an umbrella app does", %{tmp_dir: tmp_dir} do
+      root = tmp_dir
+      app_dir = Path.join(root, "apps/my_app")
+      app(app_dir)
+
+      File.write!(Path.join(app_dir, "mix.exs"), """
+      defmodule Coelho.InstallTest.UmbrellaApp.MixProject do
+        use Mix.Project
+
+        def project do
+          [app: :my_app, version: "0.1.0", deps_path: "../../deps",
+           config_path: "../../config/config.exs", build_path: "../../_build"]
+        end
+      end
+      """)
+
+      run = fn node_path ->
+        Application.put_env(:esbuild, :my_app,
+          args: ~w(js/app.js --bundle),
+          env: %{"NODE_PATH" => node_path}
+        )
+
+        Mix.Project.in_project(:my_app, app_dir, fn _module -> install(app_dir) end)
+      end
+
+      assert run.([Path.join(root, "deps")]) =~ "esbuild can find the `coelho` package"
+
+      out = run.([Path.join(app_dir, "deps")])
+      assert out =~ ~s[Path.expand("../deps", __DIR__)]
+      refute out =~ "apps/my_app"
+    end
+
     # Found by installing into a freshly generated application: the esbuild
     # package's own empty `default` profile was named as the one to fix.
     test "ignores the esbuild package's own empty default profile", %{tmp_dir: tmp_dir} do
