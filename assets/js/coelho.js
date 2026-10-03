@@ -1285,6 +1285,10 @@ const buildKeymap = (schema) => {
   if (marks.bold) bindings["Mod-b"] = toggleMark(marks.bold);
   if (marks.italic) bindings["Mod-i"] = toggleMark(marks.italic);
   if (marks.code) bindings["Mod-e"] = toggleMark(marks.code);
+  if (marks.underline) bindings["Mod-u"] = toggleMark(marks.underline);
+  if (marks.highlight) bindings["Shift-Mod-h"] = toggleMark(marks.highlight);
+  if (marks.subscript) bindings["Mod-,"] = toggleMark(marks.subscript);
+  if (marks.superscript) bindings["Mod-."] = toggleMark(marks.superscript);
 
   // Tab is the only way through a table that everyone already knows.
   // `goToNextCell` answers false outside a table, so the key falls through to

@@ -283,6 +283,22 @@ defmodule Coelho.MarkdownTest do
       end
     end
 
+    test "writes a mark Markdown has no delimiters for as its element, and reads it back" do
+      for {mark, tag} <- [
+            {"underline", "u"},
+            {"highlight", "mark"},
+            {"subscript", "sub"},
+            {"superscript", "sup"}
+          ] do
+        {:ok, document} = Document.validate(doc([p([t("a"), t("b", [mark])])]), schema())
+        markdown = Markdown.to_markdown(document, schema())
+        assert markdown == "a<#{tag}>b</#{tag}>"
+
+        {:ok, back, []} = Markdown.from_markdown(markdown, schema())
+        assert back == document
+      end
+    end
+
     test "keeps an attachment's leading spaces from making it code" do
       attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => "    plan"}}
       assert md([attachment]) == "&#32;&#32;&#32;&#32;plan"
@@ -301,10 +317,10 @@ defmodule Coelho.MarkdownTest do
     # A mark of the application's own writes its delimiters as given, so a
     # span after it has to look at what it ended with.
     test "does not let a span's delimiters run into an override's" do
-      schema = Schema.extend(Schema.default(), marks: [highlight: []])
+      schema = Schema.extend(Schema.default(), marks: [spoiler: []])
 
-      assert md([p([t("a", ["highlight"]), t("b", ["bold"])])], schema,
-               marks: %{highlight: {"*", "*"}}
+      assert md([p([t("a", ["spoiler"]), t("b", ["bold"])])], schema,
+               marks: %{spoiler: {"*", "*"}}
              ) ==
                "*a*<strong>b</strong>"
     end
@@ -404,14 +420,14 @@ defmodule Coelho.MarkdownTest do
             ],
             callout: [group: "block", content: "inline*"]
           ],
-          marks: [highlight: []]
+          marks: [spoiler: []]
         )
 
       content = [
         p([
           %{"type" => "mention", "attrs" => %{"handle" => "ada"}},
           t(" "),
-          t("hi", ["highlight"])
+          t("hi", ["spoiler"])
         ]),
         %{"type" => "callout", "content" => [t("# careful")]}
       ]
@@ -421,7 +437,7 @@ defmodule Coelho.MarkdownTest do
 
       assert md(content, schema,
                nodes: %{mention: fn node, _children -> "@" <> node["attrs"]["handle"] end},
-               marks: %{highlight: {"==", "=="}}
+               marks: %{spoiler: {"==", "=="}}
              ) == "@ada ==hi==\n\n\\# careful"
     end
   end

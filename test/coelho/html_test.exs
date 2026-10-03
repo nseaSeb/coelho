@@ -58,6 +58,11 @@ defmodule Coelho.HTMLTest do
                "<p><strong>b</strong><em>i</em><s>d</s></p>"
     end
 
+    test "keeps underline, highlight, subscript and superscript" do
+      html = "<p><u>u</u><mark>m</mark>H<sub>2</sub>O x<sup>2</sup></p>"
+      assert round_trip(html) == html
+    end
+
     test "maps every heading level" do
       for level <- 1..6 do
         assert round_trip("<h#{level}>T</h#{level}>") == "<h#{level}>T</h#{level}>"

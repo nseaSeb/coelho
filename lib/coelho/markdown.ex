@@ -14,7 +14,9 @@ defmodule Coelho.Markdown do
   A mark is written with its Markdown delimiters — `**`, `*`, `~~` — where
   CommonMark is certain to read them as such, and as the equivalent HTML
   element where it would not: a bold `*b` right after a letter, a span that
-  begins with a space. Both are Markdown, and both come back.
+  begins with a space. Both are Markdown, and both come back. Underline,
+  highlight, subscript and superscript have no delimiters at all, so they are
+  always their element: `<u>`, `<mark>`, `<sub>`, `<sup>`.
 
   ## What Markdown cannot say
 
@@ -50,11 +52,12 @@ defmodule Coelho.Markdown do
 
       Coelho.Markdown.to_markdown(document, schema,
         nodes: %{mention: fn node, _children -> "@" <> node["attrs"]["handle"] end},
-        marks: %{highlight: {"==", "=="}}
+        marks: %{spoiler: {"||", "||"}}
       )
 
   A node override returns the Markdown itself, escaped as it needs; a mark
-  override is the pair of strings it is wrapped in.
+  override is the pair of strings it is wrapped in. It applies to a shipped
+  mark as well — `highlight: {"==", "=="}` for a renderer that reads it.
   """
 
   alias Coelho.{Attachments, Render, Schema}
@@ -605,12 +608,18 @@ defmodule Coelho.Markdown do
     end
   end
 
+  # Shipped marks Markdown has no delimiters for, written as their element.
+  @elements %{underline: "u", highlight: "mark", subscript: "sub", superscript: "sup"}
+
+  defp element(tag), do: %{kind: :fixed, open: "<#{tag}>", close: "</#{tag}>"}
+
   defp delimiters(spec, mark, state) do
     case {Map.fetch(state.marks, spec.name), spec.name} do
       {{:ok, {open, close}}, _name} -> %{kind: :fixed, open: open, close: close}
       {:error, :bold} -> %{kind: :emphasis, open: "**", close: "**", tag: "strong"}
       {:error, :italic} -> %{kind: :emphasis, open: "*", close: "*", tag: "em"}
       {:error, :strike} -> %{kind: :emphasis, open: "~~", close: "~~", tag: "del"}
+      {:error, name} when is_map_key(@elements, name) -> element(@elements[name])
       {:error, :code} -> %{kind: :fixed, open: "", close: ""}
       {:error, :link} -> %{kind: :fixed, open: "[", close: link_tail(mark, table?(state))}
       {:error, _custom} -> %{kind: :fixed, open: "", close: ""}
