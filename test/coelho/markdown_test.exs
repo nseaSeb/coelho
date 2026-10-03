@@ -233,6 +233,39 @@ defmodule Coelho.MarkdownTest do
       end
     end
 
+    # The third review's cases. comrak decodes an entity in a destination or
+    # a title even after `\&`, so the `&` is written as `&#38;`.
+    test "comes back as it went, with a rule opening an item and entities in links" do
+      link = %{
+        "type" => "text",
+        "text" => "x",
+        "marks" => [
+          %{"type" => "link", "attrs" => %{"href" => "/?a=1&copy;b", "title" => "&amp; me"}}
+        ]
+      }
+
+      image = %{
+        "type" => "image",
+        "attrs" => %{"src" => "/i&lt;", "alt" => "a", "title" => "&lt;"}
+      }
+
+      cases = [
+        {[%{"type" => "bullet_list", "content" => [li([p([]), %{"type" => "horizontal_rule"}])]}],
+         "- ___"},
+        {[p([link])], ~s|[x](</?a=1&#38;copy;b> "&#38;amp; me")|},
+        {[p([image])], ~s|![a](</i&#38;lt;> "&#38;lt;")|}
+      ]
+
+      for {content, markdown} <- cases do
+        {:ok, document} = Document.validate(doc(content), schema())
+        assert Markdown.to_markdown(document, schema()) == markdown
+
+        {:ok, via_html, _} = Coelho.from_html(Coelho.to_html(expressible(document)), schema())
+        {:ok, via_markdown, _} = Markdown.from_markdown(markdown, schema())
+        assert same_urls(via_markdown) == same_urls(via_html), markdown
+      end
+    end
+
     test "keeps an attachment's leading spaces from making it code" do
       attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => "    plan"}}
       assert md([attachment]) == "&#32;&#32;&#32;&#32;plan"
@@ -555,7 +588,11 @@ defmodule Coelho.MarkdownTest do
         %{"type" => "strike"},
         %{"type" => "code"},
         %{"type" => "link", "attrs" => %{"href" => "/a(b)?c=*d*"}},
-        %{"type" => "link", "attrs" => %{"href" => "/a|b"}}
+        %{"type" => "link", "attrs" => %{"href" => "/a|b"}},
+        %{
+          "type" => "link",
+          "attrs" => %{"href" => "/?a=1&copy;b&amp;c", "title" => "&amp;amp; me"}
+        }
       ]),
       max_length: 3
     )
@@ -569,7 +606,10 @@ defmodule Coelho.MarkdownTest do
       end,
       constant(%{"type" => "hard_break"}),
       gen all(alt <- hostile_text()) do
-        %{"type" => "image", "attrs" => %{"src" => "/i*_[x].png", "alt" => alt}}
+        %{
+          "type" => "image",
+          "attrs" => %{"src" => "/i*_[x].png&lt;", "alt" => alt, "title" => alt <> "&lt;"}
+        }
       end
     ])
   end
@@ -609,7 +649,16 @@ defmodule Coelho.MarkdownTest do
   defp hostile_item(depth) do
     gen all(
           paragraph <- maybe_empty_paragraph(),
-          nested <- one_of([constant(nil), hostile_list(depth - 1)])
+          nested <-
+            one_of([
+              constant(nil),
+              hostile_list(depth - 1),
+              constant(%{"type" => "horizontal_rule"}),
+              map(
+                hostile_text(),
+                &%{"type" => "code_block", "content" => [%{"type" => "text", "text" => &1}]}
+              )
+            ])
         ) do
       %{"type" => "list_item", "content" => Enum.reject([paragraph, nested], &is_nil/1)}
     end

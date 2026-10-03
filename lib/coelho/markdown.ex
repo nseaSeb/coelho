@@ -362,11 +362,16 @@ defmodule Coelho.Markdown do
     |> Enum.with_index()
     |> Enum.map_join(separator, fn {item, index} ->
       mark = marker.(index)
-      body = item |> blocks(state) |> Enum.join(separator)
+      body = item |> blocks(state) |> Enum.join(separator) |> unbreak()
 
       mark <> indent(body, String.duplicate(" ", String.length(mark)))
     end)
   end
+
+  # `- ---` is one thematic break, not an item holding one: an item that opens
+  # with a rule — its paragraph empty — writes it in underscores instead.
+  defp unbreak("---" <> rest), do: "___" <> rest
+  defp unbreak(body), do: body
 
   # Only these follow a paragraph on the very next line without a blank one:
   # a bullet list, and an ordered list starting at 1. One starting anywhere
@@ -773,10 +778,14 @@ defmodule Coelho.Markdown do
     "](<" <> escape_url(url, table?) <> ">" <> title <> ")"
   end
 
+  # CommonMark decodes entities in a title, so a typed `&` is one itself —
+  # `&#38;`, before any entity of this module's own goes in. Not `\&`: comrak
+  # decodes `\&lt;` there as `<` all the same.
   defp escape_title(title, table?) do
     title
-    |> String.replace("|", if(table?, do: "&#124;", else: "|"))
+    |> String.replace("&", "&#38;")
     |> String.replace(["\\", ~s(")], &("\\" <> &1))
+    |> String.replace("|", if(table?, do: "&#124;", else: "|"))
     |> String.replace(["\r\n", "\n", "\r"], " ")
   end
 
@@ -784,8 +793,13 @@ defmodule Coelho.Markdown do
   # In a table cell a destination's `|` is the same URL percent-encoded.
   defp escape_url(url, true), do: url |> String.replace("|", "%7C") |> escape_url(false)
 
+  # And in a destination, where `&copy;` would come back as `©`.
   defp escape_url(url, false),
-    do: url |> String.replace("\\", "\\\\") |> String.replace(["<", ">", "\n"], &escape_char/1)
+    do:
+      url
+      |> String.replace("&", "&#38;")
+      |> String.replace("\\", "\\\\")
+      |> String.replace(["<", ">", "\n"], &escape_char/1)
 
   defp escape_char("\n"), do: "%0A"
   defp escape_char(char), do: "\\" <> char
