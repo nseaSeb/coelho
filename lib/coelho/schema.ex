@@ -325,6 +325,8 @@ defmodule Coelho.Schema do
     editor_attrs: [:editor_attrs],
     render: [:render],
     render_inline: [:render_inline],
+    render_untrusted: [:render_untrusted],
+    render_untrusted_inline: [:render_untrusted_inline],
     to_text: [:to_text],
     editor_text: [:editor_text],
     parse: [:parse]
@@ -336,6 +338,7 @@ defmodule Coelho.Schema do
     editor_attrs: [:editor_attrs],
     code: [:code],
     render: [:render],
+    render_untrusted: [:render_untrusted],
     parse: [:parse]
   ]
 
@@ -967,6 +970,8 @@ defmodule Coelho.Schema do
       editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
       render: Keyword.get(decl, :render),
       render_inline: Keyword.get(decl, :render_inline),
+      render_untrusted: Keyword.get(decl, :render_untrusted),
+      render_untrusted_inline: Keyword.get(decl, :render_untrusted_inline),
       to_text: Keyword.get(decl, :to_text),
       editor_text: build_editor_text(name, decl, Keyword.get(decl, :editor_text)),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
@@ -981,6 +986,7 @@ defmodule Coelho.Schema do
       editor_attrs: build_editor_attrs(name, Keyword.get(decl, :editor_attrs, %{})),
       code: Keyword.get(decl, :code, false),
       render: Keyword.get(decl, :render),
+      render_untrusted: Keyword.get(decl, :render_untrusted),
       parse: normalize_parse(Keyword.get(decl, :parse, []))
     }
   end
