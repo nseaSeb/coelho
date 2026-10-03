@@ -100,14 +100,22 @@ if Code.ensure_loaded?(Kino.JS.Live) and Code.ensure_loaded?(Phoenix.Component) 
     def init({schema, document, editor}, ctx) do
       id = "coelho-kino-" <> Integer.to_string(System.unique_integer([:positive]))
 
-      {:ok, assign(ctx, schema: schema, document: document, editor: editor, id: id)}
+      {:ok, assign(ctx, schema: schema, document: document, editor: editor, id: id, version: 0)}
     end
 
     @impl true
-    def handle_connect(ctx), do: {:ok, %{html: html(ctx)}, ctx}
+    def handle_connect(ctx),
+      do: {:ok, %{html: html(ctx), version: ctx.assigns.version}, ctx}
 
     @impl true
-    def handle_event("change", value, ctx) when is_binary(value) do
+    # A change made on a document set/2 has since replaced: a keystroke in
+    # flight when the replacement went out. Taking it would undo the
+    # replacement here while the editor shows it.
+    def handle_event("change", %{"version" => version}, ctx)
+        when version != ctx.assigns.version,
+        do: {:noreply, ctx}
+
+    def handle_event("change", %{"value" => value}, ctx) when is_binary(value) do
       case decode(value, ctx.assigns.schema) do
         {:ok, document} when document == ctx.assigns.document ->
           {:noreply, ctx}
@@ -120,7 +128,7 @@ if Code.ensure_loaded?(Kino.JS.Live) and Code.ensure_loaded?(Phoenix.Component) 
         # that sent it is put back to the document the server holds, so the
         # writer sees what will be kept rather than what was typed.
         :error ->
-          send_event(ctx, ctx.origin, "set", JSON.encode!(ctx.assigns.document))
+          send_event(ctx, ctx.origin, "set", set_payload(ctx))
           {:noreply, ctx}
       end
     end
@@ -141,15 +149,18 @@ if Code.ensure_loaded?(Kino.JS.Live) and Code.ensure_loaded?(Phoenix.Component) 
     def handle_call({:set, value}, _from, ctx) do
       case Document.validate(value, ctx.assigns.schema) do
         {:ok, document} ->
-          broadcast_event(ctx, "set", JSON.encode!(document))
-
+          ctx = assign(ctx, document: document, version: ctx.assigns.version + 1)
+          broadcast_event(ctx, "set", set_payload(ctx))
           emit_event(ctx, %{type: :change, document: document})
-          {:reply, :ok, assign(ctx, document: document)}
+          {:reply, :ok, ctx}
 
         {:error, errors} ->
           {:reply, {:error, errors}, ctx}
       end
     end
+
+    defp set_payload(ctx),
+      do: %{value: JSON.encode!(ctx.assigns.document), version: ctx.assigns.version}
 
     defp decode(value, schema) do
       with {:ok, decoded} <- JSON.decode(value),

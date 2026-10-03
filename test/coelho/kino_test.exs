@@ -12,6 +12,11 @@ defmodule Coelho.KinoTest do
   defp paragraph(text),
     do: %{"type" => "paragraph", "content" => [%{"type" => "text", "text" => text}]}
 
+  # What the adapter pushes: the document, and which of the server's documents
+  # it was made on.
+  defp change(kino, value, version \\ 0),
+    do: push_event(kino, "change", %{"value" => value, "version" => version})
+
   defp subscribed(kino) do
     Kino.Control.subscribe(kino, :editor)
     kino
@@ -61,7 +66,7 @@ defmodule Coelho.KinoTest do
       kino = Coelho.Kino.new() |> subscribed()
       document = doc([paragraph("tapé")])
 
-      push_event(kino, "change", JSON.encode!(document))
+      change(kino, JSON.encode!(document))
 
       assert_receive {:editor, %{type: :change, document: ^document}}
       assert Coelho.Kino.read(kino) == document
@@ -71,7 +76,7 @@ defmodule Coelho.KinoTest do
       document = doc([paragraph("même")])
       kino = Coelho.Kino.new(value: document) |> subscribed()
 
-      push_event(kino, "change", JSON.encode!(document))
+      change(kino, JSON.encode!(document))
 
       refute_receive {:editor, _event}
     end
@@ -80,7 +85,7 @@ defmodule Coelho.KinoTest do
     test "is refused, and the editor put back, when the schema does not accept it" do
       kept = doc([paragraph("gardé")])
       kino = Coelho.Kino.new(value: kept) |> subscribed()
-      json = JSON.encode!(kept)
+      sent_back = %{value: JSON.encode!(kept), version: 0}
 
       # Only a connected client can be sent the document back, as in Livebook.
       connect(kino)
@@ -100,9 +105,9 @@ defmodule Coelho.KinoTest do
         ])
 
       for sent <- [JSON.encode!(hostile), "not json", JSON.encode!(%{"type" => "script"})] do
-        push_event(kino, "change", sent)
+        change(kino, sent)
 
-        assert_send_event(kino, "set", ^json)
+        assert_send_event(kino, "set", ^sent_back)
         refute_receive {:editor, _event}
         assert Coelho.Kino.read(kino) == kept
       end
@@ -111,7 +116,8 @@ defmodule Coelho.KinoTest do
     test "ignores a payload that is not a document string" do
       kino = Coelho.Kino.new() |> subscribed()
 
-      push_event(kino, "change", %{"type" => "doc"})
+      push_event(kino, "change", JSON.encode!(doc([paragraph("no envelope")])))
+      push_event(kino, "change", %{"value" => %{"type" => "doc"}, "version" => 0})
       push_event(kino, "unknown", "x")
 
       refute_receive {:editor, _event}
@@ -131,15 +137,42 @@ defmodule Coelho.KinoTest do
     test "replaces the document in every editor and announces it" do
       kino = Coelho.Kino.new() |> subscribed()
       document = doc([paragraph("depuis Elixir")])
-      json = JSON.encode!(document)
+      sent = %{value: JSON.encode!(document), version: 1}
 
       assert Coelho.Kino.set(kino, document) == :ok
 
-      assert_broadcast_event(kino, "set", ^json)
+      assert_broadcast_event(kino, "set", ^sent)
       assert_receive {:editor, %{type: :change, document: ^document}}
       assert Coelho.Kino.read(kino) == document
       assert %{html: html} = connect(kino)
       assert html =~ "depuis Elixir"
+    end
+
+    # A keystroke still in flight when set/2 replaced the document was made on
+    # the old one; taken, it would undo the replacement here while the editor
+    # shows it.
+    test "is not undone by a change made on the document it replaced" do
+      kino = Coelho.Kino.new() |> subscribed()
+      document = doc([paragraph("depuis Elixir")])
+
+      assert Coelho.Kino.set(kino, document) == :ok
+      assert_receive {:editor, %{type: :change}}
+
+      change(kino, JSON.encode!(doc([paragraph("tapé avant")])), 0)
+      refute_receive {:editor, _event}
+      assert Coelho.Kino.read(kino) == document
+
+      typed = doc([paragraph("tapé après")])
+      change(kino, JSON.encode!(typed), 1)
+      assert_receive {:editor, %{type: :change, document: ^typed}}
+    end
+
+    test "connects an editor at the version it carries" do
+      kino = Coelho.Kino.new()
+      assert %{version: 0} = connect(kino)
+
+      Coelho.Kino.set(kino, doc([paragraph("un")]))
+      assert %{version: 1} = connect(kino)
     end
 
     test "leaves the editor alone and says why when the schema refuses" do

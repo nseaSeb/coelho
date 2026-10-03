@@ -12,14 +12,20 @@ import { createCoelhoHook } from "./coelho.esm.js";
 // letter.
 const SETTLE_MS = 120;
 
-export async function init(ctx, { html }) {
+export async function init(ctx, { html, version }) {
+  // Which document of the server's this editor is editing. set/2 makes a new
+  // one; a change sent from an older one — a keystroke still in flight when
+  // the document was replaced — is ignored by the server rather than undoing
+  // the replacement.
+  let current = version;
+
   // Registered before anything is awaited: a document set from Elixir in the
   // next cell can reach this frame while the stylesheet is still loading, as
   // "Evaluate all" runs it, and is then kept for after the mount.
   let apply = null;
   let early = null;
 
-  ctx.handleEvent("set", (value) => (apply ? apply(value) : (early = value)));
+  ctx.handleEvent("set", (set) => (apply ? apply(set) : (early = set)));
 
   await ctx.importCSS("coelho.css");
 
@@ -46,13 +52,24 @@ export async function init(ctx, { html }) {
 
   input.addEventListener("input", () => {
     clearTimeout(settling);
-    settling = setTimeout(() => ctx.pushEvent("change", input.value), SETTLE_MS);
+    settling = setTimeout(
+      () => ctx.pushEvent("change", { value: input.value, version: current }),
+      SETTLE_MS
+    );
   });
 
   // A document from the server: one set from Elixir, or the last valid one
-  // when the server refused what this editor sent. The hook reads its input
-  // in updated() and ignores a value it wrote itself.
-  apply = (value) => {
+  // when the server refused what this editor sent.
+  //
+  // In a LiveView the server answers every change with the value it kept, and
+  // the hook tells an echo of an old keystroke from a decision by whether that
+  // answer has come back. Coelho.Kino never echoes a change — what it sends is
+  // only ever a decision — so the hook is told so before it reads the input.
+  // Without that, a document the editor had shown before, set again after the
+  // writer typed, was taken for a stale echo and pushed back.
+  apply = ({ value, version }) => {
+    current = version;
+    hook._acknowledged = true;
     input.value = value;
     hook.updated();
   };

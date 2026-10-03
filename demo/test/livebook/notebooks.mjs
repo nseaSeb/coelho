@@ -125,6 +125,18 @@ for (const name of notebooks) {
 
       await prose.getByText("Typed in Livebook.").waitFor({ state: "detached", timeout: 10_000 });
       await prose.getByText("Written from Elixir.").waitFor({ timeout: 10_000 });
+
+      // And again, after typing once more: a document the editor has shown
+      // before is still a decision of the server, not the echo of an old
+      // keystroke to be pushed back.
+      await prose.click();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" Typed again.");
+      await page.waitForFunction(() => document.body.innerText.includes("Typed again."), null, {
+        timeout: 10_000
+      });
+      await page.getByRole("button", { name: "Write from Elixir" }).click();
+      await prose.getByText("Typed again.").waitFor({ state: "detached", timeout: 10_000 });
     }
 
     assert.deepEqual(errors, [], `${name}: errors in the page`);
