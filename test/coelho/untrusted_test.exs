@@ -233,7 +233,7 @@ defmodule Coelho.UntrustedTest do
   def embed_attrs(node), do: [{"src", Render.safe_url(Render.attr(node, "url"))}]
 
   test "an untrusted inline form without a page form is refused when the schema is built" do
-    assert_raise ArgumentError, ~r/:mention declares :render_untrusted_inline without/, fn ->
+    assert_raise ArgumentError, ~r/:mention has :render_untrusted_inline without/, fn ->
       Schema.extend(Schema.default(),
         nodes: [
           mention: [
@@ -246,6 +246,22 @@ defmodule Coelho.UntrustedTest do
           ]
         ]
       )
+    end
+  end
+
+  test "redeclaring one half is judged against the merged spec" do
+    # Only the inline half: the page half the default declares is kept.
+    schema =
+      Schema.extend(Schema.default(),
+        nodes: [attachment: [render_untrusted_inline: &__MODULE__.untrusted_card/2]]
+      )
+
+    assert schema.nodes.attachment.render_untrusted ==
+             Schema.default().nodes.attachment.render_untrusted
+
+    # Taking the page half away leaves the default's inline half alone.
+    assert_raise ArgumentError, ~r/:attachment has :render_untrusted_inline without/, fn ->
+      Schema.extend(Schema.default(), nodes: [attachment: [render_untrusted: nil]])
     end
   end
 
