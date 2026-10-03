@@ -481,6 +481,7 @@ defmodule Coelho.HTML do
           |> fit(spec, schema)
           |> merge_runs()
           |> trim_edges()
+          |> fill(spec, schema)
 
         [Map.put(node, "content", content)]
     end
@@ -712,6 +713,22 @@ defmodule Coelho.HTML do
     Enum.all?(run, fn node ->
       Map.get(node, "type") == "text" and String.trim(Map.get(node, "text", "")) == ""
     end)
+  end
+
+  # A node missing the block its content has to open with — `<li></li>`, or a
+  # `<li>` holding only a nested list, for a `paragraph block*` list item, as
+  # editors and Markdown's `- ` make them — gets an empty one of its default
+  # block in front, the way the editor fills it, rather than failing the
+  # whole import.
+  defp fill(content, spec, schema) do
+    with false <- matches?(spec.content, content, schema),
+         block when block != nil <- default_block(spec, schema),
+         filled = [%{"type" => Atom.to_string(block), "content" => []} | content],
+         true <- matches?(spec.content, filled, schema) do
+      filled
+    else
+      _otherwise -> content
+    end
   end
 
   defp default_block(spec, schema) do

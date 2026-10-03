@@ -483,4 +483,37 @@ defmodule Coelho.HTMLTest do
       refute document |> Coelho.to_text() |> String.contains?("\u{E000}")
     end
   end
+
+  # Editors write `<li></li>`, and Markdown's `- ` comes through as one: a
+  # node missing the block its content opens with gets an empty one, the way
+  # the editor fills it, rather than the whole import failing.
+  describe "a node missing the block its content needs" do
+    test "gets an empty one of its default block" do
+      paragraph = %{"type" => "paragraph"}
+
+      assert {:ok,
+              %{
+                "content" => [
+                  %{
+                    "content" => [
+                      %{"content" => [^paragraph]},
+                      %{"content" => [^paragraph, %{"type" => "bullet_list"}]}
+                    ]
+                  }
+                ]
+              }, []} =
+               Coelho.from_html("<ul><li></li><li><ul><li>x</li></ul></li></ul>")
+               |> then(fn {:ok, doc, warnings} ->
+                 {:ok,
+                  update_in(
+                    doc,
+                    ["content", Access.at(0), "content", Access.at(1), "content", Access.at(1)],
+                    &Map.take(&1, ["type"])
+                  ), warnings}
+               end)
+
+      assert {:ok, %{"content" => [%{"type" => "blockquote", "content" => [^paragraph]}]}, []} =
+               Coelho.from_html("<blockquote></blockquote>")
+    end
+  end
 end

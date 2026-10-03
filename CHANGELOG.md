@@ -15,6 +15,14 @@ the module's documentation.
 `Coelho.Markdown.from_markdown/3` reads it back under the schema, through
 `Coelho.HTML.from_html/3`, with the new optional `:mdex` dependency.
 
+### The HTML import fills a node the way the editor would
+
+`Coelho.HTML.from_html/3` used to fail the whole import on `<li></li>`, or on a
+`<li>` holding only a nested list, since a list item opens with a paragraph.
+Editors write both, and Markdown's empty `- ` item reads as one. A node missing
+the block its content opens with now gets an empty one of its default block,
+as the editor fills it.
+
 Two properties hold the pair to the HTML round trip: generated documents, one
 set drawn from Markdown's own syntax characters, come back from Markdown as
 they come back from HTML.

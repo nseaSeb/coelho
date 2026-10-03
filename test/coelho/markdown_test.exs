@@ -166,6 +166,78 @@ defmodule Coelho.MarkdownTest do
       end
     end
 
+    # The second review's cases, each coming back as the HTML round trip.
+    test "comes back as it went, with empty items, cells holding blocks, and long numbers" do
+      schema = Coelho.Schema.Default.build(tables: true)
+      empty = p([])
+      ul = fn items -> %{"type" => "bullet_list", "content" => Enum.map(items, &li/1)} end
+
+      ol = fn start, items ->
+        %{
+          "type" => "ordered_list",
+          "attrs" => %{"start" => start},
+          "content" => Enum.map(items, &li/1)
+        }
+      end
+
+      header = fn content ->
+        %{
+          "type" => "table",
+          "content" => [
+            %{
+              "type" => "table_row",
+              "content" => [%{"type" => "table_header", "content" => content}]
+            }
+          ]
+        }
+      end
+
+      code = %{
+        "type" => "code_block",
+        "attrs" => %{"language" => "elixir"},
+        "content" => [t("x |\\| y\nz")]
+      }
+
+      cases = [
+        {[ul.([[p([t("a")])], [empty]])], "- a\n- "},
+        {[ul.([[p([t("a")]), ul.([[empty]])]])], "- a\n\n  - "},
+        {[ul.([[p([t("a")]), ol.(1, [[empty]])]])], "- a\n\n  1. "},
+        {[%{"type" => "heading", "attrs" => %{"level" => 1}, "content" => [t("a #  ")]}],
+         "# a \\#  "},
+        {[ol.(999_999_999, [[p([t("a")])], [p([t("b")])]])],
+         ~s(<ol start="999999999"><li><p>a</p></li><li><p>b</p></li></ol>)},
+        {[header.([p([t("a\\")]), ul.([[p([t("b")])]])])],
+         "| <p>a&#92;</p><ul><li><p>b</p></li></ul> |\n| --- |"},
+        {[header.([code])],
+         ~s(| <pre><code class="language-elixir">x &#124;&#92;&#124; y&#10;z</code></pre> |\n| --- |)},
+        {[
+           p([
+             %{
+               "type" => "text",
+               "text" => "]:",
+               "marks" => [%{"type" => "link", "attrs" => %{"href" => "/a"}}, %{"type" => "code"}]
+             }
+           ])
+         ], "[<code>&#93;&#58;</code>](</a>)"}
+      ]
+
+      for {content, markdown} <- cases do
+        {:ok, document} = Document.validate(doc(content), schema)
+        assert Markdown.to_markdown(document, schema) == markdown
+
+        {:ok, via_html, _} =
+          Coelho.from_html(Coelho.to_html(expressible(document), schema), schema)
+
+        {:ok, via_markdown, _} = Markdown.from_markdown(markdown, schema)
+        assert same_urls(via_markdown) == same_urls(via_html), markdown
+      end
+    end
+
+    test "keeps an attachment's leading spaces from making it code" do
+      attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => "    plan"}}
+      assert md([attachment]) == "&#32;&#32;&#32;&#32;plan"
+    end
+
     test "keeps an attachment's name a name when it looks like a block" do
       for name <- ["1. report.pdf", "- notes", "# draft"] do
         attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => name}}
@@ -344,11 +416,19 @@ defmodule Coelho.MarkdownTest do
     Map.put(node, "content", Enum.map(content, &expressible/1))
   end
 
+  # An empty paragraph a container needs — a list item's first, the first of
+  # a cell or a quote that holds nothing else — stays: the import puts it
+  # back, as the editor does.
   defp expressible(%{"content" => content} = node) do
     kept =
       content
       |> Enum.map(&expressible/1)
-      |> Enum.reject(&(&1["type"] in ["paragraph", "heading"] and blank?(&1)))
+      |> Enum.with_index()
+      |> Enum.reject(fn {child, index} ->
+        child["type"] in ["paragraph", "heading"] and blank?(child) and
+          not required?(node, child, index, content)
+      end)
+      |> Enum.map(&elem(&1, 0))
 
     Map.put(node, "content", kept)
   end
@@ -376,6 +456,14 @@ defmodule Coelho.MarkdownTest do
     do: {key, URI.decode(url)}
 
   defp decode_url(pair), do: pair
+
+  defp required?(%{"type" => "list_item"}, %{"type" => "paragraph"}, 0, _content), do: true
+
+  defp required?(%{"type" => type}, %{"type" => "paragraph"}, 0, content)
+       when type in ["table_cell", "table_header", "blockquote"],
+       do: Enum.all?(content, &(&1["type"] == "paragraph" and blank?(&1)))
+
+  defp required?(_node, _child, _index, _content), do: false
 
   defp edge?(%{"type" => "hard_break"}), do: true
   defp edge?(%{"type" => "text", "text" => text}), do: String.trim(text) == ""
@@ -492,10 +580,18 @@ defmodule Coelho.MarkdownTest do
     end
   end
 
+  # Now and then empty: an item, a cell, a nested list's first item.
+  defp maybe_empty_paragraph do
+    frequency([
+      {4, hostile_paragraph()},
+      {1, constant(%{"type" => "paragraph", "content" => []})}
+    ])
+  end
+
   defp hostile_list(depth) do
     gen all(
           type <- member_of(~w(bullet_list ordered_list)),
-          start <- integer(0..4),
+          start <- one_of([integer(0..4), constant(999_999_999)]),
           items <- list_of(hostile_item(depth), min_length: 1, max_length: 3)
         ) do
       list = %{"type" => type, "content" => items}
@@ -505,14 +601,14 @@ defmodule Coelho.MarkdownTest do
 
   # A paragraph, and at the first level possibly a list nested under it.
   defp hostile_item(0) do
-    gen all(paragraph <- hostile_paragraph()) do
+    gen all(paragraph <- maybe_empty_paragraph()) do
       %{"type" => "list_item", "content" => [paragraph]}
     end
   end
 
   defp hostile_item(depth) do
     gen all(
-          paragraph <- hostile_paragraph(),
+          paragraph <- maybe_empty_paragraph(),
           nested <- one_of([constant(nil), hostile_list(depth - 1)])
         ) do
       %{"type" => "list_item", "content" => Enum.reject([paragraph, nested], &is_nil/1)}
@@ -524,12 +620,12 @@ defmodule Coelho.MarkdownTest do
     gen all(
           width <- integer(1..3),
           rows <-
-            list_of(list_of(hostile_paragraph(), length: width), min_length: 1, max_length: 3)
+            list_of(list_of(hostile_cell(), length: width), min_length: 1, max_length: 3)
         ) do
       row = fn cells, type ->
         %{
           "type" => "table_row",
-          "content" => Enum.map(cells, &%{"type" => type, "content" => [&1]})
+          "content" => Enum.map(cells, &%{"type" => type, "content" => &1})
         }
       end
 
@@ -540,6 +636,26 @@ defmodule Coelho.MarkdownTest do
         "content" => [row.(header, "table_header") | Enum.map(body, &row.(&1, "table_cell"))]
       }
     end
+  end
+
+  # What a cell holds: usually one paragraph, sometimes what a pipe table
+  # cannot write as Markdown.
+  defp hostile_cell do
+    frequency([
+      {4, map(maybe_empty_paragraph(), &[&1])},
+      {1, list_of(hostile_paragraph(), length: 2)},
+      {1,
+       gen all(text <- hostile_text()) do
+         [
+           %{
+             "type" => "code_block",
+             "attrs" => %{"language" => "elixir"},
+             "content" => [%{"type" => "text", "text" => text <> "\n" <> text}]
+           }
+         ]
+       end},
+      {1, map(hostile_list(0), &[&1])}
+    ])
   end
 
   defp hostile_block do

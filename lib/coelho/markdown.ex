@@ -22,9 +22,12 @@ defmodule Coelho.Markdown do
 
     * an empty paragraph or heading, and a line break at the edge of one
     * a paragraph's alignment, and a table cell's span; a table's first row
-      is its header, whatever it held, and a cell is one line: its blocks run
-      together, a line break in it is `<br>`, a `|` in it is `&#124;` and its
-      code is `<code>`, since GitHub splits the row on every other `|`
+      is its header, whatever it held. A cell is one line: a paragraph in it
+      writes a line break as `<br>`, a `|` as `&#124;` and code as `<code>`,
+      since GitHub splits the row on any other `|`, and anything else in it —
+      two paragraphs, a list, a code block — is written as Coelho's HTML
+    * an ordered list numbered past nine digits, which no Markdown marker
+      holds, is written as Coelho's HTML
     * a heading holding a line break is written as Coelho's own HTML for it
     * an attachment is a link to it — resolved through `:context`, as
       `Coelho.Render` resolves it — or its name when it has no URL, and its
@@ -187,9 +190,15 @@ defmodule Coelho.Markdown do
   defp block(:ordered_list, node, _spec, state) do
     start = Render.attr(node, "start", 1)
     start = if is_integer(start) and start >= 0, do: start, else: 1
+    last = start + length(Map.get(node, "content", [])) - 1
 
-    delimiter = if Map.get(state, :variant, 0) == 0, do: ". ", else: ") "
-    list(node, fn index -> "#{start + index}" <> delimiter end, state)
+    # A list marker has at most nine digits: past them, the list is HTML.
+    if last > 999_999_999 do
+      html_block(node, state)
+    else
+      delimiter = if Map.get(state, :variant, 0) == 0, do: ". ", else: ") "
+      list(node, fn index -> "#{start + index}" <> delimiter end, state)
+    end
   end
 
   defp block(:code_block, node, _spec, _state) do
@@ -252,6 +261,39 @@ defmodule Coelho.Markdown do
     Map.put(node, "content", content)
   end
 
+  # What written as HTML would still say, and written as Markdown would not:
+  # a line break at a paragraph's edge, a paragraph with nothing in it. It
+  # goes from what is written as HTML too, so that a node says the same thing
+  # whichever of the two it is written in. An empty paragraph its container
+  # needs stays — a list item's first, a cell's or a quote's only one.
+  defp unsaid(%{"type" => type} = node) when type in ["paragraph", "heading"],
+    do: trim_edges(node)
+
+  defp unsaid(%{"content" => content} = node) when is_list(content) do
+    content = Enum.map(content, &unsaid/1)
+
+    kept =
+      content
+      |> Enum.with_index()
+      |> Enum.reject(fn {child, index} ->
+        child["type"] in ["paragraph", "heading"] and child["content"] == [] and
+          not needed?(node, child, index, content)
+      end)
+      |> Enum.map(&elem(&1, 0))
+
+    Map.put(node, "content", kept)
+  end
+
+  defp unsaid(node), do: node
+
+  defp needed?(%{"type" => "list_item"}, %{"type" => "paragraph"}, 0, _content), do: true
+
+  defp needed?(%{"type" => type}, %{"type" => "paragraph"}, 0, content)
+       when type in ["table_cell", "table_header", "blockquote"],
+       do: Enum.all?(content, &(&1["type"] == "paragraph" and &1["content"] == []))
+
+  defp needed?(_node, _child, _index, _content), do: false
+
   defp edge?(%{"type" => "hard_break"}), do: true
 
   defp edge?(%{"type" => "text", "text" => text}) when is_binary(text),
@@ -274,6 +316,7 @@ defmodule Coelho.Markdown do
   # the newlines a text holds become the entity they stand for.
   defp html_block(node, state) do
     node
+    |> unsaid()
     |> Render.to_html(state.schema, context: state.context)
     |> String.replace("\n", "&#10;")
   end
@@ -328,10 +371,20 @@ defmodule Coelho.Markdown do
   # Only these follow a paragraph on the very next line without a blank one:
   # a bullet list, and an ordered list starting at 1. One starting anywhere
   # else is read as more of the paragraph's text.
+  # And neither when its first item is empty: `-` alone under a paragraph is
+  # a setext underline, and an empty item cannot interrupt one at all.
   defp interrupts_paragraph?(node, state) do
-    case spec!(state.schema, node["type"]).name do
-      :bullet_list -> true
-      :ordered_list -> Render.attr(node, "start", 1) == 1
+    opens_with_text?(node) and
+      case spec!(state.schema, node["type"]).name do
+        :bullet_list -> true
+        :ordered_list -> Render.attr(node, "start", 1) == 1
+        _other -> false
+      end
+  end
+
+  defp opens_with_text?(list) do
+    case list |> Map.get("content", []) |> List.first(%{}) |> Map.get("content", []) do
+      [%{"type" => "paragraph"} = paragraph | _] -> trim_edges(paragraph)["content"] != []
       _other -> false
     end
   end
@@ -352,19 +405,61 @@ defmodule Coelho.Markdown do
     |> Enum.join()
   end
 
+  # A cell is one line of inline Markdown. A single paragraph is written as
+  # one, its line breaks as `<br>`; anything else — two paragraphs, a list,
+  # a code block — is Coelho's HTML for it, which inline HTML can carry, with
+  # every character of its text an entity so that none is read as Markdown,
+  # and no `|` left to split the row.
+  defp cell(cell, state) do
+    state = Map.put(state, :table?, true)
+    cell = unsaid(cell)
+
+    case Map.get(cell, "content", []) do
+      [%{"type" => type} = only] when type != nil ->
+        if spec!(state.schema, type).name == :paragraph,
+          do: only |> trim_edges() |> paragraph(state),
+          else: inline_html(only, state)
+
+      blocks ->
+        Enum.map_join(blocks, &inline_html(&1, state))
+    end
+  end
+
+  defp inline_html(node, state) do
+    node
+    |> unsaid()
+    |> Render.to_html(state.schema, context: state.context)
+    |> String.split(~r/(<[^>]*>)/, include_captures: true)
+    |> Enum.map_join(fn
+      "<" <> _tag = tag -> String.replace(tag, "|", "&#124;")
+      text -> entities(text)
+    end)
+  end
+
+  defp entities(text) do
+    text
+    |> String.split(~r/(&#?\w+;)/, include_captures: true)
+    |> Enum.map_join(fn
+      "&" <> _entity = entity -> entity
+      plain -> plain |> String.to_charlist() |> Enum.map_join(&entity/1)
+    end)
+  end
+
+  # Text already escaped as HTML keeps its entities; anything else that is
+  # not a letter, a digit or a space becomes one.
+  defp entity(char) when char in ?a..?z or char in ?A..?Z or char in ?0..?9 or char == ?\s,
+    do: <<char::utf8>>
+
+  defp entity(char) when char < 128, do: "&##{char};"
+  defp entity(char), do: <<char::utf8>>
+
   # GitHub's pipe tables: the first row is the header, whatever it held, and
   # a cell is its text on one line. Spans are not expressible and are lost.
   defp table(node, state) do
     rows =
       for row <- Map.get(node, "content", []) do
         for cell <- Map.get(row, "content", []) do
-          cell
-          |> blocks(Map.put(state, :table?, true))
-          |> Enum.join(" ")
-          # A cell is one line: a line break in it is HTML's.
-          |> String.replace("\\\n", "<br>")
-          |> String.replace("\n", " ")
-          |> escape_pipes()
+          cell |> cell(state) |> escape_pipes()
         end
       end
 
@@ -388,18 +483,32 @@ defmodule Coelho.Markdown do
 
   defp paragraph(node, state), do: node |> inline(state) |> escape_line_starts()
 
-  defp paragraph_text(text), do: text |> escape() |> escape_line_starts()
+  # Text written as a paragraph of its own — an attachment's name, its
+  # caption. Four spaces at its start would make it an indented code block,
+  # so they are entities, as at the start of any paragraph.
+  defp paragraph_text(text) do
+    text
+    |> escape()
+    |> escape_line_starts()
+    |> String.replace(~r/\A +/, &String.duplicate("&#32;", byte_size(&1)))
+  end
 
   # Text with its marks, in two passes. The first turns the run of inline
   # nodes into a tree of spans, each mark opened once for the run of nodes it
   # covers — `**a b**`, not `**a****b**`. The second writes each span.
   defp inline(node, state) do
-    node
-    |> Map.get("content", [])
-    |> Enum.flat_map(&tokens(&1, state))
+    tokens = node |> Map.get("content", []) |> Enum.flat_map(&tokens(&1, state))
+
+    # A table cell is one line: a line break there is HTML's.
+    tokens = if table?(state), do: Enum.map(tokens, &cell_break/1), else: tokens
+
+    tokens
     |> group(0)
     |> render_spans(:edge, :edge)
   end
+
+  defp cell_break(:break), do: {:atom, "<br>", []}
+  defp cell_break(token), do: token
 
   # -- Tokens: `{kind, markdown, marks}`, or `:break`.
 
@@ -461,8 +570,13 @@ defmodule Coelho.Markdown do
     text = String.replace(text, ["\r\n", "\n", "\r", "\t"], " ")
 
     case Enum.split_with(marks, &(&1.name == :code)) do
-      {[_code | _], others} -> [{:atom, code_span(text, table?), others}]
-      {[], _all} -> [{:text, text |> escape(table?) |> escape_trailing_bang(), marks}]
+      # Inside a link's text too: a `]` in it would end the text early —
+      # and the label of what then reads as a link reference definition.
+      {[_code | _], others} ->
+        [{:atom, code_span(text, table? or Enum.any?(others, &(&1.name == :link))), others}]
+
+      {[], _all} ->
+        [{:text, text |> escape(table?) |> escape_trailing_bang(), marks}]
     end
   end
 
@@ -729,10 +843,13 @@ defmodule Coelho.Markdown do
 
   # `## Title ##` has a closing sequence, which CommonMark strips: a heading
   # whose text ends in `#` would lose it.
+  # CommonMark strips trailing spaces before it looks for the closing
+  # sequence, so the `#` to escape is the last one before them.
   defp escape_closing_hashes(text) do
-    if String.ends_with?(text, "#") and not String.ends_with?(text, "\\#"),
-      do: String.slice(text, 0..-2//1) <> "\\#",
-      else: text
+    case Regex.run(~r/\A(.*?)(\\?)#(\s*)\z/su, text) do
+      [_all, before, "", spaces] -> before <> "\\#" <> spaces
+      _escaped_or_none -> text
+    end
   end
 
   defp prefix_lines(text, prefix, empty) do
