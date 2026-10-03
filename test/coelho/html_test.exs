@@ -515,5 +515,17 @@ defmodule Coelho.HTMLTest do
       assert {:ok, %{"content" => [%{"type" => "blockquote", "content" => [^paragraph]}]}, []} =
                Coelho.from_html("<blockquote></blockquote>")
     end
+
+    # A `<li>` outside a list is lifted, its children in its place: one filled
+    # first would carry the empty paragraph out with them.
+    test "is not filled when its parent does not keep it" do
+      assert {:ok, %{"content" => [%{"type" => "code_block"}]}, _} =
+               Coelho.from_html("<li><pre>x</pre></li>")
+
+      assert {:ok,
+              %{"content" => [%{"type" => "blockquote", "content" => [%{"type" => "heading"}]}]},
+              _} =
+               Coelho.from_html("<blockquote><li><h2>t</h2></li></blockquote>")
+    end
   end
 end

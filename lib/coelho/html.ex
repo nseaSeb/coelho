@@ -481,7 +481,6 @@ defmodule Coelho.HTML do
           |> fit(spec, schema)
           |> merge_runs()
           |> trim_edges()
-          |> fill(spec, schema)
 
         [Map.put(node, "content", content)]
     end
@@ -642,7 +641,23 @@ defmodule Coelho.HTML do
       |> wrap_inline_runs(spec, schema)
       |> Enum.filter(&admissible?(&1, spec, schema))
     end
+    |> Enum.map(&fill_kept(&1, schema))
   end
+
+  # Only a child its parent keeps is filled. A `<li>` outside a list is
+  # lifted — its children take its place — and a paragraph added to it
+  # first would be lifted with them, into a document that never had one.
+  defp fill_kept(%{"type" => type, "content" => content} = node, schema) when is_list(content) do
+    case Schema.fetch_node_spec(schema, type) do
+      {:ok, %NodeSpec{content: expression} = spec} when expression != nil ->
+        Map.put(node, "content", fill(content, spec, schema))
+
+      _other ->
+        node
+    end
+  end
+
+  defp fill_kept(node, _schema), do: node
 
   # A child the parent cannot hold — a `<pre>` inside a `<p>`, a heading
   # inside a heading — is unwrapped rather than deleted, the same way an
