@@ -266,7 +266,8 @@ defmodule DemoWeb.EditorLive do
       # consume_uploaded_entry/3 then hands back the term itself.
       result =
         consume_uploaded_entry(socket, entry, fn %{path: path} ->
-          {:ok, Demo.Uploads.store(path, entry.client_name, entry.client_type)}
+          type = Coelho.Attachments.content_type({:file, path}, entry.client_type)
+          {:ok, Demo.Uploads.store(path, entry.client_name, type)}
         end)
 
       case result do

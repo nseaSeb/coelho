@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### The content type of an upload, from its bytes
+
+`Coelho.Attachments.content_type/2` reads the first bytes of an upload and
+answers the type to record, instead of trusting `entry.client_type`:
+
+```elixir
+type = Coelho.Attachments.content_type({:file, path}, entry.client_type)
+```
+
+PNG, JPEG, GIF, WebP, AVIF and PDF are recorded only when the bytes prove
+them, so a claimed `image/` type can no longer make the renderer draw an
+`<img>` or the plug serve a file inline. Any other plain type the browser
+claims is kept; anything else is `application/octet-stream`.
+
+### A content security policy on every served file
+
+`Coelho.Plug.Attachments` now sends `content-security-policy: default-src
+'none'; sandbox` beside `nosniff` on every response carrying bytes. A redirect
+to object storage still carries none of the plug's headers.
+
 ## 0.16.0 — 2026-09-27
 
 What typing makes, and one dependency fewer.

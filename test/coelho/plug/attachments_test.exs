@@ -148,6 +148,11 @@ defmodule Coelho.Plug.AttachmentsTest do
       assert conn.status == 200
       assert conn.halted
       assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
+
+      assert get_resp_header(conn, "content-security-policy") == [
+               "default-src 'none'; sandbox"
+             ]
+
       assert get_resp_header(conn, "content-type") == ["image/png"]
       assert get_resp_header(conn, "content-disposition") == ["inline"]
     end
@@ -344,6 +349,7 @@ defmodule Coelho.Plug.AttachmentsTest do
       assert conn.resp_body == "remote bytes"
       assert get_resp_header(conn, "content-type") == ["image/png"]
       assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
+      assert get_resp_header(conn, "content-security-policy") == ["default-src 'none'; sandbox"]
     end
 
     test "a key it does not hold falls back to the read, and its answer", %{options: options} do
