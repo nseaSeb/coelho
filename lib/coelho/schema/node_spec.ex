@@ -25,6 +25,10 @@ defmodule Coelho.Schema.NodeSpec do
       elements are legal. A block is unwrapped to its children by default,
       which is right for a paragraph and useless for a node whose block-ness
       lives inside a render function — see `Coelho.Render.to_inline_html/3`
+    * `:render_untrusted` — how it is turned into HTML under
+      `policy: :untrusted`, for a node that points somewhere: what it shows
+      in place of the reference. It is used inline too, so it must be legal
+      there. See "Content from people you do not trust" in `Coelho.Render`
     * `:to_text` — what the node contributes to the plain text extraction,
       when that is not simply its children
     * `:editor_text` — the attribute whose value the editor draws as the
@@ -62,6 +66,7 @@ defmodule Coelho.Schema.NodeSpec do
           editor_attrs: %{optional(String.t()) => String.t()},
           render: render(),
           render_inline: render(),
+          render_untrusted: render(),
           to_text: String.t() | (map() -> iodata()) | nil,
           editor_text: atom() | nil,
           parse: [Coelho.HTML.rule()],
@@ -83,6 +88,7 @@ defmodule Coelho.Schema.NodeSpec do
     editor_attrs: %{},
     render: nil,
     render_inline: nil,
+    render_untrusted: nil,
     to_text: nil,
     editor_text: nil,
     parse: [],

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Rendering content from people you do not trust
+
+`policy: :untrusted` on every render function takes out what a document points
+at, for comments, reviews and anything else a stranger wrote:
+
+```elixir
+Coelho.to_safe_html(comment.body, policy: :untrusted)
+```
+
+A link renders as its text, an image as its alt text, an attachment as its
+file name and caption, with no URL resolved. A node or mark of your own with a
+`:safe_url` attribute is reduced to its children without declaring anything;
+one that points somewhere by other means declares `:render_untrusted`. An
+unknown policy raises. The default, `:trusted`, renders exactly as before.
+
 ## 0.16.0 — 2026-09-27
 
 What typing makes, and one dependency fewer.

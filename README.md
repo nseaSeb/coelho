@@ -352,6 +352,27 @@ The separator is yours because only you know whether your container can take a
 line break: `:space` by default, `:br` for a bubble. A separator of your own
 is escaped unless you pass `{:safe, iodata}`.
 
+### From people you do not trust
+
+Escaping and the URL checks make a document unable to *run* anything. They do
+not stop it *pointing* somewhere: a comment from an anonymous visitor can still
+link to a phishing page, or carry an image that tells a third party who read it.
+
+```heex
+<div class="comment">{Coelho.to_safe_html(@comment.body, policy: :untrusted)}</div>
+```
+
+Under `policy: :untrusted` a link is its text, an image is its alt text, and an
+attachment is its file name and caption — its URL is never even resolved. The
+same holds for `to_safe_inline_html/2`.
+
+It holds for nodes of your own without your declaring anything: a node or mark
+with an attribute validated as `:safe_url` is reduced to its children. A node
+that points somewhere by other means — a key, an id — says what it shows
+instead, with `:render_untrusted` in its spec. A `:nodes` or `:marks` override
+you pass still wins, since that is your code. A misspelt policy raises rather
+than rendering as trusted.
+
 ## Serving what is stored
 
 Validation is the boundary at the keyboard. There is a second one, at the

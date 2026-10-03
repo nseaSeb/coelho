@@ -46,6 +46,37 @@ defmodule Coelho.Render do
   right: tag names, and attribute *names*. Both come from the schema, which
   is code.
 
+  ## Content from people you do not trust
+
+  Escaping and `safe_url/1` make a document unable to run anything. They do
+  not stop it pointing somewhere: a comment from an anonymous visitor can
+  still carry a link to a phishing page, or an image that tells a third
+  party who read it. `policy: :untrusted` removes the pointing:
+
+      Coelho.to_safe_html(comment.body, policy: :untrusted)
+
+  Under it, each node and mark is rendered by the first of:
+
+    * the caller's own `:nodes` or `:marks` override — that is code, and the
+      application decides what it emits
+    * the spec's `:render_untrusted`
+    * nothing but its children, for a spec with an attribute validated as
+      `:safe_url` (bare or `{:nullable, :safe_url}`) — a link becomes its
+      text, and a void node holding a URL renders nothing
+    * the spec's ordinary `:render`
+
+  The third rule is what makes the policy hold for a schema it has never
+  seen: a node of the application's own that stores a URL loses it without
+  having declared anything. A node that points somewhere *without* a
+  `:safe_url` attribute — the shipped attachment holds a key, resolved to a
+  URL at render time — has to say what it shows instead, with
+  `:render_untrusted`. The default schema does: an image shows its alt text,
+  an attachment its file name and caption, and neither resolves a URL.
+
+  The policy is `:trusted` by default. Anything else raises rather than
+  rendering as trusted, because a misspelt policy that quietly fell back to
+  links would be the one mistake this option exists to prevent.
+
   `nil` renders as nothing rather than raising: it is what a nullable column
   holds and what both stored types cast an absent document to, so a template
   writing `to_safe_html(@post.body)` should not have to guard it.
@@ -60,10 +91,13 @@ defmodule Coelho.Render do
   alias Coelho.Schema
   alias Coelho.Schema.Attr
 
+  @type policy :: :trusted | :untrusted
+
   @type opts :: [
           nodes: %{optional(atom()) => term()},
           marks: %{optional(atom()) => term()},
-          context: term()
+          context: term(),
+          policy: policy()
         ]
 
   @doc """
@@ -74,7 +108,8 @@ defmodule Coelho.Render do
     state = %{
       nodes: Keyword.get(opts, :nodes, %{}),
       marks: Keyword.get(opts, :marks, %{}),
-      context: Keyword.get(opts, :context, %{})
+      context: Keyword.get(opts, :context, %{}),
+      policy: policy!(Keyword.get(opts, :policy, :trusted))
     }
 
     Coelho.Telemetry.span(
@@ -178,10 +213,18 @@ defmodule Coelho.Render do
       nodes: Keyword.get(opts, :nodes, %{}),
       marks: Keyword.get(opts, :marks, %{}),
       context: Keyword.get(opts, :context, %{}),
+      policy: policy!(Keyword.get(opts, :policy, :trusted)),
       separator: separator(Keyword.get(opts, :separator, :space))
     }
 
     document |> inline_node(schema, state) |> elem(1)
+  end
+
+  defp policy!(policy) when policy in [:trusted, :untrusted], do: policy
+
+  defp policy!(other) do
+    raise ArgumentError,
+          "unknown render policy #{inspect(other)}, expected :trusted or :untrusted"
   end
 
   defp separator(:space), do: " "
@@ -213,7 +256,12 @@ defmodule Coelho.Render do
       # inline node too, which is where `:render_inline` would otherwise be
       # unreachable — an inline-grouped node whose ordinary render is a
       # block-ish wrapper has nowhere else to say what it is inline.
-      render = Map.get(state.nodes, spec.name) || spec.render_inline ->
+      #
+      # The policy sits between the two, for the same reason it does in the
+      # block renderer, and it is asked here rather than left to that one:
+      # `:render_inline` is a second way to draw the node, and the shipped
+      # attachment's resolves a URL.
+      render = inline_render(spec, state) ->
         body =
           render_with(node, spec, render, inline_children(node, schema, state), state.context)
 
@@ -229,6 +277,24 @@ defmodule Coelho.Render do
 
   defp inline_node(node, _schema, _state) do
     raise ArgumentError, "cannot render #{inspect(node)}: expected a node with a string type"
+  end
+
+  # `nil` here means "no inline form of its own", which is not what `nil`
+  # means from the policy — there it is "children only", and an untrusted
+  # node falling through to its `:render_inline` would draw what the policy
+  # took away. So a policy answer of `nil` is left for `render_node/3`, which
+  # asks the policy again and gets the same children-only answer.
+  defp inline_render(spec, state) do
+    case Map.get(state.nodes, spec.name) do
+      nil ->
+        case policy_render(spec, state.policy) do
+          :default -> spec.render_inline
+          render -> render
+        end
+
+      render ->
+        render
+    end
   end
 
   # A separator sits between two contributions when either side came from a
@@ -588,7 +654,7 @@ defmodule Coelho.Render do
 
   defp render_node(%{"type" => type} = node, schema, state) do
     spec = fetch_node_spec!(schema, type)
-    render = Map.get(state.nodes, spec.name, spec.render)
+    render = resolve_render(state.nodes, spec, state.policy)
 
     inner =
       if spec.text, do: node |> text_of() |> escape(), else: children(node, schema, state)
@@ -759,7 +825,7 @@ defmodule Coelho.Render do
   defp render_mark(%{"type" => type} = mark, inner, schema, state) do
     spec = fetch_mark_spec!(schema, type)
 
-    case Map.get(state.marks, spec.name, spec.render) do
+    case resolve_render(state.marks, spec, state.policy) do
       nil ->
         inner
 
@@ -777,6 +843,41 @@ defmodule Coelho.Render do
         )
     end
   end
+
+  # -- Policy ---------------------------------------------------------------
+
+  # Who decides how a node or a mark renders, in one place for both: the
+  # caller's override — present under its name, even as `nil` — then the
+  # policy, then the spec.
+  defp resolve_render(overrides, spec, policy) do
+    case Map.fetch(overrides, spec.name) do
+      {:ok, render} ->
+        render
+
+      :error ->
+        case policy_render(spec, policy) do
+          :default -> spec.render
+          render -> render
+        end
+    end
+  end
+
+  # `:default` when the policy has nothing to say, so that `nil` can mean
+  # what it means everywhere else here: the children and nothing around them.
+  defp policy_render(_spec, :trusted), do: :default
+
+  defp policy_render(%{render_untrusted: render}, :untrusted) when not is_nil(render),
+    do: render
+
+  defp policy_render(spec, :untrusted) do
+    if Enum.any?(spec.attrs, fn {_name, attr} -> url?(attr.validate) end),
+      do: nil,
+      else: :default
+  end
+
+  defp url?(:safe_url), do: true
+  defp url?({:nullable, validator}), do: url?(validator)
+  defp url?(_validator), do: false
 
   defp resolve_attrs(attrs, node, _context) when is_function(attrs, 1), do: attrs.(node)
   defp resolve_attrs(attrs, node, context) when is_function(attrs, 2), do: attrs.(node, context)
