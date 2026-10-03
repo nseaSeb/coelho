@@ -122,7 +122,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     | Keys | What |
     | --- | --- |
     | `Mod-b`, `Mod-i`, `Mod-e` | bold, italic, inline code |
-    | `Mod-u`, `Shift-Mod-h` | underline, highlight |
+    | `Mod-u` | underline |
     | `Mod-,`, `Mod-.` | subscript, superscript |
     | `Mod-z`, `Shift-Mod-z`, `Mod-y` | undo, redo, redo |
     | `Enter` in a list | a new item, splitting the one you are in |

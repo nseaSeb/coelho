@@ -608,10 +608,15 @@ defmodule Coelho.Markdown do
     end
   end
 
-  # Shipped marks Markdown has no delimiters for, written as their element.
+  # Shipped marks Markdown has no delimiters for, written as their element —
+  # while they are still the shipped mark. An application that redeclared
+  # the name has its own render, and gets what any mark of its own gets.
   @elements %{underline: "u", highlight: "mark", subscript: "sub", superscript: "sup"}
 
-  defp element(tag), do: %{kind: :fixed, open: "<#{tag}>", close: "</#{tag}>"}
+  defp element(%{render: {tag, []}}, tag),
+    do: %{kind: :fixed, open: "<#{tag}>", close: "</#{tag}>"}
+
+  defp element(_spec, _tag), do: %{kind: :fixed, open: "", close: ""}
 
   defp delimiters(spec, mark, state) do
     case {Map.fetch(state.marks, spec.name), spec.name} do
@@ -619,7 +624,7 @@ defmodule Coelho.Markdown do
       {:error, :bold} -> %{kind: :emphasis, open: "**", close: "**", tag: "strong"}
       {:error, :italic} -> %{kind: :emphasis, open: "*", close: "*", tag: "em"}
       {:error, :strike} -> %{kind: :emphasis, open: "~~", close: "~~", tag: "del"}
-      {:error, name} when is_map_key(@elements, name) -> element(@elements[name])
+      {:error, name} when is_map_key(@elements, name) -> element(spec, @elements[name])
       {:error, :code} -> %{kind: :fixed, open: "", close: ""}
       {:error, :link} -> %{kind: :fixed, open: "[", close: link_tail(mark, table?(state))}
       {:error, _custom} -> %{kind: :fixed, open: "", close: ""}

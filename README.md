@@ -855,7 +855,7 @@ two properties, which is the whole of its editor styling.
 | Keys | What |
 | --- | --- |
 | `Mod-b`, `Mod-i`, `Mod-e` | bold, italic, inline code |
-| `Mod-u`, `Shift-Mod-h` | underline, highlight |
+| `Mod-u` | underline |
 | `Mod-,`, `Mod-.` | subscript, superscript |
 | `Mod-z`, `Shift-Mod-z`, `Mod-y` | undo, redo, redo |
 | `Enter` in a list | a new item |

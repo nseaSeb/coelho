@@ -1286,7 +1286,6 @@ const buildKeymap = (schema) => {
   if (marks.italic) bindings["Mod-i"] = toggleMark(marks.italic);
   if (marks.code) bindings["Mod-e"] = toggleMark(marks.code);
   if (marks.underline) bindings["Mod-u"] = toggleMark(marks.underline);
-  if (marks.highlight) bindings["Shift-Mod-h"] = toggleMark(marks.highlight);
   if (marks.subscript) bindings["Mod-,"] = toggleMark(marks.subscript);
   if (marks.superscript) bindings["Mod-."] = toggleMark(marks.superscript);
 

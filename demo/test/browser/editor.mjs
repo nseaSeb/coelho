@@ -325,6 +325,25 @@ const run = async () => {
         const [plain] = (await stored(page)).content[0].content;
         assert.equal(plain.marks, undefined, `${mark} was not removed`);
       }
+
+      // Highlight has no shortcut: Mod-Shift-H is the browser's own (home,
+      // history) in more than one engine.
+      for (const [mark, key] of [
+        ["underline", "u"],
+        ["subscript", ","],
+        ["superscript", "."]
+      ]) {
+        await typeInEditor(page, "keyed");
+        await focusEditor(page);
+        await selectAll(page);
+        await page.keyboard.press(`ControlOrMeta+${key}`);
+        await documentEventually(
+          page,
+          `Mod-${key} did not apply ${mark}`,
+          `return (doc.content[0].content?.[0]?.marks ?? []).some((m) => m.type === "${mark}");`
+        );
+        await page.keyboard.press(`ControlOrMeta+${key}`);
+      }
     });
 
     await test("a mark is pressed only when it covers the whole selection", async () => {

@@ -5,8 +5,9 @@
 ### Underline, highlight, subscript and superscript, and an import that can keep them
 
 The default schema has four more marks, rendered as `<u>`, `<mark>`, `<sub>`
-and `<sup>`. Each has a toolbar icon and a shortcut: `Mod-u`, `Shift-Mod-h`,
-`Mod-,` and `Mod-.`. The default toolbar is unchanged, so an application
+and `<sup>`. Each has a toolbar icon, and all but highlight a shortcut:
+`Mod-u`, `Mod-,` and `Mod-.` — `Mod-Shift-H` is the browser's own. The
+default toolbar is unchanged, so an application
 names them to show them. `Coelho.Markdown.to_markdown/3` writes them as
 those elements, since Markdown has no delimiters for them, and
 `from_markdown/3` reads them back.
@@ -14,7 +15,9 @@ those elements, since Markdown has no delimiters for them, and
 `Coelho.HTML.from_html/3` against the default schema now **keeps** these four
 elements, where it used to warn and drop them. A schema that already
 declared a mark under one of these names, through `Schema.extend/2`, keeps
-its own declaration, because extending replaces a name wholesale.
+its own declaration, because extending replaces a name wholesale — in the
+editor and in Markdown too, which write it as a mark of the application's
+rather than as the shipped element.
 
 ### Markdown, out and back
 

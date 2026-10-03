@@ -299,6 +299,15 @@ defmodule Coelho.MarkdownTest do
       end
     end
 
+    test "writes a redeclared shipped mark the way it writes one of the application's" do
+      # `highlight` ships as <mark>, but this schema says otherwise; writing
+      # <mark> would hand from_markdown an element it may have no rule for.
+      schema = Schema.extend(Schema.default(), marks: [highlight: [render: {"span", []}]])
+      content = [p([t("hi", ["highlight"])])]
+
+      assert md(content, schema) == "hi"
+    end
+
     test "keeps an attachment's leading spaces from making it code" do
       attachment = %{"type" => "attachment", "attrs" => %{"key" => "k", "filename" => "    plan"}}
       assert md([attachment]) == "&#32;&#32;&#32;&#32;plan"
