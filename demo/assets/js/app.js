@@ -27,7 +27,11 @@ import topbar from "../vendor/topbar"
 // A path dependency is not copied into deps/, so the demo reaches into the
 // checkout above it. An application depending on Coelho from Hex writes:
 //   import {Coelho} from "../../deps/coelho/assets/js/coelho.js"
-import {createCoelhoHook} from "../../../assets/js/coelho.js"
+// The bundle Coelho ships, ProseMirror inside: what an application from Hex
+// imports as "coelho". It is reached by path because a path dependency is not
+// copied into deps/. After editing assets/js/coelho.js, rebuild it with
+// `npm run build --prefix ../bundle` (or `--watch`).
+import {createCoelhoHook} from "../../../priv/static/coelho.esm.js"
 
 // The schema is Elixir's, but how a node *looks while editing* cannot be:
 // toDOM and parseDOM are functions. A node the application added has to be

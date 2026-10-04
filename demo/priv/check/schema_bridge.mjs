@@ -3,8 +3,11 @@
 // schema that can parse a real document. The Elixir-side drift test compares
 // names; this one compares behaviour.
 import { readFileSync } from "node:fs";
-import { Node as PMNode } from "prosemirror-model";
-import { buildSchema, filenameFor, srcOf } from "../../../assets/js/coelho.js";
+// The shipped bundle rather than the source, with ProseMirror's model from
+// inside it: what runs in an application is what is checked here.
+import { buildSchema, filenameFor, srcOf, model } from "../../../priv/static/coelho.esm.js";
+
+const PMNode = model.Node;
 
 const [schemaPath, documentPath, extendedPath] = process.argv.slice(2);
 const exported = JSON.parse(readFileSync(schemaPath, "utf8"));

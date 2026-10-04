@@ -101,12 +101,6 @@ jobs:
           elixir-version: "1.19.5"
           otp-version: "28.1"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: demo/package-lock.json
-
       - uses: actions/cache@v4
         with:
           path: |
@@ -115,12 +109,9 @@ jobs:
           key: ${{ runner.os }}-demo-${{ hashFiles('demo/mix.lock', 'mix.exs') }}
           restore-keys: ${{ runner.os }}-demo-
 
-      - name: Install npm dependencies
-        working-directory: demo
-        # npm lives at the app root, not under assets/: Coelho's hook is
-        # outside the app and imports ProseMirror by bare specifier, and Node
-        # resolution walks up from the importing file. See demo/README.md.
-        run: npm ci
+      # No npm install: the demo imports priv/static/coelho.esm.js, with
+      # ProseMirror inside, as an application from Hex does. Building its
+      # assets on a runner with no node_modules is what proves it needs none.
 
       # The demo is a separate Mix project, so the library job above never
       # runs any of this. The steps mirror the demo's own `precommit` alias,
@@ -137,8 +128,6 @@ jobs:
 
       - name: Build assets
         working-directory: demo
-        # The only step that proves the hook and its ProseMirror imports
-        # actually bundle.
         run: |
           mix assets.setup
           mix assets.build
@@ -240,25 +229,39 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: demo/package-lock.json
-
-      - name: Install npm dependencies
-        working-directory: demo
-        run: npm ci
 
       # The schema is declared in Elixir and exported to the browser, but
       # toDOM/parseDOM are functions and live in assets/js/coelho.js. This
-      # feeds the real exported JSON to the real browser code and builds an
+      # feeds the real exported JSON to the shipped bundle and builds an
       # actual ProseMirror schema — the drift test in the library only
       # compares names. `extended.json` is an application's schema, with
       # marks the library has never heard of.
       - name: Check both halves agree
         working-directory: demo
         run: |
-          # Node's ESM loader ignores NODE_PATH, so the library's own assets
-          # directory needs the modules reachable by walking up from it.
-          ln -sfn "$PWD/node_modules" ../assets/node_modules
           mix deps.get
           mix run priv/check/export_schemas.exs schema.json document.json extended.json
           node priv/check/schema_bridge.mjs schema.json document.json extended.json
+
+  bundle:
+    name: Bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: bundle/package-lock.json
+
+      # priv/static/coelho.esm.js is committed and shipped in the Hex package,
+      # so the file in the repository has to be what assets/js/coelho.js
+      # builds to. The build also refuses a ProseMirror core bundled twice, a
+      # package resolved from outside bundle/node_modules, and an export of
+      # coelho.js the bundle does not carry.
+      - name: Check the committed bundle is fresh
+        run: |
+          npm ci --prefix bundle
+          node bundle/build.mjs --check
