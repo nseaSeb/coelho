@@ -1,5 +1,6 @@
 defmodule Coelho.AttachmentsTest do
   use ExUnit.Case, async: true
+  use ExUnitProperties
 
   alias Coelho.{Attachments, Document, Render, Schema}
 
@@ -253,6 +254,140 @@ defmodule Coelho.AttachmentsTest do
                Attachments.sweep(storage, ["../escaped", "gone"], [])
 
       assert Coelho.Storage.exists?(storage, "gone")
+    end
+  end
+
+  describe "content_type/2" do
+    @png <<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, "rest">>
+
+    # An `ftyp` box: its size, the major brand, a minor version, then the
+    # compatible brands.
+    defp ftyp(major, compatible) do
+      brands = Enum.join(compatible)
+      <<16 + byte_size(brands)::32, "ftyp", major::binary, 0::32, brands::binary, "mdat">>
+    end
+
+    test "reads the image and PDF types from the bytes, whatever was claimed" do
+      for {bytes, type} <- [
+            {@png, "image/png"},
+            {<<0xFF, 0xD8, 0xFF, 0xE0>>, "image/jpeg"},
+            {"GIF89a....", "image/gif"},
+            {"GIF87a....", "image/gif"},
+            {"RIFF\0\0\0\0WEBPVP8 ", "image/webp"},
+            {ftyp("avif", ["avif", "mif1"]), "image/avif"},
+            {ftyp("mif1", ["mif1", "avif", "miaf"]), "image/avif"},
+            {"%PDF-1.7\n", "application/pdf"}
+          ] do
+        assert Attachments.content_type({:binary, bytes}, "text/html") == type
+      end
+    end
+
+    test "an image or a PDF the bytes do not prove is not recorded as one" do
+      for claimed <- ~w(image/png image/svg+xml IMAGE/GIF image/heic application/pdf) do
+        assert Attachments.content_type({:binary, "<svg onload=x>"}, claimed) ==
+                 "application/octet-stream"
+      end
+
+      # The box every ISO media file opens with is not proof of AVIF.
+      assert Attachments.content_type({:binary, ftyp("heic", ["mif1", "heic"])}, "image/heic") ==
+               "application/octet-stream"
+    end
+
+    test "bytes that come close to a signature prove nothing" do
+      for bytes <- [
+            <<0x89, "PNG", "junk">>,
+            <<0xFF, 0xD8, 0x00, 0xE0>>,
+            "GIF88a....",
+            "GIF8a.....",
+            "RIFF\0\0\0\0WAVEfmt ",
+            "%PDF1.7",
+            # A box too short to hold its own brands, which must not raise.
+            <<8::32, "ftyp", "avif", 0::32>>,
+            <<0::32, "ftyp", "avif", 0::32>>,
+            <<15::32, "ftyp", "avif", 0::32>>
+          ] do
+        assert Attachments.content_type({:binary, bytes}, "image/png") ==
+                 "application/octet-stream",
+               inspect(bytes)
+      end
+    end
+
+    test "AVIF image sequences, and brands read only inside their box" do
+      assert Attachments.content_type({:binary, ftyp("avis", ["msf1"])}, nil) == "image/avif"
+
+      # One compatible brand in the box; `avif` right after it belongs to the
+      # next box, and says nothing about this file.
+      outside = <<20::32, "ftyp", "mif1", 0::32, "mif1", "avif", "more">>
+      assert Attachments.content_type({:binary, outside}, nil) == "application/octet-stream"
+    end
+
+    @tag :tmp_dir
+    test "a binary is read as far as a file is, and no further", %{tmp_dir: dir} do
+      # A box whose `avif` brand sits past the first bytes a file read sees.
+      brands = :binary.copy("mif1", 70) <> "avif"
+      bytes = <<16 + byte_size(brands)::32, "ftyp", "mif1", 0::32, brands::binary>>
+      path = Path.join(dir, "late")
+      File.write!(path, bytes)
+
+      assert Attachments.content_type({:binary, bytes}, nil) ==
+               Attachments.content_type({:file, path}, nil)
+
+      assert Attachments.content_type({:binary, bytes}, nil) == "application/octet-stream"
+    end
+
+    test "keeps a plain claim for everything that is downloaded anyway" do
+      docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+      assert Attachments.content_type({:binary, "PK\x03\x04"}, docx) == docx
+
+      assert Attachments.content_type({:binary, ftyp("isom", ["mp41"])}, "Video/MP4") ==
+               "video/mp4"
+
+      assert Attachments.content_type({:binary, "hello"}, "text/plain") == "text/plain"
+    end
+
+    test "anything that is not a plain token is application/octet-stream" do
+      for claimed <- [
+            nil,
+            "",
+            "text",
+            "text/",
+            "/plain",
+            "text/html; charset=x",
+            "a/b/c",
+            "text/pl\nain",
+            <<0xFF, "/x">>,
+            :png
+          ] do
+        assert Attachments.content_type({:binary, "hello"}, claimed) ==
+                 "application/octet-stream"
+      end
+    end
+
+    @tag :tmp_dir
+    test "reads a file, and only its first bytes", %{tmp_dir: dir} do
+      path = Path.join(dir, "upload")
+      File.write!(path, [@png, :binary.copy("x", 1_000_000)])
+
+      assert Attachments.content_type({:file, path}, "image/gif") == "image/png"
+
+      File.write!(path, "")
+      assert Attachments.content_type({:file, path}, "image/png") == "application/octet-stream"
+
+      assert Attachments.content_type({:file, Path.join(dir, "missing")}, "text/plain") ==
+               "text/plain"
+    end
+
+    property "answers a type for any bytes and any claim, and never an unproven image" do
+      check all(bytes <- binary(), claimed <- one_of([binary(), string(:ascii), term()])) do
+        type = Attachments.content_type({:binary, bytes}, claimed)
+
+        assert is_binary(type)
+
+        if String.starts_with?(type, "image/") do
+          assert Attachments.content_type({:binary, bytes}, nil) == type
+        end
+      end
     end
   end
 end

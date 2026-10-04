@@ -105,6 +105,31 @@ Two properties hold the pair to the HTML round trip: generated documents, one
 set drawn from Markdown's own syntax characters, come back from Markdown as
 they come back from HTML.
 
+### The content type of an upload, from its bytes
+
+`Coelho.Attachments.content_type/2` reads the first bytes of an upload and
+answers the type to record, instead of trusting `entry.client_type`:
+
+```elixir
+type = Coelho.Attachments.content_type({:file, path}, entry.client_type)
+```
+
+PNG, JPEG, GIF, WebP, AVIF and PDF come back only when the bytes prove them,
+so an application that records this answer no longer lets a claimed `image/`
+type make the renderer draw an `<img>` or the plug serve a file inline. Any
+other plain type the browser claims is kept; anything else is
+`application/octet-stream`.
+
+Nothing changes until the application calls it: the plug still serves the
+type `:metadata` answers, and rows already stored keep the type they were
+recorded with.
+
+### A content security policy on every served file
+
+`Coelho.Plug.Attachments` now sends `content-security-policy: default-src
+'none'; sandbox` beside `nosniff` on every response carrying bytes. A redirect
+to object storage still carries none of the plug's headers.
+
 ## 0.16.0 — 2026-09-27
 
 What typing makes, and one dependency fewer.

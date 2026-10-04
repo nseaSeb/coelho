@@ -98,10 +98,18 @@ if Code.ensure_loaded?(Plug) do
 
     Uploads served from the application's own origin are a standing hazard:
     a file the browser decides to render as HTML runs as the application.
-    So a response carrying bytes always has `x-content-type-options: nosniff`,
-    and only a short list of image types is served inline. Everything else —
-    including SVG, which is a document that can carry script — is sent as a
-    download, whatever it claims to be.
+    So a response carrying bytes always has `x-content-type-options: nosniff`
+    and `content-security-policy: default-src 'none'; sandbox`, and only a
+    short list of image types is served inline. Everything else — including
+    SVG, which is a document that can carry script — is sent as a download,
+    whatever it claims to be. The policy is the second line: a file that
+    somehow did reach the browser as a page would run no script, load
+    nothing, and have no origin to act as.
+
+    The content type served is the one `:metadata` answers, so it is only as
+    good as what was recorded at upload time. Record what
+    `Coelho.Attachments.content_type/2` reads from the bytes rather than what
+    the browser claimed.
 
     A redirect carries none of those headers, which is why one is only offered
     for the types that would have been served inline anyway, and why a storage
@@ -320,13 +328,15 @@ if Code.ensure_loaded?(Plug) do
     defp headers(conn, metadata, options) do
       conn
       |> put_resp_header("x-content-type-options", "nosniff")
+      |> put_resp_header("content-security-policy", "default-src 'none'; sandbox")
       |> put_resp_header("cache-control", options.cache_control)
       |> put_resp_header("content-type", content_type(metadata))
       |> put_resp_header("content-disposition", disposition(metadata))
     end
 
     # The content type comes from whatever was recorded at upload time, which
-    # is ultimately the browser's word. Anything that is not a plain type
+    # is the browser's word unless the application recorded what
+    # `Coelho.Attachments.content_type/2` read from the bytes. Anything that is not a plain type
     # token is not passed on: a header value with a control character in it
     # raises inside Plug and turns every fetch of that file into a 500.
     defp content_type(%{content_type: type}) when is_binary(type) do

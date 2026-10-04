@@ -1133,6 +1133,18 @@ end
 The preview is only the editor's; what is stored is the key. Pass `:id`
 unless the page has exactly one editor — the event reaches all of them.
 
+Whatever `MyApp.Uploads.store/1` records as the content type decides whether
+the file is drawn as an `<img>` and served inline. Take it from the bytes, not
+from `entry.client_type`, which is whatever the uploader's browser said:
+
+```elixir
+type = Coelho.Attachments.content_type({:file, path}, entry.client_type)
+```
+
+PNG, JPEG, GIF, WebP, AVIF and PDF are recorded only when the file's first
+bytes prove them. Any other plain type the browser claims is kept, since such
+a file is only ever downloaded; anything else is `application/octet-stream`.
+
 Previews live outside the document, in a table belonging to the page rather
 than to an editor: a LiveView navigation destroys and remounts the hook, and
 the preview of an attachment inserted before it has to survive that. The
