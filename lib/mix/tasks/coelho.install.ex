@@ -1,43 +1,59 @@
 defmodule Mix.Tasks.Coelho.Install do
-  @shortdoc "Wires Coelho into an application: hook, styles, npm packages, migration"
+  @shortdoc "Wires Coelho into an application: hook, styles, migration"
 
   @moduledoc """
-  Does the four things that stand between adding the dependency and typing in
-  an editor.
+  Does what stands between adding the dependency and typing in an editor.
 
       mix coelho.install
 
-  Which are: the browser packages Coelho's hook imports, the hook itself in
-  `assets/js/app.js`, the stylesheet in `assets/css/app.css`, and the
-  attachments migration. Every one of them is small and none of them is
-  guessable, which is a poor trade for the first ten minutes of trying a
-  library.
+  Which is: the hook in `assets/js/app.js`, the stylesheet in
+  `assets/css/app.css`, and the attachments migration. Every one of them is
+  small and none of them is guessable, which is a poor trade for the first
+  ten minutes of trying a library.
+
+  It installs no npm package. The hook is imported from the bundle Coelho
+  ships, `priv/static/coelho.esm.js`, with ProseMirror inside, and resolves as
+  `coelho` through the `deps/` path a Phoenix application already gives
+  esbuild — the way `phoenix_live_view` does.
 
   It changes nothing it does not have to. Run it twice and the second run
   reports that everything is already there.
 
   ## What it touches
 
-    * `assets/package.json` — the packages `coelho.js` imports, taken from
-      Coelho's own `peerDependencies` so the list cannot drift from what the
-      hook actually needs. Installed with `npm`, after asking
-    * `assets/js/app.js` — the import, and `Coelho` added to the LiveSocket's
-      `hooks`. Only when the file's shape is recognised; otherwise the two
-      lines are printed for you to place
+    * `assets/js/app.js` — `import { Coelho } from "coelho"`, and `Coelho`
+      added to the LiveSocket's `hooks`. Only when the file's shape is
+      recognised; otherwise the two lines are printed for you to place. An
+      application already importing Coelho, from the bundle or from source,
+      is left alone
     * `assets/css/app.css` — the stylesheet, imported after the last `@import`
       already there, because CSS refuses one that follows a rule
-    * `config/config.exs` — checked, never edited: esbuild resolves
-      `coelho.js`'s bare imports from `deps/coelho/`, which never reaches
-      `assets/node_modules` on its own. When no profile's `NODE_PATH` covers
-      it, the task prints the path to add
+    * `config/config.exs` — checked, never edited: `coelho` resolves through
+      a `deps/` entry in esbuild's `NODE_PATH`. When a profile has none, the
+      task prints the path to add
     * `priv/repo/migrations` — `mix coelho.gen.migration`, which is the only
       part an application without attachments does not need
+
+  ## The npm packages instead
+
+  An application that already uses ProseMirror itself wants one copy of it,
+  so it imports `coelho.js` from source and installs ProseMirror from npm:
+
+      mix coelho.install --npm
+
+  That installs the packages `coelho.js` imports, taken from Coelho's own
+  `peerDependencies` so the list cannot drift, with the package manager the
+  application uses — after asking — and imports the hook from
+  `deps/coelho/assets/js/coelho.js`. Never use both: two copies of
+  ProseMirror are two sets of classes, and an editor built across them never
+  mounts.
 
   ## Options
 
     * `--dry-run` — say what would change and change nothing
-    * `--yes` — do not ask before installing the browser packages
-    * `--no-npm` — print the command instead of running it
+    * `--npm` — the npm packages and the source, as above
+    * `--yes` — with `--npm`, do not ask before installing
+    * `--no-install` — with `--npm`, print the command instead of running it
     * `--no-migration` — skip the attachments table
 
   """
@@ -52,22 +68,33 @@ defmodule Mix.Tasks.Coelho.Install do
   @external_resource @manifest
   @packages @manifest |> File.read!() |> JSON.decode!() |> Map.fetch!("peerDependencies")
 
-  @hook_import ~s(import { Coelho } from "../../deps/coelho/assets/js/coelho.js")
+  @hook_import ~s(import { Coelho } from "coelho")
+  @source_import ~s(import { Coelho } from "../../deps/coelho/assets/js/coelho.js")
   @style_import ~s(@import "../../deps/coelho/assets/css/coelho.css";)
 
   @impl true
   def run(args) do
     {opts, _argv} =
       OptionParser.parse!(args,
-        strict: [dry_run: :boolean, yes: :boolean, npm: :boolean, migration: :boolean]
+        strict: [
+          dry_run: :boolean,
+          yes: :boolean,
+          npm: :boolean,
+          install: :boolean,
+          migration: :boolean
+        ]
       )
 
-    opts = Keyword.merge([dry_run: false, yes: false, npm: true, migration: true], opts)
+    opts =
+      Keyword.merge(
+        [dry_run: false, yes: false, npm: false, install: true, migration: true],
+        opts
+      )
 
-    packages(opts)
+    if opts[:npm], do: packages(opts)
     hook(opts)
     styles(opts)
-    esbuild()
+    esbuild(opts)
     migration(opts)
 
     Mix.shell().info("")
@@ -130,7 +157,7 @@ defmodule Mix.Tasks.Coelho.Install do
   end
 
   defp run_npm?(opts, args, manager) do
-    opts[:npm] and not opts[:dry_run] and
+    opts[:install] and not opts[:dry_run] and
       (opts[:yes] or Mix.shell().yes?("Install #{length(args)} browser packages with #{manager}?"))
   end
 
@@ -182,8 +209,10 @@ defmodule Mix.Tasks.Coelho.Install do
     path = "assets/js/app.js"
 
     with {:ok, source} <- read(path),
-         false <- Regex.match?(~r/^[^\/\n]*\bimport\b[^\n]*coelho\.js/m, source) do
-      case wire_hook(source) do
+         false <- imports_coelho?(source) do
+      import = if opts[:npm], do: @source_import, else: @hook_import
+
+      case wire_hook(source, import) do
         {:ok, wired} ->
           write(path, wired, opts, "imported the hook and added it to the LiveSocket")
 
@@ -193,7 +222,7 @@ defmodule Mix.Tasks.Coelho.Install do
           say(
             :todo,
             path,
-            "add:\n      #{@hook_import}\n      …and `Coelho` to the LiveSocket's hooks"
+            "add:\n      #{import}\n      …and `Coelho` to the LiveSocket's hooks"
           )
       end
     else
@@ -206,11 +235,22 @@ defmodule Mix.Tasks.Coelho.Install do
   # Phoenix generates carries commented examples, and an application that
   # pasted one would otherwise be told it was already wired.
   #
+  # Any of the three ways in counts — the bundle by name, the bundle by path,
+  # the source — so an application wired before the bundle existed is not
+  # given a second import, and with it a second ProseMirror.
+  defp imports_coelho?(source) do
+    Regex.match?(
+      ~r/^[^\/\n]*\bimport\b[^\n]*(coelho(\.esm)?\.js["']|["']coelho["'])/m,
+      source
+    )
+  end
+
+  #
   # The import goes after the last one already there, and `Coelho` right
   # inside the hooks object — which is a textual edit and stays one, because
   # parsing JavaScript to add a key is a dependency and a new way to be wrong.
-  defp wire_hook(source) do
-    with {:ok, imported} <- after_last_import(source) do
+  defp wire_hook(source, import) do
+    with {:ok, imported} <- after_last_import(source, import) do
       into_hooks(imported)
     end
   end
@@ -226,7 +266,7 @@ defmodule Mix.Tasks.Coelho.Install do
   # the new import in the middle of the old one: a syntax error, in the file
   # the whole bundle is built from, on the first run of the command this task
   # exists to be.
-  defp after_last_import(source) do
+  defp after_last_import(source, import) do
     source
     |> String.split("\n")
     |> Enum.with_index()
@@ -241,7 +281,7 @@ defmodule Mix.Tasks.Coelho.Install do
     end)
     |> case do
       {nil, _open?} -> :error
-      {index, _open?} -> {:ok, insert_at(source, index + 1, @hook_import)}
+      {index, _open?} -> {:ok, insert_at(source, index + 1, import)}
     end
   end
 
@@ -316,28 +356,40 @@ defmodule Mix.Tasks.Coelho.Install do
 
   # -- esbuild --------------------------------------------------------------
 
-  # `coelho.js` imports its ProseMirror packages by bare specifier, and
-  # esbuild resolves those from the *importing* file — which lives under
-  # `deps/coelho/`, from where walking up never reaches the
-  # `assets/node_modules` the npm step just filled. The fix is one path in
-  # the profile's NODE_PATH; but the config is the application's own keyword
-  # tree, under a profile name of its choosing, so as with an unfamiliar
-  # `app.js` the task says what to add rather than editing it. It stays
-  # quiet both when no profile needs it and when the application does not
-  # use esbuild at all — a consigne printed on every run is one the reader
-  # learns to ignore.
-  defp esbuild do
+  # Where esbuild has to look for what `app.js` now imports. The bundle is the
+  # `coelho` package in `deps/`, which a Phoenix application's NODE_PATH
+  # already lists. The source imports ProseMirror by bare specifier, and
+  # esbuild resolves those from the *importing* file — under `deps/coelho/`,
+  # from where walking up never reaches `assets/node_modules`.
+  #
+  # Either way the config is the application's own keyword tree, under a
+  # profile name of its choosing, so as with an unfamiliar `app.js` the task
+  # says what to add rather than editing it. It stays quiet both when no
+  # profile needs it and when the application does not use esbuild at all —
+  # a consigne printed on every run is one the reader learns to ignore.
+  defp esbuild(opts) do
+    {target, what} =
+      if opts[:npm],
+        do: {Path.expand("assets/node_modules"), "the browser packages"},
+        else: {Path.expand(Mix.Project.deps_path()), "the `coelho` package"}
+
+    entry = from_config(target)
+
+    # A profile is what has `args`: the esbuild package declares an empty
+    # `default: []` of its own, which builds nothing and has no NODE_PATH to
+    # find — a freshly generated application was told to fix it.
     profiles =
       for {name, value} <- Application.get_all_env(:esbuild),
           Keyword.keyword?(value),
+          Keyword.has_key?(value, :args),
           do: {name, value}
 
-    case Enum.reject(profiles, &finds_browser_packages?/1) do
+    case Enum.reject(profiles, &reaches?(&1, target)) do
       _none when profiles == [] ->
         :ok
 
       [] ->
-        say(:kept, "config/config.exs", "esbuild can find the browser packages")
+        say(:kept, "config/config.exs", "esbuild can find #{what}")
 
       missing ->
         # Named, and every one of them: which profile bundles `app.js` is
@@ -346,12 +398,25 @@ defmodule Mix.Tasks.Coelho.Install do
         say(
           :todo,
           "config/config.exs",
-          "add `Path.expand(\"../assets/node_modules\", __DIR__)` to the NODE_PATH " <>
+          "add `Path.expand(#{inspect(entry)}, __DIR__)` to the NODE_PATH " <>
             "list of #{profile_names(missing)} (a list — esbuild joins it with the " <>
             "OS separator; and keep what is already there, `Mix.Project.build_path()` " <>
             "is what resolves colocated hooks)"
         )
     end
+  end
+
+  # What to write in `config/config.exs` to reach `target`: relative to the
+  # file itself, as Phoenix writes it. `deps/` is not always `./deps` — an
+  # umbrella keeps it at its root, and `deps_path` moves it anywhere — so it
+  # is asked of Mix rather than assumed, and so is where the config lives.
+  defp from_config(target) do
+    config_dir =
+      (Mix.Project.config()[:config_path] || "config/config.exs")
+      |> Path.expand()
+      |> Path.dirname()
+
+    Path.relative_to(target, config_dir, force: true)
   end
 
   defp profile_names(profiles) do
@@ -361,8 +426,7 @@ defmodule Mix.Tasks.Coelho.Install do
   # A relative entry is esbuild's to resolve, and it resolves it from the
   # profile's `cd:` — so that is what it is expanded against here. An
   # absolute one is unaffected by the base.
-  defp finds_browser_packages?({_name, profile}) do
-    target = Path.expand("assets/node_modules")
+  defp reaches?({_name, profile}, target) do
     base = Keyword.get(profile, :cd, File.cwd!())
 
     profile

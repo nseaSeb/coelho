@@ -159,6 +159,10 @@ defmodule Coelho.Schema.Default do
             code: true,
             attrs: [language: [default: nil, validate: {:nullable, &__MODULE__.language/1}]],
             render: &__MODULE__.render_code_block/2,
+            # Its own render, declared again: a function is fail-closed under
+            # `policy: :untrusted`, and this one points nowhere — the language
+            # only ever becomes a class.
+            render_untrusted: &__MODULE__.render_code_block/2,
             parse: ["pre"]
           ],
           horizontal_rule: [group: "block", void: true, render: {"hr", []}, parse: ["hr"]],
@@ -172,6 +176,7 @@ defmodule Coelho.Schema.Default do
               title: [default: nil, validate: {:nullable, :string}]
             ],
             render: {"img", &__MODULE__.image_attrs/1},
+            render_untrusted: &__MODULE__.untrusted_image/2,
             parse: [{"img", &__MODULE__.parse_image/1}]
           ],
           attachment: [
@@ -187,6 +192,8 @@ defmodule Coelho.Schema.Default do
             ],
             render: &__MODULE__.render_attachment/3,
             render_inline: &__MODULE__.inline_attachment/3,
+            render_untrusted: &__MODULE__.untrusted_attachment/2,
+            render_untrusted_inline: &__MODULE__.inline_untrusted_attachment/2,
             to_text: &__MODULE__.attachment_text/1
           ],
           hard_break: [
@@ -473,6 +480,41 @@ defmodule Coelho.Schema.Default do
         Coelho.Render.tag("span", [{"class", "coelho-attachment-missing"}], escape(label(node)))
     end
     |> then(&with_caption(&1, node))
+  end
+
+  # Under `policy: :untrusted`: what the attachment is called, and never
+  # where it is — no URL is resolved at all, so a resolver that signs or
+  # logs is not even asked. On the page it keeps its `<figure>`: the block
+  # renderer puts nothing between two siblings, and two bare names in a row
+  # would read as one.
+  @doc false
+  def untrusted_attachment(node, _inner) do
+    caption =
+      case present(attr(node, "caption", nil)) do
+        nil -> []
+        caption -> Coelho.Render.tag("figcaption", [], escape(caption))
+      end
+
+    Coelho.Render.tag("figure", [{"class", "coelho-attachment"}], [untrusted_name(node), caption])
+  end
+
+  @doc false
+  def inline_untrusted_attachment(node, _inner),
+    do: node |> untrusted_name() |> with_caption(node)
+
+  defp untrusted_name(node),
+    do: Coelho.Render.tag("span", [{"class", "coelho-attachment-name"}], escape(label(node)))
+
+  # The words standing in for the picture, when somebody wrote some, in an
+  # element a stylesheet can set apart from the sentence around it. An image
+  # with none contributes nothing, which is what the reader of an untrusted
+  # page is owed: no request to wherever `src` points.
+  @doc false
+  def untrusted_image(node, _inner) do
+    case present(attr(node, "alt", nil)) do
+      nil -> []
+      alt -> Coelho.Render.tag("span", [{"class", "coelho-image-alt"}], escape(alt))
+    end
   end
 
   defp label(node) do

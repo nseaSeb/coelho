@@ -30,6 +30,9 @@ coelho-*.tar
 /demo/_build/
 /demo/deps/
 /demo/node_modules/
+
+# The pinned toolchain that builds priv/static/coelho.esm.js.
+/bundle/node_modules/
 /demo/priv/static/assets/
 
 # Playwright browsers are installed per machine, not per checkout.

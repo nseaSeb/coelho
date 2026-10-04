@@ -80,7 +80,7 @@ defmodule Coelho.MixProject do
       # `assets` as a whole would carry the node_modules symlink the schema
       # bridge check makes, which points nowhere on anybody else's machine.
       files:
-        ~w(lib assets/js assets/css assets/package.json mix.exs README.md CHANGELOG.md LICENSE),
+        ~w(lib assets/js assets/css assets/package.json package.json priv/static mix.exs README.md CHANGELOG.md LICENSE),
       links: %{"GitHub" => @source_url}
     ]
   end

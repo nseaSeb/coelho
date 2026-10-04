@@ -141,7 +141,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     The JavaScript side ships with the package. In `assets/js/app.js`:
 
-        import { Coelho } from "../../deps/coelho/assets/js/coelho.js"
+        import { Coelho } from "coelho"
 
         const liveSocket = new LiveSocket("/live", Socket, {
           hooks: { Coelho, ...otherHooks }
@@ -170,7 +170,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     A schema of your own also needs its DOM mapping on the browser side, which
     `createCoelhoHook/1` takes:
 
-        import { createCoelhoHook } from "../../deps/coelho/assets/js/coelho.js"
+        import { createCoelhoHook } from "coelho"
 
         const Coelho = createCoelhoHook({
           nodes: { mention: (node) => ["span", { class: "mention" }, "@" + node.attrs.user_id] }
