@@ -2,8 +2,7 @@
 
 ```elixir
 Mix.install([
-  # Coelho.Kino is on Hex from 0.18; until then, from GitHub.
-  {:coelho, github: "nseaSeb/coelho"},
+  {:coelho, "~> 0.18"},
   {:kino, "~> 0.19"},
   {:phoenix_live_view, "~> 1.1"},
   # The HTML import parses with Floki, and the Markdown one with MDEx,

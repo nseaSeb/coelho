@@ -36,7 +36,7 @@ what was typed, and `Kino.listen/2` every change.
 
 ```elixir
 # mix.exs
-{:coelho, "~> 0.17"}
+{:coelho, "~> 0.18"}
 ```
 
 ```

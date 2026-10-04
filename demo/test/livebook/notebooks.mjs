@@ -25,9 +25,9 @@ assert.ok(notebooks.length > 0, "no notebook found");
 
 const local = (name) => {
   const source = readFileSync(join(root, "notebooks", name), "utf8");
-  const pointed = source.replace(/\{:coelho, github: "[^"]+"\}/, `{:coelho, path: ${JSON.stringify(root)}}`);
+  const pointed = source.replace(/\{:coelho, (?:github: "[^"]+"|"~> [^"]+")\}/, `{:coelho, path: ${JSON.stringify(root)}}`);
 
-  assert.notEqual(pointed, source, `${name}: no {:coelho, github: …} dependency to point at the checkout`);
+  assert.notEqual(pointed, source, `${name}: no {:coelho, "~> …"} dependency to point at the checkout`);
 
   const path = join(work, name);
   writeFileSync(path, pointed);
