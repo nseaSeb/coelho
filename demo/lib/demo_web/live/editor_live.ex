@@ -250,8 +250,8 @@ defmodule DemoWeb.EditorLive do
   # JavaScript, which is the path an application takes when it adds a mark
   # of its own.
   @note_spoiler Coelho.Schema.extend(Demo.RichText.schema(),
-                      marks: [spoiler: [render: {"span", [{"class", "spoiler"}]}]]
-                    )
+                  marks: [spoiler: [render: {"span", [{"class", "spoiler"}]}]]
+                )
 
   defp note_schema(true), do: @note_spoiler
   defp note_schema(false), do: Demo.RichText.schema()
