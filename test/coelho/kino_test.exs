@@ -17,6 +17,10 @@ defmodule Coelho.KinoTest do
   defp change(kino, value, version \\ 0),
     do: push_event(kino, "change", %{"value" => value, "version" => version})
 
+  # Kino.Test waits 100 ms for the first render, which a full suite running
+  # beside Dialyzer has been seen to miss.
+  defp connected(kino), do: connect(kino, nil, 2_000)
+
   defp subscribed(kino) do
     Kino.Control.subscribe(kino, :editor)
     kino
@@ -43,7 +47,7 @@ defmodule Coelho.KinoTest do
   describe "connecting" do
     test "renders the editor a LiveView would, holding the document" do
       kino = Coelho.Kino.new(value: doc([paragraph("bonjour")]), placeholder: "Write")
-      %{html: html} = connect(kino)
+      %{html: html} = connected(kino)
 
       assert html =~ ~s(phx-hook="Coelho")
       assert html =~ "data-coelho-schema"
@@ -54,7 +58,7 @@ defmodule Coelho.KinoTest do
 
     test "renders under the schema it was given" do
       schema = Schema.restrict(Schema.default(), nodes: [:doc, :paragraph, :text], marks: [:bold])
-      %{html: html} = schema |> then(&Coelho.Kino.new(schema: &1)) |> connect()
+      %{html: html} = schema |> then(&Coelho.Kino.new(schema: &1)) |> connected()
 
       refute html =~ "heading"
       refute html =~ "italic"
@@ -88,7 +92,7 @@ defmodule Coelho.KinoTest do
       sent_back = %{value: JSON.encode!(kept), version: 0}
 
       # Only a connected client can be sent the document back, as in Livebook.
-      connect(kino)
+      connected(kino)
 
       hostile =
         doc([
@@ -144,7 +148,7 @@ defmodule Coelho.KinoTest do
       assert_broadcast_event(kino, "set", ^sent)
       assert_receive {:editor, %{type: :change, document: ^document}}
       assert Coelho.Kino.read(kino) == document
-      assert %{html: html} = connect(kino)
+      assert %{html: html} = connected(kino)
       assert html =~ "depuis Elixir"
     end
 
@@ -169,10 +173,10 @@ defmodule Coelho.KinoTest do
 
     test "connects an editor at the version it carries" do
       kino = Coelho.Kino.new()
-      assert %{version: 0} = connect(kino)
+      assert %{version: 0} = connected(kino)
 
       Coelho.Kino.set(kino, doc([paragraph("un")]))
-      assert %{version: 1} = connect(kino)
+      assert %{version: 1} = connected(kino)
     end
 
     test "leaves the editor alone and says why when the schema refuses" do
