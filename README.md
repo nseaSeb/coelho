@@ -27,7 +27,7 @@ in the document.
 
 ```
 mix deps.get
-mix coelho.install        # browser packages, the hook, the stylesheet, the migration
+mix coelho.install        # the hook, the stylesheet, the migration — no npm
 ```
 
 ```elixir
@@ -153,30 +153,48 @@ Coelho.to_html(document, Coelho.Schema.default(),
 mix coelho.install
 ```
 
-Four things stand between adding the dependency and typing in an editor: the
-browser packages the hook imports, the hook in `assets/js/app.js`, the
-stylesheet in `assets/css/app.css`, and the attachments migration. Every one
-is small and none is guessable, which is a poor trade for the first ten
-minutes of trying a library.
+Three things stand between adding the dependency and typing in an editor: the
+hook in `assets/js/app.js`, the stylesheet in `assets/css/app.css`, and the
+attachments migration. Every one is small and none is guessable, which is a
+poor trade for the first ten minutes of trying a library.
 
-It changes nothing it does not have to — run it twice and the second run says
-everything is already there — and it says what to do rather than guessing when
-your `app.js` is not shaped the way it expects. `--dry-run` reports without
-writing.
+**No npm package.** Coelho ships its hook built, with ProseMirror inside, as
+`priv/static/coelho.esm.js` — the way `phoenix_live_view` ships its client —
+and it resolves as `coelho` through the `deps/` path a Phoenix application
+already gives esbuild:
 
-The browser packages come from Coelho's own `peerDependencies`, so the list
-cannot drift from what the hook actually imports — and they are installed
-with the package manager your application already uses, read off its
-lockfile: `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb` or `package-lock.json`,
-in `assets/` or at the root. Installing with one manager into a project that
-uses another leaves two layouts of `node_modules` in one application, and
-the one that breaks is whichever esbuild does not resolve through.
+```js
+import { Coelho } from "coelho"
+```
 
-One thing it checks without touching: esbuild resolves `coelho.js`'s bare
-imports from `deps/coelho/`, which never reaches `assets/node_modules` on its
-own — the first build then fails with `Could not resolve "prosemirror-keymap"`.
-The fix is one path in your esbuild profile's `NODE_PATH` list in
-`config/config.exs`:
+It is 298 KB minified, 93 KB over the wire with gzip, and your production build
+minifies it with the rest of `app.js`. The ProseMirror modules it was built
+with are exported beside the hook (`model`, `state`, `view`, `transform`,
+`commands`, `keymap`, `history`, `inputrules`, `schemaList`, `tables`): code of
+your own that touches ProseMirror — a node view reaching for `NodeSelection` —
+imports them from here, so there is only ever one copy.
+
+The task changes nothing it does not have to — run it twice and the second run
+says everything is already there — and it says what to do rather than guessing
+when your `app.js` is not shaped the way it expects. `--dry-run` reports
+without writing. It checks one thing without touching it: a profile in
+`config/config.exs` whose `NODE_PATH` has no `deps/` entry gets the line to
+add.
+
+### When your application already uses ProseMirror
+
+Then it wants one copy of it, its own:
+
+```
+mix coelho.install --npm
+```
+
+imports the hook from source, `deps/coelho/assets/js/coelho.js`, and installs
+the packages it imports — taken from Coelho's own `peerDependencies`, with the
+package manager your lockfile names (`pnpm-lock.yaml`, `yarn.lock`,
+`bun.lockb` or `package-lock.json`). esbuild resolves those bare imports from
+`deps/coelho/`, which never reaches `assets/node_modules` on its own, so the
+task also checks for this in your esbuild profile:
 
 ```elixir
 env: %{
@@ -190,7 +208,9 @@ env: %{
 
 Keep it a list — esbuild joins it with the OS separator — and keep what is
 already there: `Mix.Project.build_path()` is what resolves colocated hooks.
-The task diagnoses your config and prints this only when a profile needs it.
+
+Use one or the other, never both: two copies of ProseMirror are two sets of
+classes, and an editor built across them never mounts.
 
 ## Storing it
 
@@ -657,7 +677,7 @@ document the editor has already moved past, whatever caused the re-render.
 In `assets/js/app.js`:
 
 ```js
-import { Coelho } from "../../deps/coelho/assets/js/coelho.js"
+import { Coelho } from "coelho"
 
 const liveSocket = new LiveSocket("/live", Socket, { hooks: { Coelho } })
 ```
@@ -669,7 +689,7 @@ grapheme clusters as `Coelho.text_length/1` — the text nodes concatenated,
 no bullets and no blank lines:
 
 ```js
-import { textLength } from "../../deps/coelho/assets/js/coelho.js"
+import { textLength } from "coelho"
 
 const { limits } = JSON.parse(editorEl.dataset.coelhoSchema)
 const remaining = limits.maxTextLength - textLength(view.state.doc)
@@ -927,25 +947,13 @@ assert document(view, "page[intro_doc]") == paragraph("bonjour")
 
 `params/3` builds the same parameters for a test that sends them its own way.
 
-```
-npm install prosemirror-state prosemirror-view prosemirror-model \
-  prosemirror-keymap prosemirror-commands prosemirror-history \
-  prosemirror-schema-list prosemirror-inputrules prosemirror-dropcursor \
-  prosemirror-gapcursor prosemirror-tables orderedmap
-```
-
-`pnpm add` or `yarn add` where that is what the application uses — Coelho
-never calls a package manager itself, it declares what the hook imports as
-`peerDependencies` and `mix coelho.install` runs whichever one your lockfile
-names.
-
 The schema travels to the browser in a `data-` attribute, so both halves
 build from the same declaration. The one thing Elixir cannot express is how
 a node *looks while editing* — `toDOM`/`parseDOM` are functions — so a schema
 of your own supplies those to `createCoelhoHook/1`:
 
 ```js
-import { createCoelhoHook } from "../../deps/coelho/assets/js/coelho.js"
+import { createCoelhoHook } from "coelho"
 
 const Coelho = createCoelhoHook({
   nodes: { mention: { toDOM: (node) => ["span", { class: "mention" }, "@" + node.attrs.user_id] } }
@@ -1108,7 +1116,7 @@ for good — can say so, which is also what releases a `blob:` URL the browser
 would otherwise hold for the life of the page:
 
 ```javascript
-import { clearPreviewUrl } from "../../deps/coelho/assets/js/coelho.js"
+import { clearPreviewUrl } from "coelho"
 
 clearPreviewUrl(key)
 ```

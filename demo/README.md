@@ -80,8 +80,9 @@ docker compose -f ../docker/compose.yml run --rm --build browsers
 ## Checking that both halves agree
 
 The schema is declared in Elixir and exported to the browser, but `toDOM` and
-`parseDOM` are functions and live in `assets/js/coelho.js`. That file is the
-only place the two halves can drift. Two checks cover it:
+`parseDOM` are functions and live in `assets/js/coelho.js`, shipped built into
+`priv/static/coelho.esm.js`. That file is the only place the two halves can
+drift. Two checks cover it:
 
 - in the library, `test/coelho/schema_drift_test.exs` compares the names,
 - here, the bridge check feeds the real exported JSON to the real browser
@@ -98,15 +99,16 @@ an editor — the second by falling back, out loud.
 
 ## Notes on the setup
 
-- npm packages are installed at the app root rather than under `assets/`, and
-  `config/config.exs` adds that directory to esbuild's `NODE_PATH`. Coelho's
-  hook lives outside the app and imports ProseMirror by bare specifier; Node
-  resolution walks up from the *importing* file, which otherwise never
-  reaches this app's `node_modules`.
-- `import {Coelho} from "../../../assets/js/coelho.js"` reaches into the
-  checkout above, because a path dependency is not copied into `deps/`. An
-  application depending on Coelho from Hex writes
-  `"../../deps/coelho/assets/js/coelho.js"`.
+- The demo installs no ProseMirror package: it imports the bundle Coelho
+  ships, `priv/static/coelho.esm.js`, which has ProseMirror inside. Its only
+  npm package is Playwright, for the browser checks.
+- `import {createCoelhoHook} from "../../../priv/static/coelho.esm.js"`
+  reaches into the checkout above, because a path dependency is not copied
+  into `deps/`. An application depending on Coelho from Hex writes
+  `import {Coelho} from "coelho"`.
+- After editing `assets/js/coelho.js`, rebuild the bundle:
+  `npm run build --prefix ../bundle`, or `npm run watch --prefix ../bundle`
+  while working on it. CI fails when the committed bundle is stale.
 - daisyUI was removed from `assets/css/app.css`: the vendored build shipped by
   the generator does not accept options under Tailwind 4.1.12, and this page
   is plain CSS anyway.

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### No npm: the hook ships built, with ProseMirror inside
+
+Coelho now ships `priv/static/coelho.esm.js`, the hook with ProseMirror
+inside, the way `phoenix_live_view` ships its client. It resolves as `coelho`
+through the `deps/` path a Phoenix application already gives esbuild:
+
+```js
+import { Coelho } from "coelho"
+```
+
+An application installs no npm package and sets no `NODE_PATH`. The bundle is
+298 KB minified, 93 KB with gzip. The ProseMirror modules it was built with
+are exported beside the hook (`model`, `state`, `view`, …), for code of your
+own that touches ProseMirror.
+
+`mix coelho.install` wires that import and installs nothing. `mix
+coelho.install --npm` keeps the previous way — the source, and the ProseMirror
+packages from npm — for an application that uses ProseMirror itself and wants
+one copy of it. Use one or the other, never both. `--no-npm`, which printed
+the install command instead of running it, is now `--npm --no-install`.
+
+An application already importing `deps/coelho/assets/js/coelho.js` keeps
+working unchanged, and the installer leaves it alone. It also no longer asks a
+freshly generated application to fix the esbuild package's own empty
+`default` profile.
+
 ### Rendering content from people you do not trust
 
 `policy: :untrusted` on every render function takes out what a document points
