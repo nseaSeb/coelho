@@ -372,6 +372,41 @@ The separator is yours because only you know whether your container can take a
 line break: `:space` by default, `:br` for a bubble. A separator of your own
 is escaped unless you pass `{:safe, iodata}`.
 
+### From people you do not trust
+
+Escaping and the URL checks make a document unable to *run* anything. They do
+not stop it *pointing* somewhere: a comment from an anonymous visitor can still
+link to a phishing page, or carry an image that tells a third party who read it.
+
+```heex
+<div class="comment">{Coelho.to_safe_html(@comment.body, policy: :untrusted)}</div>
+```
+
+Under `policy: :untrusted` a link is its text, an image is its alt text, and an
+attachment is its file name and caption — its URL is never even resolved. The
+same holds for `to_safe_inline_html/2`.
+
+The rule is fail-closed, so it holds for nodes of your own without your
+declaring anything: a node or mark with an attribute validated as `:safe_url`
+is its children; a `{tag, attrs}` render keeps only attributes that cannot
+fetch, follow or style anything (`class`, `title`, `aria-*`, table spans, a
+list's `start`, …) — not `data-*`, which `phoenix_html.js`, htmx and lazy
+loaders turn into requests — beside what `:render_as` and `:class` add, and
+draws only the structural and text elements on a second allow list (`p`, `div`,
+`span`, headings, lists, tables, `em`, `strong`, `code`, …) — anything else,
+from `a` and `img` to `button`, `plaintext` or a custom element, is its
+children; a render *function* is its children, since
+Coelho cannot look inside it. Declare `:render_untrusted` to say what a node
+shows instead — reusing its own render when it points nowhere, as the shipped
+code block does. A `:nodes` or `:marks` override you pass still wins, since
+that is your code. A misspelt policy raises rather than rendering as trusted.
+
+`Coelho.blank?/2` does not know the policy, and answers for the document: an
+image counts as content even when, with no alt text, the untrusted render of it
+is nothing at all. A comment holding only such an image passes the
+`:if={not Coelho.blank?(...)}` guard above and renders an empty wrapper — give
+the wrapper no chrome of its own, or require alt text where strangers write.
+
 ## Serving what is stored
 
 Validation is the boundary at the keyboard. There is a second one, at the

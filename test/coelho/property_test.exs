@@ -104,6 +104,8 @@ defmodule Coelho.PropertyTest do
 
       assert is_binary(Render.to_html(stored, schema()))
       assert is_binary(Render.to_inline_html(stored, schema()))
+      assert is_binary(Render.to_html(stored, schema(), policy: :untrusted))
+      assert is_binary(Render.to_inline_html(stored, schema(), policy: :untrusted))
       assert is_binary(Document.to_text(stored, schema()))
 
       repaired = Document.sanitize(stored, schema())
