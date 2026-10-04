@@ -387,19 +387,19 @@ defmodule Coelho.EditorOptionsTest do
     test "name a command the library never heard of after itself" do
       schema =
         Coelho.Schema.extend(Coelho.Schema.default(),
-          marks: [highlight: [render: {"mark", []}, parse: ["mark"]]]
+          marks: [spoiler: [render: {"mark", []}, parse: ["mark"]]]
         )
 
       html =
         editor(%{
           name: "a[b]",
           document_schema: schema,
-          toolbar: ~w(highlight)
+          toolbar: ~w(spoiler)
         })
 
-      assert html =~ ~s(title="highlight")
+      assert html =~ ~s(title="spoiler")
       # And with no icon to draw, it shows the label rather than nothing.
-      assert html =~ ~r{aria-label="highlight">\s*highlight\s*</button>}
+      assert html =~ ~r{aria-label="spoiler">\s*spoiler\s*</button>}
       refute html =~ "coelho-icon"
     end
   end

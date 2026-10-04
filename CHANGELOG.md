@@ -57,6 +57,54 @@ It is now the children in both, so an application hiding a node from a page
 hides it from the excerpt too. A void node has no children, so it contributes
 nothing.
 
+### Underline, highlight, subscript and superscript — **and this one can bite an upgrade**
+
+The default schema has four more marks, rendered as `<u>`, `<mark>`, `<sub>`
+and `<sup>`. Each has a toolbar icon, and all but highlight a shortcut:
+`Mod-u`, `Mod-,` and `Mod-.` — `Mod-Shift-H` is the browser's own. The
+default toolbar is unchanged, so an application
+names them to show them. `Coelho.Markdown.to_markdown/3` writes them as
+those elements, since Markdown has no delimiters for them, and
+`from_markdown/3` reads them back.
+
+`Coelho.HTML.from_html/3` against the default schema now **keeps** these four
+elements, where it used to warn and drop them.
+
+**An application that already declared one of these names** through
+`Schema.extend/2` now extends the shipped mark rather than declaring a new
+one, because redeclaring a name overlays only the keys it gives. A
+`highlight: [class: "hl"]` with no `:render` or `:parse` rendered as bare
+text and imported nothing on 0.16; it now renders as `<mark class="hl">`,
+keeps an imported `<mark>`, and is written to Markdown as `<mark>`. One that
+gave its own `:render` keeps it, in the editor and in Markdown too — written
+there as a mark of the application's rather than as the shipped element —
+but still inherits the shipped `parse: ["mark"]` unless it gives its own.
+
+### Markdown, out and back
+
+`Coelho.Markdown.to_markdown/3` writes a document as CommonMark, with GitHub's
+tables and strikethrough. What Markdown would read as syntax is escaped, a mark
+spanning several text nodes is written once, and a mark is written as its HTML
+element (`<strong>`, `<em>`, `<del>`) where CommonMark would not read its
+delimiters. `:nodes` and `:marks` take an application's own; without them a
+node is its content, or its `:to_text`. What Markdown cannot say is listed in
+the module's documentation.
+
+`Coelho.Markdown.from_markdown/3` reads it back under the schema, through
+`Coelho.HTML.from_html/3`, with the new optional `:mdex` dependency.
+
+### The HTML import fills a node the way the editor would
+
+`Coelho.HTML.from_html/3` used to fail the whole import on `<li></li>`, or on a
+`<li>` holding only a nested list, since a list item opens with a paragraph.
+Editors write both, and Markdown's empty `- ` item reads as one. A node missing
+the block its content opens with now gets an empty one of its default block,
+as the editor fills it.
+
+Two properties hold the pair to the HTML round trip: generated documents, one
+set drawn from Markdown's own syntax characters, come back from Markdown as
+they come back from HTML.
+
 ### The content type of an upload, from its bytes
 
 `Coelho.Attachments.content_type/2` reads the first bytes of an upload and

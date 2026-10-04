@@ -63,6 +63,7 @@ defmodule Coelho.MixProject do
       {:ash, "~> 3.0", only: :test},
       {:ecto, "~> 3.11", optional: true},
       {:floki, "~> 0.36", optional: true},
+      {:mdex, "~> 0.14", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:plug, "~> 1.14", optional: true},
       {:telemetry, "~> 1.0", optional: true},
@@ -94,7 +95,7 @@ defmodule Coelho.MixProject do
       # link resolving.
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
       groups_for_modules: [
-        Document: [Coelho.Document, Coelho.Document.Error, Coelho.Render],
+        Document: [Coelho.Document, Coelho.Document.Error, Coelho.Render, Coelho.Markdown],
         Observing: [Coelho.Telemetry],
         Schema: [
           Coelho.Schema,

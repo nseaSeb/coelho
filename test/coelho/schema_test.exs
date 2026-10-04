@@ -12,7 +12,7 @@ defmodule Coelho.SchemaTest do
   describe "derived fields" do
     test "carry the encoded export, and follow extend/2 and restrict/2" do
       schema = Schema.default()
-      extended = Schema.extend(schema, marks: [highlight: [render: {"mark", []}]])
+      extended = Schema.extend(schema, marks: [spoiler: [render: {"mark", []}]])
       restricted = Schema.restrict(schema, marks: [:bold])
 
       for built <- [schema, extended, restricted] do
@@ -25,7 +25,7 @@ defmodule Coelho.SchemaTest do
     end
 
     test "rank marks by declaration order, and unknown marks last" do
-      schema = Schema.extend(Schema.default(), marks: [highlight: [render: {"mark", []}]])
+      schema = Schema.extend(Schema.default(), marks: [spoiler: [render: {"mark", []}]])
 
       for {name, index} <- Enum.with_index(schema.mark_order) do
         assert Schema.mark_index(schema, name) == index
@@ -385,13 +385,13 @@ defmodule Coelho.SchemaTest do
     test "the spec's class is not folded into the render, since editorAttrs carries it" do
       schema =
         Schema.extend(Schema.default(),
-          marks: [highlight: [class: "hl", render: {"mark", [{"class", "base"}]}]]
+          marks: [spoiler: [class: "hl", render: {"mark", [{"class", "base"}]}]]
         )
 
       marks = Map.new(Schema.to_json(schema)["marks"], fn [name, spec] -> {name, spec} end)
 
-      assert marks["highlight"]["renderDOM"] == ["mark", %{"class" => "base"}, 0]
-      assert marks["highlight"]["editorAttrs"] == %{"class" => "hl"}
+      assert marks["spoiler"]["renderDOM"] == ["mark", %{"class" => "base"}, 0]
+      assert marks["spoiler"]["editorAttrs"] == %{"class" => "hl"}
     end
 
     test "the attribute values the server renders, in the DOM's own spelling" do
@@ -594,10 +594,31 @@ defmodule Coelho.SchemaTest do
     end
 
     test "a name that is new is built from its declaration alone" do
+      schema = Schema.extend(Schema.default(), marks: [spoiler: [class: "hl"]])
+
+      assert Schema.mark_spec(schema, :spoiler).render == nil
+      assert Schema.mark_spec(schema, :spoiler).parse == []
+    end
+
+    test "a name the default schema now ships is extended rather than declared" do
+      # An application that declared `highlight: [class: "hl"]` on 0.16 had a
+      # mark with no render; the name now exists, so it inherits the shipped
+      # one. The CHANGELOG flags this, and this pins what it says.
       schema = Schema.extend(Schema.default(), marks: [highlight: [class: "hl"]])
 
-      assert Schema.mark_spec(schema, :highlight).render == nil
-      assert Schema.mark_spec(schema, :highlight).parse == []
+      doc = %{
+        "type" => "doc",
+        "content" => [
+          %{
+            "type" => "paragraph",
+            "content" => [
+              %{"type" => "text", "text" => "x", "marks" => [%{"type" => "highlight"}]}
+            ]
+          }
+        ]
+      }
+
+      assert Coelho.to_html(doc, schema) == ~s(<p><mark class="hl">x</mark></p>)
     end
 
     test "a redeclaration is still checked like any other declaration" do

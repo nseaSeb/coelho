@@ -81,7 +81,7 @@ defmodule Coelho.RestrictTest do
       end
 
       assert_raise ArgumentError, ~r/no such mark/, fn ->
-        Schema.restrict(Schema.default(), marks: [:highlight])
+        Schema.restrict(Schema.default(), marks: [:spoiler])
       end
     end
 

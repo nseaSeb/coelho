@@ -641,7 +641,23 @@ defmodule Coelho.HTML do
       |> wrap_inline_runs(spec, schema)
       |> Enum.filter(&admissible?(&1, spec, schema))
     end
+    |> Enum.map(&fill_kept(&1, schema))
   end
+
+  # Only a child its parent keeps is filled. A `<li>` outside a list is
+  # lifted — its children take its place — and a paragraph added to it
+  # first would be lifted with them, into a document that never had one.
+  defp fill_kept(%{"type" => type, "content" => content} = node, schema) when is_list(content) do
+    case Schema.fetch_node_spec(schema, type) do
+      {:ok, %NodeSpec{content: expression} = spec} when expression != nil ->
+        Map.put(node, "content", fill(content, spec, schema))
+
+      _other ->
+        node
+    end
+  end
+
+  defp fill_kept(node, _schema), do: node
 
   # A child the parent cannot hold — a `<pre>` inside a `<p>`, a heading
   # inside a heading — is unwrapped rather than deleted, the same way an
@@ -712,6 +728,22 @@ defmodule Coelho.HTML do
     Enum.all?(run, fn node ->
       Map.get(node, "type") == "text" and String.trim(Map.get(node, "text", "")) == ""
     end)
+  end
+
+  # A node missing the block its content has to open with — `<li></li>`, or a
+  # `<li>` holding only a nested list, for a `paragraph block*` list item, as
+  # editors and Markdown's `- ` make them — gets an empty one of its default
+  # block in front, the way the editor fills it, rather than failing the
+  # whole import.
+  defp fill(content, spec, schema) do
+    with false <- matches?(spec.content, content, schema),
+         block when block != nil <- default_block(spec, schema),
+         filled = [%{"type" => Atom.to_string(block), "content" => []} | content],
+         true <- matches?(spec.content, filled, schema) do
+      filled
+    else
+      _otherwise -> content
+    end
   end
 
   defp default_block(spec, schema) do

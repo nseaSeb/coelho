@@ -40,6 +40,22 @@ defmodule Coelho.Icons do
     "italic" => ["M10 5h8", "M6 19h8", "M15 5l-6 14"],
     # An S drawn as two bowls, and the line struck through it.
     "strike" => ["M16 5h-6a3.5 3.5 0 0 0 0 7h4a3.5 3.5 0 0 1 0 7H8", "M4 12h16"],
+    # A U standing on the line drawn under it.
+    "underline" => ["M7 4v7a5 5 0 0 0 10 0V4", "M5 20h14"],
+    # A marker's chisel tip, and the stroke it leaves.
+    "highlight" => ["m9 11-5 5v3h3l5-5", "m9 11 6-6 4 4-6 6z", "M14 20h6"],
+    # An x, and the small 2 set below its line.
+    "subscript" => [
+      "m4 5 8 10",
+      "m12 5-8 10",
+      "M20 19h-4c0-1.5.4-2 1.9-2.9.7-.4 1.1-.8 1.1-1.6a1.5 1.5 0 0 0-3 0"
+    ],
+    # The same x, and the 2 raised above it.
+    "superscript" => [
+      "m4 9 8 10",
+      "m12 9-8 10",
+      "M20 10h-4c0-1.5.4-2 1.9-2.9.7-.4 1.1-.8 1.1-1.6a1.5 1.5 0 0 0-3 0"
+    ],
     # Two chevrons, pointing away from what they enclose.
     "code" => ["m9 8-4 4 4 4", "M15 8l4 4-4 4"],
     # Two links of a chain, each reaching into the other.
@@ -122,6 +138,10 @@ defmodule Coelho.Icons do
     "bold" => "Bold",
     "italic" => "Italic",
     "strike" => "Strikethrough",
+    "underline" => "Underline",
+    "highlight" => "Highlight",
+    "subscript" => "Subscript",
+    "superscript" => "Superscript",
     "code" => "Code",
     "link" => "Link",
     "heading" => "Heading",

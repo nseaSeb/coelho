@@ -54,7 +54,7 @@ defmodule DemoWeb.EditorLive do
      |> assign(:note_open, true)
      |> assign(:note_generation, 1)
      |> assign(:note_locale, :fr)
-     |> assign(:note_highlight, false)
+     |> assign(:note_spoiler, false)
      |> assign_form(Post.changeset(post, %{}))}
   end
 
@@ -117,7 +117,7 @@ defmodule DemoWeb.EditorLive do
   # container is `phx-update="ignore"`, so only the fingerprint on the
   # element says anything happened.
   def handle_event("note_schema", _params, socket) do
-    {:noreply, update(socket, :note_highlight, &(not &1))}
+    {:noreply, update(socket, :note_spoiler, &(not &1))}
   end
 
   def handle_event("note_toggle", _params, socket) do
@@ -245,18 +245,18 @@ defmodule DemoWeb.EditorLive do
 
   # The upload channel is LiveView's; what to do with the bytes is the
   # application's. Coelho only wants the node to insert.
-  # Declared in Elixir and nowhere else: `render: {"mark", []}` is the whole
+  # Declared in Elixir and nowhere else: `render: {"span", [...]}` is the whole
   # declaration, and the editor draws it from that — no `toDOM` written in
   # JavaScript, which is the path an application takes when it adds a mark
   # of its own.
-  @note_highlighted Coelho.Schema.extend(Demo.RichText.schema(),
-                      marks: [highlight: [render: {"mark", []}]]
-                    )
+  @note_spoiler Coelho.Schema.extend(Demo.RichText.schema(),
+                  marks: [spoiler: [render: {"span", [{"class", "spoiler"}]}]]
+                )
 
-  defp note_schema(true), do: @note_highlighted
+  defp note_schema(true), do: @note_spoiler
   defp note_schema(false), do: Demo.RichText.schema()
 
-  defp note_toolbar(true), do: ~w(bold italic link highlight)
+  defp note_toolbar(true), do: ~w(bold italic link spoiler)
   defp note_toolbar(false), do: ~w(bold italic link)
 
   defp handle_progress(:attachment, entry, socket) do
@@ -411,7 +411,7 @@ defmodule DemoWeb.EditorLive do
             placeholder="Write something…"
             field_labels={note_field_labels(@note_locale)}
             toolbar={
-              ~w(bold italic strike code link heading heading_2 heading_3 paragraph code_block
+              ~w(bold italic strike underline highlight subscript superscript code link heading heading_2 heading_3 paragraph code_block
                  blockquote bullet_list ordered_list horizontal_rule caption
                  align_left align_center align_right align_justify
                  table_row_after table_row_delete table_column_after
@@ -482,7 +482,7 @@ defmodule DemoWeb.EditorLive do
             {if @note_locale == :fr, do: "English", else: "Français"}
           </button>
           <button type="button" id="note-schema" phx-click="note_schema">
-            {if @note_highlight, do: "Plain schema", else: "Add highlight"}
+            {if @note_spoiler, do: "Plain schema", else: "Add spoiler"}
           </button>
 
           <%!-- No phx-change at all: this editor reports on the way out and
@@ -494,8 +494,8 @@ defmodule DemoWeb.EditorLive do
             <.coelho_editor
               name="note[body]"
               value={@note}
-              document_schema={note_schema(@note_highlight)}
-              toolbar={note_toolbar(@note_highlight)}
+              document_schema={note_schema(@note_spoiler)}
+              toolbar={note_toolbar(@note_spoiler)}
               labels={note_labels(@note_locale)}
               field_labels={note_field_labels(@note_locale)}
               maxlength={200}
