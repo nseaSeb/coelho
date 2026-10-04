@@ -1,0 +1,85 @@
+# Coelho: your own schema
+
+```elixir
+Mix.install([
+  # Coelho.Kino is on Hex from 0.18; until then, from GitHub.
+  {:coelho, github: "nseaSeb/coelho"},
+  {:kino, "~> 0.19"},
+  {:phoenix_live_view, "~> 1.1"}
+])
+```
+
+## One schema, both halves
+
+A schema is declared once, in Elixir. The server validates and renders with it;
+the browser builds its editor from the same declaration, exported as JSON. Add
+a node of your own — a callout — to the shipped schema:
+
+```elixir
+schema =
+  Coelho.Schema.extend(Coelho.Schema.default(),
+    nodes: [
+      callout: [
+        group: "block",
+        content: "inline*",
+        attrs: [tone: [default: "info", validate: {:one_of, ~w(info warning)}]],
+        render: {"aside", [{"class", "callout"}]}
+      ]
+    ]
+  )
+
+Map.keys(schema.nodes)
+```
+
+## The validator is the schema
+
+The schema says what a document may hold, and nothing else gets through:
+
+```elixir
+callout = fn tone ->
+  %{
+    "type" => "doc",
+    "content" => [
+      %{
+        "type" => "callout",
+        "attrs" => %{"tone" => tone},
+        "content" => [%{"type" => "text", "text" => "Mind the gap"}]
+      }
+    ]
+  }
+end
+
+%{
+  info: Coelho.validate(callout.("info"), schema),
+  panic: Coelho.validate(callout.("panic"), schema),
+  without_the_node: Coelho.validate(callout.("info"), Coelho.Schema.default())
+}
+```
+
+```elixir
+{:ok, document} = Coelho.validate(callout.("warning"), schema)
+Coelho.to_html(document, schema)
+```
+
+## An editor for it
+
+The editor knows the node because the schema says so: no JavaScript to write.
+
+```elixir
+Coelho.Kino.new(schema: schema, value: document)
+```
+
+## Less, for one field
+
+`restrict/2` narrows a schema to what one field may hold — a comment that takes
+paragraphs, bold and italic, and nothing else. The toolbar follows.
+
+```elixir
+comment =
+  Coelho.Schema.restrict(Coelho.Schema.default(),
+    nodes: [:doc, :paragraph, :text],
+    marks: [:bold, :italic]
+  )
+
+Coelho.Kino.new(schema: comment, placeholder: "A comment: bold and italic only")
+```

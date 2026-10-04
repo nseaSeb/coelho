@@ -1,0 +1,186 @@
+# Coelho: a tour
+
+```elixir
+Mix.install([
+  # Coelho.Kino is on Hex from 0.18; until then, from GitHub.
+  {:coelho, github: "nseaSeb/coelho"},
+  {:kino, "~> 0.19"},
+  {:phoenix_live_view, "~> 1.1"}
+])
+```
+
+## The editor
+
+This is the editor a Phoenix form gets from `<.coelho_editor>`: the same
+component, the same hook, the same schema on both sides. Type in it, select a
+word and make it bold or highlight it, start a line with `# ` or `- `.
+
+```elixir
+sample = %{
+  "type" => "doc",
+  "content" => [
+    %{
+      "type" => "heading",
+      "attrs" => %{"level" => 2},
+      "content" => [%{"type" => "text", "text" => "Structured rich text"}]
+    },
+    %{
+      "type" => "paragraph",
+      "content" => [
+        %{"type" => "text", "text" => "Coelho stores "},
+        %{"type" => "text", "text" => "a tree", "marks" => [%{"type" => "bold"}]},
+        %{"type" => "text", "text" => ", "},
+        %{"type" => "text", "text" => "never HTML", "marks" => [%{"type" => "highlight"}]},
+        %{"type" => "text", "text" => "."}
+      ]
+    }
+  ]
+}
+
+# Any attribute of <.coelho_editor> passes through, the toolbar among them.
+editor =
+  Coelho.Kino.new(
+    value: sample,
+    toolbar:
+      ~w(bold italic underline highlight strike code link subscript superscript
+         heading bullet_list ordered_list blockquote undo redo)
+  )
+```
+
+## What is stored, and what it renders to
+
+Every change is validated on the server before it is kept, then rendered again
+from the tree: the JSON a `:map` column holds, the HTML a page shows, the
+Markdown an export or a language model's prompt takes, and the plain text a
+search index would hold. Edit above and watch it follow.
+
+````elixir
+frame = Kino.Frame.new()
+
+show = fn document ->
+  Kino.Layout.tabs(
+    "Stored JSON": Kino.Markdown.new("```json\n#{JSON.encode!(document)}\n```"),
+    # Markdown renders the HTML as the page would. A Kino.HTML here, redrawn
+    # in a hidden tab while the editor above was still being created, kept
+    # Livebook from drawing the editor under "Evaluate all".
+    Rendered: Kino.Markdown.new(Coelho.to_html(document)),
+    "HTML source": Kino.Markdown.new("```html\n#{Coelho.to_html(document)}\n```"),
+    Markdown: Kino.Text.new(Coelho.Markdown.to_markdown(document)),
+    "Plain text": Kino.Text.new(Coelho.to_text(document))
+  )
+end
+
+Kino.Frame.render(frame, show.(Coelho.Kino.read(editor)))
+
+Kino.listen(editor, fn
+  %{type: :change, document: document} -> Kino.Frame.render(frame, show.(document))
+  _other -> :ok
+end)
+
+frame
+````
+
+## Reading it from Elixir
+
+`read/1` is the document as a form would submit it, already validated.
+
+```elixir
+document = Coelho.Kino.read(editor)
+
+%{
+  characters: Coelho.text_length(document),
+  blank?: Coelho.blank?(document),
+  inline: Coelho.to_inline_html(document)
+}
+```
+
+## Writing it from Elixir
+
+`set/2` replaces the document in the editor above, validated like everything
+else, and the tabs follow because it is a change like any other. Type
+something, then press the button.
+
+```elixir
+button = Kino.Control.button("Write from Elixir")
+
+Kino.listen(button, fn _click ->
+  :ok =
+    Coelho.Kino.set(editor, %{
+      "type" => "doc",
+      "content" => [
+        %{
+          "type" => "paragraph",
+          "content" => [%{"type" => "text", "text" => "Written from Elixir."}]
+        }
+      ]
+    })
+end)
+
+button
+```
+
+## The server decides
+
+What the browser sends is input like any other. A document the schema refuses
+is not stored, whoever sent it, and `set/2` says why:
+
+```elixir
+hostile = %{
+  "type" => "doc",
+  "content" => [
+    %{
+      "type" => "paragraph",
+      "content" => [
+        %{
+          "type" => "text",
+          "text" => "click me",
+          "marks" => [%{"type" => "link", "attrs" => %{"href" => "javascript:alert(1)"}}]
+        }
+      ]
+    }
+  ]
+}
+
+{:error, errors} = Coelho.Kino.set(editor, hostile)
+Enum.map(errors, &Coelho.Document.Error.format/1)
+```
+
+## Rendering what a stranger wrote
+
+A comment or a review is a document someone you do not know wrote, valid or
+not. `policy: :untrusted` renders it without anything that loads, navigates
+or styles: the link keeps its words, the image its alt text, and nothing
+reaches out from the page.
+
+```elixir
+{:ok, comment} =
+  Coelho.Document.validate(
+    %{
+      "type" => "doc",
+      "content" => [
+        %{
+          "type" => "paragraph",
+          "content" => [
+            %{"type" => "text", "text" => "Great post, see "},
+            %{
+              "type" => "text",
+              "text" => "my site",
+              "marks" => [%{"type" => "link", "attrs" => %{"href" => "https://example.com/"}}]
+            },
+            %{"type" => "text", "text" => " "},
+            %{
+              "type" => "image",
+              "attrs" => %{"src" => "https://example.com/pixel.gif", "alt" => "a pixel"}
+            }
+          ]
+        }
+      ]
+    },
+    Coelho.Schema.default()
+  )
+
+Kino.Layout.tabs(
+  Trusted: Kino.Text.new(Coelho.to_html(comment)),
+  Untrusted: Kino.Text.new(Coelho.to_html(comment, policy: :untrusted))
+)
+```

@@ -1,0 +1,86 @@
+# Coelho: migrating stored HTML and Markdown
+
+```elixir
+Mix.install([
+  # Coelho.Kino is on Hex from 0.18; until then, from GitHub.
+  {:coelho, github: "nseaSeb/coelho"},
+  {:kino, "~> 0.19"},
+  {:phoenix_live_view, "~> 1.1"},
+  # The HTML import parses with Floki, and the Markdown one with MDEx,
+  # both optional dependencies of Coelho.
+  {:floki, "~> 0.36"},
+  {:mdex, "~> 0.14"}
+])
+```
+
+## From whatever an editor left behind
+
+Paste HTML from your database — TinyMCE, Trix, CKEditor, a CMS — and see the
+document it becomes, and what the import left behind and why.
+
+```elixir
+input =
+  Kino.Input.textarea("Stored HTML",
+    default: """
+    <h2 style="color:red">Release notes</h2>
+    <p>Fixed <b>three</b> bugs<br>and one <span class="x">regression</span>.</p>
+    <script>track()</script>
+    <ul><li>Faster <i>import</i></li><li><a href="javascript:alert(1)">a link</a></li></ul>
+    <font face="Comic Sans">Legacy markup</font>
+    """
+  )
+```
+
+````elixir
+html = Kino.Input.read(input)
+{:ok, document, warnings} = Coelho.from_html(html)
+
+Kino.Layout.tabs(
+  Document: Kino.Markdown.new("```json\n#{JSON.encode!(document)}\n```"),
+  # Markdown renders the HTML as a page would, without a JS output of its own.
+  "Rendered again": Kino.Markdown.new(Coelho.to_html(document)),
+  "What was left behind": Kino.DataTable.new(warnings)
+)
+````
+
+## And edit the result
+
+The imported document is an ordinary one: open it in the editor.
+
+```elixir
+Coelho.Kino.new(value: document)
+```
+
+## From Markdown
+
+A README, a wiki page, a language model's answer: Markdown is read under the
+same schema, through the same import, so the schema decides what is kept.
+
+```elixir
+markdown =
+  Kino.Input.textarea("Markdown",
+    default: """
+    ## Release notes
+
+    Fixed **three** bugs and one ~~regression~~, see [the issue](https://example.com/1).
+
+    - Faster *import*
+    - H<sub>2</sub>O and x<sup>2</sup> come through as they are
+
+    | Engine | Status |
+    | --- | --- |
+    | Chromium | green |
+    """
+  )
+```
+
+````elixir
+{:ok, from_markdown, warnings} = Coelho.Markdown.from_markdown(Kino.Input.read(markdown))
+
+Kino.Layout.tabs(
+  Document: Kino.Markdown.new("```json\n#{JSON.encode!(from_markdown)}\n```"),
+  "Rendered again": Kino.Markdown.new(Coelho.to_html(from_markdown)),
+  "And back to Markdown": Kino.Text.new(Coelho.Markdown.to_markdown(from_markdown)),
+  "What was left behind": Kino.DataTable.new(warnings)
+)
+````

@@ -8,7 +8,7 @@
 // the same bytes on every machine: esbuild is pinned exactly, the working
 // directory is fixed, and nothing in it depends on where it was built.
 import { build, context } from "esbuild";
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -97,16 +97,38 @@ if (missing.length > 0) {
 
 const bytes = Object.values(result.metafile.outputs)[0].bytes;
 
+// Copied beside the bundle rather than built: Livebook serves Coelho.Kino's
+// assets from priv/static, and every file there is packaged with them, so a
+// stale copy would ship as surely as a stale bundle.
+const copies = [
+  ["assets/js/kino.js", "priv/static/kino.js"],
+  ["assets/css/coelho.css", "priv/static/coelho.css"]
+];
+
+const stale = [];
+
 if (check) {
   const committed = readFileSync(outfile);
   const built = Buffer.from(result.outputFiles[0].contents);
 
-  if (!committed.equals(built)) {
-    console.error(`${relative(root, outfile)} is stale: run npm run build --prefix bundle and commit it`);
+  if (!committed.equals(built)) stale.push(relative(root, outfile));
+
+  for (const [from, to] of copies) {
+    const target = join(root, to);
+
+    if (!existsSync(target) || !readFileSync(join(root, from)).equals(readFileSync(target))) {
+      stale.push(to);
+    }
+  }
+
+  if (stale.length > 0) {
+    console.error(`stale: ${stale.join(", ")} — run npm run build --prefix bundle and commit`);
     process.exit(1);
   }
 
-  console.log(`${relative(root, outfile)} is up to date (${bytes} bytes)`);
+  console.log(`${relative(root, outfile)} is up to date (${bytes} bytes), and so are its copies`);
 } else {
-  console.log(`wrote ${relative(root, outfile)} (${bytes} bytes)`);
+  for (const [from, to] of copies) copyFileSync(join(root, from), join(root, to));
+
+  console.log(`wrote ${relative(root, outfile)} (${bytes} bytes) and ${copies.map(([, to]) => to).join(", ")}`);
 }

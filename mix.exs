@@ -63,6 +63,7 @@ defmodule Coelho.MixProject do
       {:ash, "~> 3.0", only: :test},
       {:ecto, "~> 3.11", optional: true},
       {:floki, "~> 0.36", optional: true},
+      {:kino, "~> 0.19", optional: true},
       {:mdex, "~> 0.14", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:plug, "~> 1.14", optional: true},
@@ -89,7 +90,15 @@ defmodule Coelho.MixProject do
     [
       main: "readme",
       source_url: @source_url,
-      extras: ["README.md", "CHANGELOG.md"],
+      extras: [
+        "README.md",
+        "notebooks/tour.livemd",
+        "notebooks/schema.livemd",
+        "notebooks/migration.livemd",
+        "CHANGELOG.md"
+      ],
+      # ExDoc gives a .livemd page its own "Run in Livebook" button.
+      groups_for_extras: [Notebooks: ~r{notebooks/}],
       # The changelog is a record: it names functions that have since left
       # the documentation, and a record does not get rewritten to keep a
       # link resolving.
@@ -113,6 +122,7 @@ defmodule Coelho.MixProject do
           Coelho.Plug.Attachments
         ],
         Ash: [Coelho.Ash.Type],
+        Livebook: [Coelho.Kino],
         Attachments: [
           Coelho.Attachment,
           Coelho.Attachments,

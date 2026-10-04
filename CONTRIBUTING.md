@@ -13,6 +13,12 @@ cd demo && mix test
 npm ci --prefix bundle && npm run check --prefix bundle         # the committed bundle is what coelho.js builds to
 ```
 
+The notebooks in `notebooks/` run in a real Livebook in CI. Locally, with
+Livebook started with its token disabled (`LIVEBOOK_TOKEN_ENABLED=false
+livebook server`), `cd demo && node test/livebook/notebooks.mjs` runs each one
+against this checkout. A notebook is documentation people execute: one that
+breaks costs more than one that was never written.
+
 `assets/js/coelho.js` ships built, with ProseMirror inside, as
 `priv/static/coelho.esm.js`, and that file is committed: it is what an
 application from Hex imports, what the demo runs and what the schema bridge

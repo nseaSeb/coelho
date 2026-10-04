@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Coelho in Livebook
+
+`Coelho.Kino.new/1` puts the editor in a notebook cell: the same component and
+hook a LiveView uses, so a notebook shows what an application gets.
+`Coelho.Kino.read/1` is what was typed, as the document that would be stored,
+`Coelho.Kino.set/2` replaces it, and `Kino.listen/2` sees every change. Every
+change is validated on the server before it is kept; one the schema refuses is
+not stored, and the editor that sent it is put back. Needs the optional `kino`
+and `phoenix_live_view` dependencies.
+
+Three notebooks, each with a "Run in Livebook" badge in the README and a page
+in the documentation: a tour, your own schema, and migrating stored HTML. CI
+runs every one of them in a real Livebook.
+
 ## 0.17.0 — 2026-10-04
 
 ### No npm: the hook ships built, with ProseMirror inside

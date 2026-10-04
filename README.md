@@ -18,6 +18,20 @@ What the column actually holds is the JSON — and the attachment's URL, with
 its expiry and its signature, exists only in the rendered output. It is never
 in the document.
 
+## Try it in Livebook
+
+No Phoenix application needed: the editor runs in a notebook, and what you type
+comes back to Elixir as the document that would be stored.
+
+| | |
+| --- | --- |
+| [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Ftour.livemd) | **A tour** — the editor, the JSON it stores, the HTML and text it renders to, and a hostile document refused |
+| [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Fschema.livemd) | **Your own schema** — a node of your own, the validator it becomes, an editor for it, and a field restricted to less |
+| [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Fmigration.livemd) | **Migrating stored HTML** — paste what an old editor left in your database and see the document, and what was left behind |
+
+In your own notebooks, `Coelho.Kino.new/1` is the editor, `Coelho.Kino.read/1`
+what was typed, and `Kino.listen/2` every change.
+
 ## Five minutes
 
 ```elixir
