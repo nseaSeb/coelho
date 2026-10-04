@@ -25,9 +25,9 @@ comes back to Elixir as the document that would be stored.
 
 | | |
 | --- | --- |
-| [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Ftour.livemd) | **A tour** — the editor, the JSON it stores, the HTML and text it renders to, and a hostile document refused |
+| [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Ftour.livemd) | **A tour** — the editor, the JSON it stores, the HTML, Markdown and text it renders to, a hostile document refused, and a stranger's comment rendered safely |
 | [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Fschema.livemd) | **Your own schema** — a node of your own, the validator it becomes, an editor for it, and a field restricted to less |
-| [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Fmigration.livemd) | **Migrating stored HTML** — paste what an old editor left in your database and see the document, and what was left behind |
+| [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2FnseaSeb%2Fcoelho%2Fblob%2Fmaster%2Fnotebooks%2Fmigration.livemd) | **Migrating stored HTML and Markdown** — paste what an old editor left in your database, or a Markdown page, and see the document, and what was left behind |
 
 In your own notebooks, `Coelho.Kino.new/1` is the editor, `Coelho.Kino.read/1`
 what was typed, and `Kino.listen/2` every change.
@@ -36,7 +36,7 @@ what was typed, and `Kino.listen/2` every change.
 
 ```elixir
 # mix.exs
-{:coelho, "~> 0.17"}
+{:coelho, "~> 0.18"}
 ```
 
 ```
