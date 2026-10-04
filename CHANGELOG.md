@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 — 2026-10-04
 
 ### No npm: the hook ships built, with ProseMirror inside
 

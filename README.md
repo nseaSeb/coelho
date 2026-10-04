@@ -22,7 +22,7 @@ in the document.
 
 ```elixir
 # mix.exs
-{:coelho, "~> 0.16"}
+{:coelho, "~> 0.17"}
 ```
 
 ```
