@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  # Until 0.17 is on Hex, from GitHub.
+  # Coelho.Kino is on Hex from 0.18; until then, from GitHub.
   {:coelho, github: "nseaSeb/coelho"},
   {:kino, "~> 0.19"},
   {:phoenix_live_view, "~> 1.1"}

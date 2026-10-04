@@ -1,13 +1,15 @@
-# Coelho: migrating stored HTML
+# Coelho: migrating stored HTML and Markdown
 
 ```elixir
 Mix.install([
-  # Until 0.17 is on Hex, from GitHub.
+  # Coelho.Kino is on Hex from 0.18; until then, from GitHub.
   {:coelho, github: "nseaSeb/coelho"},
   {:kino, "~> 0.19"},
   {:phoenix_live_view, "~> 1.1"},
-  # The HTML import parses with Floki, an optional dependency of Coelho.
-  {:floki, "~> 0.36"}
+  # The HTML import parses with Floki, and the Markdown one with MDEx,
+  # both optional dependencies of Coelho.
+  {:floki, "~> 0.36"},
+  {:mdex, "~> 0.14"}
 ])
 ```
 
@@ -48,3 +50,37 @@ The imported document is an ordinary one: open it in the editor.
 ```elixir
 Coelho.Kino.new(value: document)
 ```
+
+## From Markdown
+
+A README, a wiki page, a language model's answer: Markdown is read under the
+same schema, through the same import, so the schema decides what is kept.
+
+```elixir
+markdown =
+  Kino.Input.textarea("Markdown",
+    default: """
+    ## Release notes
+
+    Fixed **three** bugs and one ~~regression~~, see [the issue](https://example.com/1).
+
+    - Faster *import*
+    - H<sub>2</sub>O and x<sup>2</sup> come through as they are
+
+    | Engine | Status |
+    | --- | --- |
+    | Chromium | green |
+    """
+  )
+```
+
+````elixir
+{:ok, from_markdown, warnings} = Coelho.Markdown.from_markdown(Kino.Input.read(markdown))
+
+Kino.Layout.tabs(
+  Document: Kino.Markdown.new("```json\n#{JSON.encode!(from_markdown)}\n```"),
+  "Rendered again": Kino.Markdown.new(Coelho.to_html(from_markdown)),
+  "And back to Markdown": Kino.Text.new(Coelho.Markdown.to_markdown(from_markdown)),
+  "What was left behind": Kino.DataTable.new(warnings)
+)
+````
