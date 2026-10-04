@@ -2,6 +2,61 @@
 
 ## Unreleased
 
+### No npm: the hook ships built, with ProseMirror inside
+
+Coelho now ships `priv/static/coelho.esm.js`, the hook with ProseMirror
+inside, the way `phoenix_live_view` ships its client. It resolves as `coelho`
+through the `deps/` path a Phoenix application already gives esbuild:
+
+```js
+import { Coelho } from "coelho"
+```
+
+An application installs no npm package and sets no `NODE_PATH`. The bundle is
+298 KB minified, 93 KB with gzip. The ProseMirror modules it was built with
+are exported beside the hook (`model`, `state`, `view`, …), for code of your
+own that touches ProseMirror.
+
+`mix coelho.install` wires that import and installs nothing. `mix
+coelho.install --npm` keeps the previous way — the source, and the ProseMirror
+packages from npm — for an application that uses ProseMirror itself and wants
+one copy of it. Use one or the other, never both. `--no-npm`, which printed
+the install command instead of running it, is now `--npm --no-install`.
+
+An application already importing `deps/coelho/assets/js/coelho.js` keeps
+working unchanged, and the installer leaves it alone. It also no longer asks a
+freshly generated application to fix the esbuild package's own empty
+`default` profile.
+
+### Rendering content from people you do not trust
+
+`policy: :untrusted` on every render function takes out what a document points
+at, for comments, reviews and anything else a stranger wrote:
+
+```elixir
+Coelho.to_safe_html(comment.body, policy: :untrusted)
+```
+
+A link renders as its text, an image as its alt text, an attachment as its
+file name and caption, with no URL resolved. The rule is fail-closed for nodes
+and marks of your own: a `:safe_url` attribute makes one its children, a
+`{tag, attrs}` render keeps only an allow list of attributes that cannot fetch,
+follow or style anything — a literal `style`, `id` or `data-*` goes, since
+`phoenix_html.js`, htmx and lazy loaders act on `data-*` — and draws only
+the structural and text elements on a second allow list, so an `a`, `img`,
+`iframe`, `button`, raw-text or custom element is its children; and a
+render function is its children unless the spec declares `:render_untrusted`
+— with `:render_untrusted_inline` beside it for a block node's inline form. An
+unknown policy raises. The default, `:trusted`, renders exactly as before.
+
+### A `nil` override means the same thing inline
+
+`nodes: %{attachment: nil}` rendered nothing but the node's children on the
+page and was ignored by `to_inline_html/3`, which drew the attachment anyway.
+It is now the children in both, so an application hiding a node from a page
+hides it from the excerpt too. A void node has no children, so it contributes
+nothing.
+
 ### The content type of an upload, from its bytes
 
 `Coelho.Attachments.content_type/2` reads the first bytes of an upload and

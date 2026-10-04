@@ -44,9 +44,12 @@ defmodule Coelho.InstallTest do
 
   defp install(tmp_dir, args \\ []) do
     File.cd!(tmp_dir, fn ->
-      capture_io(fn -> Mix.Tasks.Coelho.Install.run(["--no-npm", "--no-migration"] ++ args) end)
+      capture_io(fn -> Mix.Tasks.Coelho.Install.run(["--no-migration"] ++ args) end)
     end)
   end
+
+  # The npm path, with the package manager never actually run.
+  defp install_npm(tmp_dir, args \\ []), do: install(tmp_dir, ["--npm", "--no-install"] ++ args)
 
   @style_import ~s(@import "../../deps/coelho/assets/css/coelho.css";)
 
@@ -59,8 +62,43 @@ defmodule Coelho.InstallTest do
 
       js = read(tmp_dir, "assets/js/app.js")
 
-      assert js =~ ~s(import { Coelho } from "../../deps/coelho/assets/js/coelho.js")
+      assert js =~ ~s(import { Coelho } from "coelho")
       assert js =~ "hooks: {Coelho, ...colocatedHooks}"
+    end
+
+    test "installs no npm package, and never mentions one", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+      output = install(tmp_dir)
+
+      refute output =~ "npm"
+      refute output =~ "prosemirror"
+      assert read(tmp_dir, "assets/package.json") == ~s({"name":"my_app"})
+    end
+
+    test "with --npm, is imported from source", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+      install_npm(tmp_dir)
+
+      assert read(tmp_dir, "assets/js/app.js") =~
+               ~s(import { Coelho } from "../../deps/coelho/assets/js/coelho.js")
+    end
+
+    # An application wired before the bundle existed imports the source; a
+    # second import from the bundle would be a second ProseMirror.
+    for {how, line} <- [
+          source: ~s(import { Coelho } from "../../deps/coelho/assets/js/coelho.js"),
+          bundle_path: ~s(import { Coelho } from "../../deps/coelho/priv/static/coelho.esm.js"),
+          bundle: ~s(import {Coelho} from 'coelho')
+        ] do
+      test "is left alone when already imported from the #{how}", %{tmp_dir: tmp_dir} do
+        app(tmp_dir)
+        path = Path.join(tmp_dir, "assets/js/app.js")
+        File.write!(path, unquote(line) <> "\n" <> File.read!(path))
+        before = File.read!(path)
+
+        assert install(tmp_dir) =~ "already imported"
+        assert File.read!(path) == before
+      end
     end
 
     test "goes after the imports already there, not before them" do
@@ -71,7 +109,7 @@ defmodule Coelho.InstallTest do
       install(tmp_dir)
 
       lines = tmp_dir |> read("assets/js/app.js") |> String.split("\n")
-      coelho = Enum.find_index(lines, &(&1 =~ "coelho.js"))
+      coelho = Enum.find_index(lines, &(&1 =~ ~s(from "coelho")))
 
       last_other =
         lines
@@ -116,7 +154,7 @@ defmodule Coelho.InstallTest do
       lines = tmp_dir |> read("assets/js/app.js") |> String.split("\n")
 
       assert Enum.at(lines, 3) == ~s(} from "phoenix_live_view")
-      assert Enum.at(lines, 4) =~ "coelho.js"
+      assert Enum.at(lines, 4) =~ ~s(from "coelho")
     end
 
     test "cuts on bytes, so prose above the LiveSocket does not move the seam", %{
@@ -152,7 +190,8 @@ defmodule Coelho.InstallTest do
       js = read(tmp_dir, "assets/js/app.js")
 
       assert js =~ "hooks: {Coelho, ...colocatedHooks}"
-      assert length(String.split(js, "coelho.js")) == 3
+      assert js =~ ~s(\nimport { Coelho } from "coelho"\n)
+      assert length(String.split(js, "coelho.js")) == 2
     end
 
     test "says what to do rather than guessing at an unfamiliar LiveSocket", %{tmp_dir: tmp_dir} do
@@ -229,6 +268,96 @@ defmodule Coelho.InstallTest do
   end
 
   describe "esbuild" do
+    # The bundle resolves as `coelho` through a deps/ entry in NODE_PATH,
+    # which a generated Phoenix application already has.
+    setup do
+      on_exit(fn ->
+        for {key, _} <- Application.get_all_env(:esbuild),
+            do: Application.delete_env(:esbuild, key)
+      end)
+    end
+
+    test "keeps a profile whose NODE_PATH covers deps, as Phoenix generates it", %{
+      tmp_dir: tmp_dir
+    } do
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        cd: Path.join(tmp_dir, "assets"),
+        env: %{"NODE_PATH" => [Path.join(tmp_dir, "deps"), Path.join(tmp_dir, "_build/dev")]}
+      )
+
+      assert install(tmp_dir) =~ "esbuild can find the `coelho` package"
+    end
+
+    # An umbrella app keeps deps/ and config/ at the umbrella's root, and its
+    # mix.exs says so; `./deps` would be the wrong place on both counts.
+    test "finds deps/ where Mix keeps it, as an umbrella app does", %{tmp_dir: tmp_dir} do
+      root = tmp_dir
+      app_dir = Path.join(root, "apps/my_app")
+      app(app_dir)
+
+      File.write!(Path.join(app_dir, "mix.exs"), """
+      defmodule Coelho.InstallTest.UmbrellaApp.MixProject do
+        use Mix.Project
+
+        def project do
+          [app: :my_app, version: "0.1.0", deps_path: "../../deps",
+           config_path: "../../config/config.exs", build_path: "../../_build"]
+        end
+      end
+      """)
+
+      run = fn node_path ->
+        Application.put_env(:esbuild, :my_app,
+          args: ~w(js/app.js --bundle),
+          env: %{"NODE_PATH" => node_path}
+        )
+
+        Mix.Project.in_project(:my_app, app_dir, fn _module -> install(app_dir) end)
+      end
+
+      assert run.([Path.join(root, "deps")]) =~ "esbuild can find the `coelho` package"
+
+      out = run.([Path.join(app_dir, "deps")])
+      assert out =~ ~s[Path.expand("../deps", __DIR__)]
+      refute out =~ "apps/my_app"
+    end
+
+    # Found by installing into a freshly generated application: the esbuild
+    # package's own empty `default` profile was named as the one to fix.
+    test "ignores the esbuild package's own empty default profile", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+      Application.put_env(:esbuild, :default, [])
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        env: %{"NODE_PATH" => [Path.join(tmp_dir, "deps")]}
+      )
+
+      out = install(tmp_dir)
+
+      assert out =~ "esbuild can find the `coelho` package"
+      refute out =~ ":default"
+    end
+
+    test "says what to add when a profile has no deps entry", %{tmp_dir: tmp_dir} do
+      app(tmp_dir)
+
+      Application.put_env(:esbuild, :my_app,
+        args: ~w(js/app.js --bundle),
+        env: %{"NODE_PATH" => [Path.join(tmp_dir, "assets/node_modules")]}
+      )
+
+      out = install(tmp_dir)
+
+      assert out =~ ~s[Path.expand("../deps", __DIR__)]
+      assert out =~ ":my_app"
+    end
+  end
+
+  describe "esbuild, with --npm" do
     # esbuild resolves coelho.js's bare imports from deps/coelho/, which
     # never reaches assets/node_modules on its own. The task diagnoses the
     # config rather than editing it — the profile name is the application's
@@ -243,7 +372,7 @@ defmodule Coelho.InstallTest do
     test "says nothing when the application does not use esbuild", %{tmp_dir: tmp_dir} do
       app(tmp_dir)
 
-      refute install(tmp_dir) =~ "config/config.exs"
+      refute install_npm(tmp_dir) =~ "config/config.exs"
     end
 
     test "keeps a profile whose NODE_PATH list covers assets/node_modules", %{tmp_dir: tmp_dir} do
@@ -259,7 +388,7 @@ defmodule Coelho.InstallTest do
         }
       )
 
-      assert install(tmp_dir) =~ "esbuild can find the browser packages"
+      assert install_npm(tmp_dir) =~ "esbuild can find the browser packages"
     end
 
     test "accepts the string form too, joined with the OS separator", %{tmp_dir: tmp_dir} do
@@ -273,7 +402,7 @@ defmodule Coelho.InstallTest do
         }
       )
 
-      assert install(tmp_dir) =~ "esbuild can find the browser packages"
+      assert install_npm(tmp_dir) =~ "esbuild can find the browser packages"
     end
 
     test "says what to add when no profile reaches the packages", %{tmp_dir: tmp_dir} do
@@ -284,7 +413,7 @@ defmodule Coelho.InstallTest do
         env: %{"NODE_PATH" => [Path.join(tmp_dir, "deps")]}
       )
 
-      out = install(tmp_dir)
+      out = install_npm(tmp_dir)
 
       assert out =~ "config/config.exs"
       assert out =~ ~s[Path.expand("../assets/node_modules", __DIR__)]
@@ -307,7 +436,7 @@ defmodule Coelho.InstallTest do
         env: %{"NODE_PATH" => [Path.join(tmp_dir, "assets/node_modules")]}
       )
 
-      out = install(tmp_dir)
+      out = install_npm(tmp_dir)
 
       assert out =~ ":my_app"
       refute out =~ "esbuild can find the browser packages"
@@ -324,7 +453,7 @@ defmodule Coelho.InstallTest do
         env: [{"NODE_PATH", Path.join(tmp_dir, "assets/node_modules")}]
       )
 
-      assert install(tmp_dir) =~ "esbuild can find the browser packages"
+      assert install_npm(tmp_dir) =~ "esbuild can find the browser packages"
     end
 
     test "resolves a relative NODE_PATH from the profile's cd, as esbuild does", %{
@@ -338,11 +467,11 @@ defmodule Coelho.InstallTest do
         env: %{"NODE_PATH" => "node_modules"}
       )
 
-      assert install(tmp_dir) =~ "esbuild can find the browser packages"
+      assert install_npm(tmp_dir) =~ "esbuild can find the browser packages"
     end
   end
 
-  describe "the browser packages" do
+  describe "the browser packages, with --npm" do
     test "are the ones the hook imports, not a list kept by hand" do
       # Read from Coelho's own peerDependencies when the task compiles, so the
       # two cannot drift.
@@ -370,7 +499,7 @@ defmodule Coelho.InstallTest do
         JSON.encode!(%{"name" => "my_app", "dependencies" => declared})
       )
 
-      output = install(tmp_dir)
+      output = install_npm(tmp_dir)
 
       assert output =~ "prosemirror-view@^1.20.0"
       refute output =~ "already there"
@@ -387,13 +516,13 @@ defmodule Coelho.InstallTest do
         })
       )
 
-      assert install(tmp_dir) =~ "already there"
+      assert install_npm(tmp_dir) =~ "already there"
     end
 
     test "are printed rather than installed when npm is declined", %{tmp_dir: tmp_dir} do
       app(tmp_dir)
 
-      output = install(tmp_dir)
+      output = install_npm(tmp_dir)
 
       assert output =~ "npm install --prefix assets"
       assert output =~ "prosemirror-state@"
@@ -407,14 +536,14 @@ defmodule Coelho.InstallTest do
       app(tmp_dir)
       File.write!(Path.join(tmp_dir, "assets/pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
 
-      assert install(tmp_dir) =~ "pnpm --dir assets add"
+      assert install_npm(tmp_dir) =~ "pnpm --dir assets add"
     end
 
     test "are installed with the manager named at the project root", %{tmp_dir: tmp_dir} do
       app(tmp_dir)
       File.write!(Path.join(tmp_dir, "yarn.lock"), "")
 
-      assert install(tmp_dir) =~ "yarn --cwd assets add"
+      assert install_npm(tmp_dir) =~ "yarn --cwd assets add"
     end
 
     test "fall back to npm, which is what a generated application has", %{tmp_dir: tmp_dir} do

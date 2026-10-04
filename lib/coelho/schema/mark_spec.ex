@@ -13,6 +13,9 @@ defmodule Coelho.Schema.MarkSpec do
     * `:code` — marks code: the editor lets no typing rule fire on text it
       covers. Exported to the browser
     * `:render` — how the mark is turned into HTML, see `Coelho.Render`
+    * `:render_untrusted` — how it is turned into HTML under
+      `policy: :untrusted`. A mark with a `:safe_url` attribute needs none:
+      it is reduced to its text. See `Coelho.Render`
     * `:parse` — HTML this mark is imported from, see `Coelho.HTML`
     * `:attr_keys` — the attribute names as the strings a document is written
       in, derived from `:attrs` when the schema is built
@@ -28,6 +31,7 @@ defmodule Coelho.Schema.MarkSpec do
           editor_attrs: %{optional(String.t()) => String.t()},
           code: boolean(),
           render: Coelho.Schema.NodeSpec.render(),
+          render_untrusted: Coelho.Schema.NodeSpec.render(),
           parse: [Coelho.HTML.rule()],
           attr_keys: MapSet.t(String.t()) | nil
         }
@@ -39,6 +43,7 @@ defmodule Coelho.Schema.MarkSpec do
     editor_attrs: %{},
     code: false,
     render: nil,
+    render_untrusted: nil,
     parse: [],
     attr_keys: nil
   ]

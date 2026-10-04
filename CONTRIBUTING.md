@@ -10,7 +10,18 @@ mix check                                                        # format, compi
 mix test --cover                                                 # and what nothing runs any more
 docker compose -f docker/compose.yml run --rm --build browsers   # the editor, in three engines, on Linux
 cd demo && mix test
+npm ci --prefix bundle && npm run check --prefix bundle         # the committed bundle is what coelho.js builds to
 ```
+
+`assets/js/coelho.js` ships built, with ProseMirror inside, as
+`priv/static/coelho.esm.js`, and that file is committed: it is what an
+application from Hex imports, what the demo runs and what the schema bridge
+checks. After editing `coelho.js`, rebuild it — `npm run build --prefix
+bundle`, or `npm run watch --prefix bundle` while you work — and commit both.
+CI fails on a stale bundle. The build also refuses a ProseMirror core bundled
+twice, a package resolved from outside `bundle/node_modules`, and an export of
+`coelho.js` the bundle does not carry. ProseMirror's versions are pinned
+exactly in `bundle/package.json`; bumping one is a rebuild and a browser run.
 
 The coverage run has a floor in `mix.exs` and fails below it. The number is
 not the point — what it is for is the list of lines nothing has ever run, in
