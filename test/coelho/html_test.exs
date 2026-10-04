@@ -58,6 +58,11 @@ defmodule Coelho.HTMLTest do
                "<p><strong>b</strong><em>i</em><s>d</s></p>"
     end
 
+    test "keeps underline, highlight, subscript and superscript" do
+      html = "<p><u>u</u><mark>m</mark>H<sub>2</sub>O x<sup>2</sup></p>"
+      assert round_trip(html) == html
+    end
+
     test "maps every heading level" do
       for level <- 1..6 do
         assert round_trip("<h#{level}>T</h#{level}>") == "<h#{level}>T</h#{level}>"
@@ -481,6 +486,51 @@ defmodule Coelho.HTMLTest do
       refute inspect(document, binaries: :as_binaries) =~ "238, 128, 128"
       refute inspect(document, binaries: :as_binaries) =~ "238, 128, 129"
       refute document |> Coelho.to_text() |> String.contains?("\u{E000}")
+    end
+  end
+
+  # Editors write `<li></li>`, and Markdown's `- ` comes through as one: a
+  # node missing the block its content opens with gets an empty one, the way
+  # the editor fills it, rather than the whole import failing.
+  describe "a node missing the block its content needs" do
+    test "gets an empty one of its default block" do
+      paragraph = %{"type" => "paragraph"}
+
+      assert {:ok,
+              %{
+                "content" => [
+                  %{
+                    "content" => [
+                      %{"content" => [^paragraph]},
+                      %{"content" => [^paragraph, %{"type" => "bullet_list"}]}
+                    ]
+                  }
+                ]
+              }, []} =
+               Coelho.from_html("<ul><li></li><li><ul><li>x</li></ul></li></ul>")
+               |> then(fn {:ok, doc, warnings} ->
+                 {:ok,
+                  update_in(
+                    doc,
+                    ["content", Access.at(0), "content", Access.at(1), "content", Access.at(1)],
+                    &Map.take(&1, ["type"])
+                  ), warnings}
+               end)
+
+      assert {:ok, %{"content" => [%{"type" => "blockquote", "content" => [^paragraph]}]}, []} =
+               Coelho.from_html("<blockquote></blockquote>")
+    end
+
+    # A `<li>` outside a list is lifted, its children in its place: one filled
+    # first would carry the empty paragraph out with them.
+    test "is not filled when its parent does not keep it" do
+      assert {:ok, %{"content" => [%{"type" => "code_block"}]}, _} =
+               Coelho.from_html("<li><pre>x</pre></li>")
+
+      assert {:ok,
+              %{"content" => [%{"type" => "blockquote", "content" => [%{"type" => "heading"}]}]},
+              _} =
+               Coelho.from_html("<blockquote><li><h2>t</h2></li></blockquote>")
     end
   end
 end

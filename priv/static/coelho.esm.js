@@ -16610,6 +16610,9 @@ var buildKeymap = (schema) => {
   if (marks.bold) bindings["Mod-b"] = toggleMark(marks.bold);
   if (marks.italic) bindings["Mod-i"] = toggleMark(marks.italic);
   if (marks.code) bindings["Mod-e"] = toggleMark(marks.code);
+  if (marks.underline) bindings["Mod-u"] = toggleMark(marks.underline);
+  if (marks.subscript) bindings["Mod-,"] = toggleMark(marks.subscript);
+  if (marks.superscript) bindings["Mod-."] = toggleMark(marks.superscript);
   if (nodes.table) {
     bindings["Tab"] = goToNextCell(1);
     bindings["Shift-Tab"] = goToNextCell(-1);

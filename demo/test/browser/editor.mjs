@@ -296,6 +296,56 @@ const run = async () => {
       assert.match(await paneEventually(page, "html", "<strong>"), /<strong>bold me<\/strong>/);
     });
 
+    await test("underline, highlight, subscript and superscript come from the toolbar", async () => {
+      // Shipped marks with no JavaScript of the application's: the hook draws
+      // them from its own defaults, and the server renders the same element.
+      for (const [mark, tag] of [
+        ["underline", "u"],
+        ["highlight", "mark"],
+        ["subscript", "sub"],
+        ["superscript", "sup"]
+      ]) {
+        await typeInEditor(page, "marked");
+        await focusEditor(page);
+        await selectAll(page);
+        await page.click(`[data-coelho-command="${mark}"]`);
+
+        const document = await stored(page);
+        const [text] = document.content[0].content;
+        assert.deepEqual(text.marks, [{ type: mark }], mark);
+        assert.match(
+          await paneEventually(page, "html", `<${tag}>`),
+          new RegExp(`<${tag}>marked</${tag}>`),
+          mark
+        );
+        assert.equal(await pressed(page, mark), "true", `${mark} is not shown pressed`);
+
+        // And off again, or typing over it next round would keep it.
+        await page.click(`[data-coelho-command="${mark}"]`);
+        const [plain] = (await stored(page)).content[0].content;
+        assert.equal(plain.marks, undefined, `${mark} was not removed`);
+      }
+
+      // Highlight has no shortcut: Mod-Shift-H is the browser's own (home,
+      // history) in more than one engine.
+      for (const [mark, key] of [
+        ["underline", "u"],
+        ["subscript", ","],
+        ["superscript", "."]
+      ]) {
+        await typeInEditor(page, "keyed");
+        await focusEditor(page);
+        await selectAll(page);
+        await page.keyboard.press(`ControlOrMeta+${key}`);
+        await documentEventually(
+          page,
+          `Mod-${key} did not apply ${mark}`,
+          `return (doc.content[0].content?.[0]?.marks ?? []).some((m) => m.type === "${mark}");`
+        );
+        await page.keyboard.press(`ControlOrMeta+${key}`);
+      }
+    });
+
     await test("a mark is pressed only when it covers the whole selection", async () => {
       // `toggleMark` on a half-bold selection *adds* bold everywhere, so a
       // button pressed on "present somewhere" announces the opposite of what
@@ -1293,17 +1343,17 @@ const run = async () => {
       await page.click("#note-schema");
       await settle(page);
 
-      // Drawn from `render: {"mark", []}` in Elixir and from nothing else —
-      // no toDOM was written for it in JavaScript.
-      await page.waitForSelector('#note_body-editor [data-coelho-command="highlight"]');
+      // Drawn from `render: {"span", [{"class", "spoiler"}]}` in Elixir and
+      // from nothing else — no toDOM was written for it in JavaScript.
+      await page.waitForSelector('#note_body-editor [data-coelho-command="spoiler"]');
 
       await focusEditor(page, NOTE);
       await selectAll(page);
-      await page.click('#note_body-editor [data-coelho-command="highlight"]');
+      await page.click('#note_body-editor [data-coelho-command="spoiler"]');
       await settle(page);
 
       assert.ok(
-        (await page.innerHTML(NOTE)).includes("<mark"),
+        (await page.innerHTML(NOTE)).includes('class="spoiler"'),
         "the mark the new schema declares was not drawn"
       );
 

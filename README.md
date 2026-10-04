@@ -910,6 +910,8 @@ two properties, which is the whole of its editor styling.
 | Keys | What |
 | --- | --- |
 | `Mod-b`, `Mod-i`, `Mod-e` | bold, italic, inline code |
+| `Mod-u` | underline |
+| `Mod-,`, `Mod-.` | subscript, superscript |
 | `Mod-z`, `Shift-Mod-z`, `Mod-y` | undo, redo, redo |
 | `Enter` in a list | a new item |
 | `Mod-[`, `Mod-]` | lift the item out, sink it in |
@@ -959,6 +961,30 @@ const Coelho = createCoelhoHook({
   nodes: { mention: { toDOM: (node) => ["span", { class: "mention" }, "@" + node.attrs.user_id] } }
 })
 ```
+
+## Markdown
+
+```elixir
+Coelho.Markdown.to_markdown(@post.body)
+#=> "## Release notes\n\nFixed **three** bugs."
+```
+
+For a README, an export, a commit message or a language model's prompt.
+Everything a writer typed comes back as the characters they typed: what
+Markdown would read as syntax is escaped, so a paragraph starting with `#`
+stays a paragraph, and a mark is written as HTML where its `**` would not
+count. What Markdown cannot say — alignment, a table cell's span — is listed
+in `Coelho.Markdown`.
+
+And back, under the schema, through the HTML import (with the optional `:mdex`
+and `:floki` dependencies):
+
+```elixir
+{:ok, document, warnings} = Coelho.Markdown.from_markdown(markdown)
+```
+
+A property checks the two against each other: for generated documents,
+written to Markdown and read back, the result is the document HTML would give.
 
 ## Migrating existing HTML
 
@@ -1233,7 +1259,7 @@ rather than closures:
 
 ```elixir
 defmodule MyApp.RichText do
-  @schema Coelho.Schema.extend(Coelho.Schema.default(), marks: [highlight: [render: {"mark", []}]])
+  @schema Coelho.Schema.extend(Coelho.Schema.default(), marks: [spoiler: [render: {"span", [{"class", "spoiler"}]}]])
 
   def schema, do: @schema
 end
@@ -1251,7 +1277,7 @@ carry without a hook written to put it there. Declaring it twice is what
 lets the two drift, so it is declared once:
 
 ```elixir
-marks: [highlight: [class: "hl hl-gradient", render: {"mark", []}]]
+marks: [spoiler: [class: "spoiler spoiler-blur", render: {"span", []}]]
 ```
 
 `:editor_attrs` carries DOM attributes for the editor alone.
@@ -1260,8 +1286,8 @@ marks: [highlight: [class: "hl hl-gradient", render: {"mark", []}]]
 
 A `:render` and a `:parse` that are declarations rather than functions are
 exported with the schema, and the browser builds the mark's `toDOM` and
-`parseDOM` out of them. The `highlight` above therefore needs no JavaScript
-at all: the editor draws the same `<mark class="hl hl-gradient">` the page
+`parseDOM` out of them. The `spoiler` above therefore needs no JavaScript
+at all: the editor draws the same `<span class="spoiler spoiler-blur">` the page
 does, and recognises it again on paste.
 
 A node or mark whose rendering *is* a function has no such export, and the
@@ -1283,6 +1309,18 @@ state, and sized by the `--coelho-icon` custom property. The command's name
 is the button's tooltip *and* its accessible name, so a pointer and a screen
 reader are told the same thing.
 
+The default toolbar is the common ground. The default schema carries four
+marks it leaves out — `underline`, `highlight`, `subscript` and
+`superscript`, rendered as `<u>`, `<mark>`, `<sub>` and `<sup>` — and naming
+them is all it takes to show them:
+
+```heex
+<.coelho_editor
+  field={@form[:body]}
+  toolbar={~w(bold italic underline highlight subscript superscript link)}
+/>
+```
+
 Those names are English until you say otherwise, and `:labels` is where you
 say it:
 
@@ -1303,8 +1341,8 @@ its label as text until you give it an icon:
 ```heex
 <.coelho_editor
   field={@form[:body]}
-  toolbar={~w(bold italic highlight)}
-  icons={%{"highlight" => MyApp.Icons.highlight()}}
+  toolbar={~w(bold italic spoiler)}
+  icons={%{"spoiler" => MyApp.Icons.spoiler()}}
 />
 ```
 

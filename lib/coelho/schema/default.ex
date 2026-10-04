@@ -3,7 +3,8 @@ defmodule Coelho.Schema.Default do
   The schema Coelho ships with.
 
   It covers what an application typically needs out of the box — paragraphs,
-  headings, lists, quotes, code blocks, images and the usual inline marks —
+  headings, lists, quotes, code blocks, images, and as marks bold, italic,
+  strike, underline, highlight, subscript, superscript, code and link —
   and is meant to be copied and adapted rather than extended in place.
 
   ## What the `link` mark emits
@@ -209,6 +210,10 @@ defmodule Coelho.Schema.Default do
         bold: [render: {"strong", []}, parse: ~w(strong b)],
         italic: [render: {"em", []}, parse: ~w(em i)],
         strike: [render: {"s", []}, parse: ~w(s del strike)],
+        underline: [render: {"u", []}, parse: ["u"]],
+        highlight: [render: {"mark", []}, parse: ["mark"]],
+        subscript: [render: {"sub", []}, parse: ["sub"]],
+        superscript: [render: {"sup", []}, parse: ["sup"]],
         code: [code: true, render: {"code", []}, parse: ["code"]],
         link: [
           attrs: [

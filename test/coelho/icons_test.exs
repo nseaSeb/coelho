@@ -10,7 +10,7 @@ defmodule Coelho.IconsTest do
       # itself knows about are the ones that must not do that.
       supported =
         Coelho.LiveView.node_commands() ++
-          ~w(bold italic strike code link caption undo redo) ++
+          ~w(bold italic strike underline highlight subscript superscript code link caption undo redo) ++
           Enum.map(~w(left center right justify), &("align_" <> &1))
 
       for command <- supported do
@@ -28,7 +28,7 @@ defmodule Coelho.IconsTest do
 
     test "answers nothing for a command it does not know" do
       # A mark an application added, which then shows its label as text.
-      refute Icons.icon("highlight")
+      refute Icons.icon("spoiler")
       refute Icons.icon(:bold)
     end
 
@@ -64,7 +64,7 @@ defmodule Coelho.IconsTest do
     end
 
     test "and the command's own name for anything else" do
-      assert Icons.label("highlight") == "highlight"
+      assert Icons.label("spoiler") == "spoiler"
     end
 
     test "names every command it draws" do

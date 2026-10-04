@@ -115,6 +115,10 @@ defmodule Coelho.Test.Documents do
       constant(%{"type" => "bold"}),
       constant(%{"type" => "italic"}),
       constant(%{"type" => "strike"}),
+      constant(%{"type" => "underline"}),
+      constant(%{"type" => "highlight"}),
+      constant(%{"type" => "subscript"}),
+      constant(%{"type" => "superscript"}),
       constant(%{"type" => "code"}),
       gen all(path <- string(:alphanumeric, min_length: 1)) do
         %{"type" => "link", "attrs" => %{"href" => "/" <> path}}

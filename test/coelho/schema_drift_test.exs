@@ -41,10 +41,25 @@ defmodule Coelho.SchemaDriftTest do
     assert Enum.sort(keys_of("defaultNodeDOM")) == declared
   end
 
-  test "every default schema mark has a DOM mapping in the hook" do
-    declared = Schema.default().mark_order |> Enum.map(&Atom.to_string/1) |> Enum.sort()
+  test "every default schema mark is drawn by the hook or by its export" do
+    # A mark whose `:render` is a declaration is exported as `renderDOM`, and
+    # the hook builds its toDOM from that. One whose render is a function —
+    # `link`, whose attributes are computed — is exported without it, and
+    # needs a mapping here. A mapping here also *wins* over the export, so a
+    # mark that does not need one must not have one: an application that
+    # redeclares `highlight` would see its own render on the page and the
+    # library's in the editor. `bold`, `italic`, `strike` and `code` keep
+    # theirs for the style rules a paste from a word processor carries.
+    exported = Map.new(Schema.to_json(Schema.default())["marks"], fn [n, spec] -> {n, spec} end)
 
-    assert Enum.sort(keys_of("defaultMarkDOM")) == declared
+    {drawn, undrawn} = Enum.split_with(exported, fn {_name, spec} -> spec["renderDOM"] end)
+
+    assert Enum.sort(keys_of("defaultMarkDOM")) ==
+             Enum.sort(~w(bold italic strike code) ++ Enum.map(undrawn, &elem(&1, 0)))
+
+    for name <- ~w(underline highlight subscript superscript) do
+      assert Map.has_key?(Map.new(drawn), name), "#{name} is not exported with its render"
+    end
   end
 
   test "the node commands the server keeps are the ones the hook has a verb for" do
